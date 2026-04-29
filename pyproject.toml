@@ -1,0 +1,21 @@
+[project]
+name = "yaams"
+version = "0.1.0"
+description = "Yet Another Agent Memory System"
+requires-python = ">=3.11"
+dependencies = [
+  "click>=8.1",
+  "pyyaml>=6.0",
+  "sentence-transformers>=3.0",
+  "spacy>=3.7",
+  "sqlite-vec>=0.1.6",
+  "tqdm>=4.66",
+  "typedstream>=0.1.0",
+]
+
+[project.scripts]
+yaams = "yaams.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

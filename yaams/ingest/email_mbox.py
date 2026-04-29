@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+import email
+from email import policy
+from email.message import EmailMessage, Message
+import email.utils
+from html.parser import HTMLParser
+from pathlib import Path
+import hashlib
+import mailbox
+from typing import Iterator
+
+from yaams.config import expand_path
+from yaams.ingest.base import Item, hash_id
+from yaams.time import ensure_utc
+
+
+MAX_EMAIL_CHARS = 50_000
+
+
+@dataclass(frozen=True)
+class EmailAdapter:
+  sources: list[dict]
+
+  def extract(self, since: datetime) -> Iterator[Item]:
+    cutoff = ensure_utc(since)
+    for source in self.sources:
+      source_type = source.get("type")
+      path = expand_path(source["path"])
+      if source_type == "mbox":
+        yield from extract_mbox(path, cutoff)
+      elif source_type == "emlx":
+        yield from extract_emlx_tree(path, cutoff)
+      else:
+        raise ValueError(f"Unsupported email source type: {source_type}")
+
+
+def extract_mbox(path: Path, since: datetime) -> Iterator[Item]:
+  mbox = mailbox.mbox(path)
+  for message in mbox:
+    item = email_to_item(message, since)
+    if item is not None:
+      yield item
+
+
+def extract_emlx_tree(path: Path, since: datetime) -> Iterator[Item]:
+  files = [path] if path.is_file() else sorted(path.rglob("*.emlx"))
+  for emlx_path in files:
+    try:
+      message = parse_emlx(emlx_path)
+    except (OSError, ValueError, email.errors.MessageError):
+      continue
+    item = email_to_item(message, since, fallback_path=emlx_path)
+    if item is not None:
+      yield item
+
+
+def parse_emlx(path: Path) -> EmailMessage:
+  raw = path.read_bytes()
+  first_newline = raw.index(b"\n")
+  byte_count = int(raw[:first_newline])
+  email_bytes = raw[first_newline + 1 : first_newline + 1 + byte_count]
+  return email.message_from_bytes(email_bytes, policy=policy.default)
+
+
+def email_to_item(
+  message: Message,
+  since: datetime,
+  fallback_path: Path | None = None,
+) -> Item | None:
+  date_header = message.get("Date")
+  if not date_header:
+    return None
+  timestamp = ensure_utc(email.utils.parsedate_to_datetime(date_header))
+  if timestamp < ensure_utc(since):
+    return None
+
+  body = extract_text_body(message).strip()
+  if not body:
+    return None
+  if len(body) > MAX_EMAIL_CHARS:
+    body = body[:MAX_EMAIL_CHARS]
+
+  message_id = str(message.get("Message-ID") or generate_fallback_id(
+    message,
+    body,
+    fallback_path=fallback_path,
+  )).strip()
+  sender = _first_address(message.get("From", "")) or "unknown"
+  to = _addresses(message.get_all("To", []))
+  cc = _addresses(message.get_all("Cc", []))
+  bcc = _addresses(message.get_all("Bcc", []))
+  thread_id = _thread_id(message)
+  subject = str(message.get("Subject", ""))
+
+  return Item(
+    id=hash_id("email", message_id),
+    source="email",
+    source_id=message_id,
+    timestamp=timestamp,
+    sender=sender,
+    recipients=to + cc,
+    content=body,
+    subject=subject,
+    thread_id=thread_id,
+    raw_metadata={
+      "cc": cc,
+      "bcc": bcc,
+      "reply_to": message.get("Reply-To"),
+    },
+  )
+
+
+def extract_text_body(message: Message) -> str:
+  if message.is_multipart():
+    plain = _first_part(message, "text/plain")
+    if plain:
+      return plain
+    html = _first_part(message, "text/html")
+    return strip_html(html) if html else ""
+  content_type = message.get_content_type()
+  payload = _decode_message_part(message)
+  if content_type == "text/html":
+    return strip_html(payload)
+  return payload
+
+
+def strip_html(html: str) -> str:
+  parser = _HTMLTextExtractor()
+  parser.feed(html)
+  parser.close()
+  return parser.text()
+
+
+def generate_fallback_id(
+  message: Message,
+  body: str,
+  fallback_path: Path | None = None,
+) -> str:
+  basis = "\n".join(
+    [
+      str(fallback_path or ""),
+      str(message.get("Date", "")),
+      str(message.get("From", "")),
+      str(message.get("To", "")),
+      str(message.get("Subject", "")),
+      body[:1000],
+    ]
+  )
+  digest = hashlib.sha256(basis.encode("utf-8", errors="replace")).hexdigest()
+  return f"fallback:{digest}"
+
+
+def _first_part(message: Message, content_type: str) -> str:
+  for part in message.walk():
+    if part.is_multipart():
+      continue
+    if part.get_content_disposition() == "attachment":
+      continue
+    if part.get_content_type() == content_type:
+      return _decode_message_part(part)
+  return ""
+
+
+def _decode_message_part(message: Message) -> str:
+  if isinstance(message, EmailMessage):
+    try:
+      content = message.get_content()
+      return content if isinstance(content, str) else str(content)
+    except (LookupError, UnicodeDecodeError):
+      pass
+
+  payload = message.get_payload(decode=True)
+  if payload is None:
+    raw_payload = message.get_payload()
+    return raw_payload if isinstance(raw_payload, str) else ""
+  charset = message.get_content_charset() or "utf-8"
+  return payload.decode(charset, errors="replace")
+
+
+def _addresses(values: list[str]) -> list[str]:
+  return [addr for _, addr in email.utils.getaddresses(values) if addr]
+
+
+def _first_address(value: str) -> str:
+  name, addr = email.utils.parseaddr(value)
+  return addr or name
+
+
+def _thread_id(message: Message) -> str | None:
+  thread_id = message.get("In-Reply-To")
+  references = message.get("References", "")
+  if not thread_id and references:
+    thread_id = references.split()[-1]
+  return thread_id.strip() if thread_id else None
+
+
+class _HTMLTextExtractor(HTMLParser):
+  def __init__(self):
+    super().__init__()
+    self.parts: list[str] = []
+
+  def handle_data(self, data: str) -> None:
+    stripped = data.strip()
+    if stripped:
+      self.parts.append(stripped)
+
+  def text(self) -> str:
+    return "\n".join(self.parts)

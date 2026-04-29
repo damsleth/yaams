@@ -1,0 +1,42 @@
+db_path: ~/yaams/data.db
+
+ingest:
+  since: '2025-01-01T00:00:00Z'
+  imessage:
+    enabled: true
+    chat_db_path: ~/Library/Messages/chat.db
+  email:
+    enabled: true
+    sources:
+      - type: emlx
+        path: ~/Library/Mail/V10
+
+embed:
+  model: BAAI/bge-m3
+  batch_size: 32
+  device: mps
+  dimension: 1024
+
+entities:
+  spacy_model: xx_ent_wiki_sm
+  dictionary:
+    - canonical: Alice
+      type: person
+      aliases:
+        - Marie
+        - Alice Marie
+    - canonical: Diana
+      type: person
+      aliases:
+        - Em
+    - canonical: Jacob
+      type: person
+      aliases:
+        - JX
+    - canonical: Local Aid Society
+      type: org
+      aliases:
+        - LAS
+        - Local Aid
+        - OPS
+

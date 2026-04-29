@@ -25,17 +25,32 @@ def seed_entities(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> None:
       canonical = str(entry["canonical"])
       entity_type = str(entry.get("type", "other"))
       aliases = list(entry.get("aliases", []))
-      conn.execute(
-        """
-        INSERT INTO entities (canonical_name, entity_type, aliases, pending_review)
-        VALUES (?, ?, ?, 0)
-        ON CONFLICT(canonical_name) DO UPDATE SET
-          entity_type = excluded.entity_type,
-          aliases = excluded.aliases,
-          pending_review = 0
-        """,
-        (canonical, entity_type, json.dumps(aliases, ensure_ascii=False)),
-      )
+      aliases_json = json.dumps(aliases, ensure_ascii=False)
+      existing = conn.execute(
+        "SELECT id FROM entities WHERE lower(canonical_name) = lower(?)",
+        (canonical,),
+      ).fetchone()
+      if existing is None:
+        conn.execute(
+          """
+          INSERT INTO entities
+            (canonical_name, entity_type, aliases, pending_review)
+          VALUES (?, ?, ?, 0)
+          """,
+          (canonical, entity_type, aliases_json),
+        )
+      else:
+        conn.execute(
+          """
+          UPDATE entities
+          SET canonical_name = ?,
+            entity_type = ?,
+            aliases = ?,
+            pending_review = 0
+          WHERE id = ?
+          """,
+          (canonical, entity_type, aliases_json, existing["id"]),
+        )
 
 
 def store_items(
@@ -142,6 +157,7 @@ def _replace_entity_links(
   tags: Sequence[EntityTag],
 ) -> int:
   inserted = 0
+  conn.execute("DELETE FROM item_entities WHERE item_id = ?", (item_id,))
   for canonical, entity_type, confidence, source in tags:
     entity_id = upsert_entity(conn, canonical, entity_type, source)
     cursor = conn.execute(
@@ -163,6 +179,18 @@ def upsert_entity(
   source: str,
 ) -> int:
   pending_review = 0 if source in {"dictionary", "manual"} else 1
+  existing = conn.execute(
+    "SELECT id, canonical_name FROM entities WHERE lower(canonical_name) = lower(?)",
+    (canonical_name,),
+  ).fetchone()
+  if existing is not None:
+    if pending_review == 0 and existing["canonical_name"] != canonical_name:
+      conn.execute(
+        "UPDATE entities SET canonical_name = ? WHERE id = ?",
+        (canonical_name, existing["id"]),
+      )
+    canonical_name = canonical_name if pending_review == 0 else existing["canonical_name"]
+
   conn.execute(
     """
     INSERT OR IGNORE INTO entities
@@ -181,7 +209,7 @@ def upsert_entity(
       (entity_type, canonical_name),
     )
   row = conn.execute(
-    "SELECT id FROM entities WHERE canonical_name = ?",
+    "SELECT id FROM entities WHERE lower(canonical_name) = lower(?)",
     (canonical_name,),
   ).fetchone()
   if row is None:
@@ -195,4 +223,3 @@ def _embedding_to_blob(embedding: object) -> bytes:
   if isinstance(embedding, bytes):
     return embedding
   return array("f", [float(value) for value in embedding]).tobytes()
-

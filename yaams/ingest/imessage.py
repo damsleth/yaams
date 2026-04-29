@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import tempfile
@@ -93,11 +92,14 @@ def extract_from_connection(
     LEFT JOIN handle h ON m.handle_id = h.ROWID
     LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
     LEFT JOIN chat c ON cmj.chat_id = c.ROWID
-    WHERE m.date >= ?
+    WHERE m.date IS NOT NULL
+      AND m.date != 0
+      AND m.date >= ?
     {reaction_filter}
     ORDER BY m.date ASC
   """
   apple_since = datetime_to_apple_ts_for_db(conn, since)
+  participant_cache: dict[int, list[str]] = {}
   for row in conn.execute(query, (apple_since,)):
     text = extract_message_text(row["text"], row["attributedBody"]).strip()
     if not text:
@@ -105,8 +107,8 @@ def extract_from_connection(
     timestamp = apple_ts_to_datetime(row["date"])
     source_id = row["guid"] or f"rowid:{row['rowid']}"
     is_from_me = bool(row["is_from_me"])
-    sender = "me" if is_from_me else (row["handle_identifier"] or "unknown")
-    participants = fetch_chat_participants(conn, row["chat_id"])
+    sender = _sender(row, is_from_me)
+    participants = _cached_chat_participants(conn, row["chat_id"], participant_cache)
     recipients = _recipients(sender, is_from_me, participants)
     yield Item(
       id=hash_id("imessage", source_id),
@@ -172,10 +174,8 @@ def extract_message_text(
       if isinstance(value, str):
         return value
   except Exception:
-    pass
-  decoded = attributed_body.decode("utf-8", errors="ignore")
-  matches = re.findall(r"[\w\s.,!?@:#/+-]{3,}", decoded)
-  return max(matches, key=len).strip() if matches else ""
+    return ""
+  return ""
 
 
 def fetch_chat_participants(
@@ -195,6 +195,28 @@ def fetch_chat_participants(
     (chat_id,),
   ).fetchall()
   return [row["handle_identifier"] for row in rows if row["handle_identifier"]]
+
+
+def _cached_chat_participants(
+  conn: sqlite3.Connection,
+  chat_id: int | None,
+  cache: dict[int, list[str]],
+) -> list[str]:
+  if chat_id is None:
+    return []
+  if chat_id not in cache:
+    cache[chat_id] = fetch_chat_participants(conn, chat_id)
+  return cache[chat_id]
+
+
+def _sender(row: sqlite3.Row, is_from_me: bool) -> str:
+  if is_from_me:
+    return "me"
+  if row["handle_identifier"]:
+    return row["handle_identifier"]
+  if row["handle_id"] is not None:
+    return f"unknown:handle:{row['handle_id']}"
+  return f"unknown:message:{row['rowid']}"
 
 
 def _recipients(

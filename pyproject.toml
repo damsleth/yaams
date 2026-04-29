@@ -2,6 +2,7 @@
 name = "yaams"
 version = "0.1.0"
 description = "Yet Another Agent Memory System"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "click>=8.1",
@@ -19,3 +20,6 @@ yaams = "yaams.cli:cli"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from yaams.enrich.entities import EntityTagger
+from yaams.enrich.entities import EntityTagger, normalize_ner_canonical
 
 
 def test_dictionary_entities_match_aliases_and_prefer_longest():
@@ -23,3 +23,11 @@ def test_dictionary_entities_match_aliases_and_prefer_longest():
   assert names == {"Alice", "Diana", "Local Aid Society"}
   assert all(tag[3] == "dictionary" for tag in tags)
 
+
+def test_ner_person_names_are_case_normalized():
+  assert normalize_ner_canonical("ALICE", "person") == "Alice"
+  assert normalize_ner_canonical("  alice   cathrine ", "person") == "Alice Marie"
+
+
+def test_ner_org_names_preserve_acronyms():
+  assert normalize_ner_canonical("NASA", "org") == "NASA"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import email
 from email import policy
@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import hashlib
 import mailbox
-from typing import Iterator
+from typing import Callable, Iterator
 
 from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
@@ -20,11 +20,13 @@ from yaams.time import ensure_utc
 MAX_EMAIL_CHARS = 50_000
 
 
-@dataclass(frozen=True)
+@dataclass
 class EmailAdapter:
   sources: list[dict]
+  skipped_emlx: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
+    self.skipped_emlx = 0
     cutoff = ensure_utc(since)
     for source in self.sources:
       source_type = source.get("type")
@@ -32,9 +34,12 @@ class EmailAdapter:
       if source_type == "mbox":
         yield from extract_mbox(path, cutoff)
       elif source_type == "emlx":
-        yield from extract_emlx_tree(path, cutoff)
+        yield from extract_emlx_tree(path, cutoff, on_skip=self._record_emlx_skip)
       else:
         raise ValueError(f"Unsupported email source type: {source_type}")
+
+  def _record_emlx_skip(self, path: Path, error: Exception) -> None:
+    self.skipped_emlx += 1
 
 
 def extract_mbox(path: Path, since: datetime) -> Iterator[Item]:
@@ -45,12 +50,18 @@ def extract_mbox(path: Path, since: datetime) -> Iterator[Item]:
       yield item
 
 
-def extract_emlx_tree(path: Path, since: datetime) -> Iterator[Item]:
+def extract_emlx_tree(
+  path: Path,
+  since: datetime,
+  on_skip: Callable[[Path, Exception], None] | None = None,
+) -> Iterator[Item]:
   files = [path] if path.is_file() else sorted(path.rglob("*.emlx"))
   for emlx_path in files:
     try:
       message = parse_emlx(emlx_path)
-    except (OSError, ValueError, email.errors.MessageError):
+    except (OSError, ValueError, email.errors.MessageError) as exc:
+      if on_skip is not None:
+        on_skip(emlx_path, exc)
       continue
     item = email_to_item(message, since, fallback_path=emlx_path)
     if item is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
@@ -60,15 +61,13 @@ def ingest(
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
   conn = open_db(db_path, require_vec=require_vec)
-  run_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"seen": 0, "new": 0})
+  run_stats: dict[str, dict[str, int]] = defaultdict(
+    lambda: {"seen": 0, "new": 0, "skipped": 0}
+  )
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))
-    embedder = None if dry_run else Embedder(**_embed_config(cfg))
-    tagger = None if dry_run else EntityTagger(
-      _entities_config(cfg).get("spacy_model"),
-      _entity_dictionary(cfg),
-    )
+    processors = None if dry_run else ProcessingContext(cfg)
     for src in _sources_to_run(source):
       if not _source_enabled(cfg, src):
         continue
@@ -80,11 +79,11 @@ def ingest(
         cfg,
         batch_size=batch_size,
         dry_run=dry_run,
-        embedder=embedder,
-        tagger=tagger,
+        processors=processors,
       )
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
+      run_stats[src]["skipped"] += source_stats["skipped"]
     print_stats(conn, db_path, run_stats, dry_run=dry_run)
   finally:
     conn.close()
@@ -123,8 +122,7 @@ def ingest_source(
   *,
   batch_size: int,
   dry_run: bool,
-  embedder,
-  tagger,
+  processors,
 ) -> dict[str, int]:
   since = _effective_since(conn, source, cfg)
   batch: list[Item] = []
@@ -138,31 +136,34 @@ def ingest_source(
     if item.timestamp > latest_ts:
       latest_ts = item.timestamp
     if len(batch) >= batch_size:
-      inserted += process_batch(conn, batch, embedder, tagger, dry_run=dry_run)
+      inserted += process_batch(conn, batch, processors, dry_run=dry_run)
       batch = []
   if batch:
-    inserted += process_batch(conn, batch, embedder, tagger, dry_run=dry_run)
+    inserted += process_batch(conn, batch, processors, dry_run=dry_run)
   if not dry_run:
     update_watermark(conn, source, latest_ts)
     conn.commit()
-  return {"seen": seen, "new": inserted}
+  return {
+    "seen": seen,
+    "new": inserted,
+    "skipped": int(getattr(adapter, "skipped_emlx", 0)),
+  }
 
 
 def process_batch(
   conn,
   items: list[Item],
-  embedder,
-  tagger,
+  processors,
   *,
   dry_run: bool,
 ) -> int:
   if dry_run:
     return 0
-  if embedder is None or tagger is None:
-    raise RuntimeError("embedder and tagger are required unless dry_run is set")
+  if processors is None:
+    raise RuntimeError("processors are required unless dry_run is set")
   texts = [item.content for item in items]
-  embeddings = embedder.embed_batch(texts)
-  tags = [tagger.tag(text) for text in texts]
+  embeddings = processors.embedder.embed_batch(texts)
+  tags = [processors.tagger.tag(text) for text in texts]
   stats = store_items(conn, items, embeddings, tags)
   return stats.items_inserted
 
@@ -194,7 +195,11 @@ def print_stats(
     if source in run_stats:
       seen = run_stats[source]["seen"]
       new = run_stats[source]["new"]
-      click.echo(f"  {source}: {seen:,} items ({new:,} new)")
+      skipped = run_stats[source].get("skipped", 0)
+      suffix = f"{new:,} new"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix})")
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
   click.echo(
@@ -224,6 +229,28 @@ def _embed_config(cfg: dict) -> dict:
   raw = dict(cfg.get("embed", {}))
   model = raw.pop("model")
   return {"model": model, **raw}
+
+
+@dataclass
+class ProcessingContext:
+  cfg: dict
+  _embedder: Embedder | None = field(default=None, init=False)
+  _tagger: EntityTagger | None = field(default=None, init=False)
+
+  @property
+  def embedder(self) -> Embedder:
+    if self._embedder is None:
+      self._embedder = Embedder(**_embed_config(self.cfg))
+    return self._embedder
+
+  @property
+  def tagger(self) -> EntityTagger:
+    if self._tagger is None:
+      self._tagger = EntityTagger(
+        _entities_config(self.cfg).get("spacy_model"),
+        _entity_dictionary(self.cfg),
+      )
+    return self._tagger
 
 
 def _embedding_dim(cfg: dict) -> int:

@@ -52,7 +52,9 @@ class EntityTagger:
       if canonical:
         tags.append((canonical, resolved_type, 1.0, "dictionary"))
       else:
-        tags.append((ent.text.strip(), entity_type, 0.7, "ner"))
+        tags.append(
+          (normalize_ner_canonical(ent.text, entity_type), entity_type, 0.7, "ner")
+        )
     return tags
 
   def _resolve_dictionary(self, value: str) -> tuple[str | None, str | None]:
@@ -114,3 +116,9 @@ def _tag_rank(tag: EntityTag) -> tuple[int, float]:
   source_rank = 2 if source == "dictionary" else 1
   return source_rank, confidence
 
+
+def normalize_ner_canonical(value: str, entity_type: str) -> str:
+  normalized = re.sub(r"\s+", " ", value).strip()
+  if entity_type in {"person", "place"}:
+    return normalized.casefold().title()
+  return normalized

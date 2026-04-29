@@ -36,6 +36,34 @@ def test_store_items_is_idempotent(tmp_path):
   assert conn.execute("SELECT count(*) FROM item_entities").fetchone()[0] == 1
 
 
+def test_store_items_replaces_entity_links_for_existing_item(tmp_path):
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+  item = Item(
+    id=hash_id("email", "<replace@example.test>"),
+    source="email",
+    source_id="<replace@example.test>",
+    timestamp=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+    sender="alice@example.test",
+    recipients=["bob@example.test"],
+    content="Alice then Diana.",
+  )
+
+  store_items(conn, [item], [[0.1]], [[("Alice", "person", 1.0, "dictionary")]])
+  store_items(conn, [item], [[0.1]], [[("Diana", "person", 1.0, "dictionary")]])
+
+  rows = conn.execute(
+    """
+    SELECT e.canonical_name
+    FROM item_entities ie
+    JOIN entities e ON e.id = ie.entity_id
+    WHERE ie.item_id = ?
+    """,
+    (item.id,),
+  ).fetchall()
+  assert [row["canonical_name"] for row in rows] == ["Diana"]
+
+
 def test_open_db_readonly_does_not_require_writes(tmp_path):
   path = tmp_path / "yaams.db"
   conn = open_db(path)
@@ -71,3 +99,49 @@ def test_seed_entities_promotes_dictionary_entries(tmp_path):
   assert row["entity_type"] == "org"
   assert "LAS" in row["aliases"]
   assert row["pending_review"] == 0
+
+
+def test_seed_entities_promotes_case_variant_pending_entity(tmp_path):
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+  item = Item(
+    id=hash_id("email", "<case@example.test>"),
+    source="email",
+    source_id="<case@example.test>",
+    timestamp=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+    sender="alice@example.test",
+    recipients=["bob@example.test"],
+    content="alice appeared before dictionary promotion.",
+  )
+  store_items(conn, [item], [[0.1]], [[("alice", "person", 0.7, "ner")]])
+
+  seed_entities(conn, [{"canonical": "Alice", "type": "person", "aliases": ["NC"]}])
+
+  rows = conn.execute(
+    "SELECT canonical_name, pending_review FROM entities"
+  ).fetchall()
+  assert [(row["canonical_name"], row["pending_review"]) for row in rows] == [
+    ("Alice", 0)
+  ]
+
+
+def test_ner_entities_are_pending_review(tmp_path):
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+  item = Item(
+    id=hash_id("email", "<ner@example.test>"),
+    source="email",
+    source_id="<ner@example.test>",
+    timestamp=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+    sender="alice@example.test",
+    recipients=["bob@example.test"],
+    content="A novel organization appeared.",
+  )
+
+  store_items(conn, [item], [[0.1]], [[("Novel Org", "org", 0.7, "ner")]])
+
+  row = conn.execute(
+    "SELECT pending_review FROM entities WHERE canonical_name = ?",
+    ("Novel Org",),
+  ).fetchone()
+  assert row["pending_review"] == 1

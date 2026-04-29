@@ -61,7 +61,7 @@ def ingest(
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
   conn = open_db(db_path, require_vec=require_vec)
-  run_stats: dict[str, dict[str, int]] = defaultdict(
+  run_stats: dict[str, dict[str, object]] = defaultdict(
     lambda: {"seen": 0, "new": 0, "skipped": 0}
   )
   try:
@@ -84,6 +84,8 @@ def ingest(
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["since"] = source_stats["since"]
+      run_stats[src]["paths"] = _source_paths(src, cfg)
     print_stats(conn, db_path, run_stats, dry_run=dry_run)
   finally:
     conn.close()
@@ -123,7 +125,7 @@ def ingest_source(
   batch_size: int,
   dry_run: bool,
   processors,
-) -> dict[str, int]:
+) -> dict[str, object]:
   since = _effective_since(conn, source, cfg)
   batch: list[Item] = []
   latest_ts = since
@@ -147,6 +149,7 @@ def ingest_source(
     "seen": seen,
     "new": inserted,
     "skipped": int(getattr(adapter, "skipped_emlx", 0)),
+    "since": since.isoformat(),
   }
 
 
@@ -179,7 +182,7 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
 def print_stats(
   conn,
   db_path: Path,
-  run_stats: dict[str, dict[str, int]],
+  run_stats: dict[str, dict[str, object]],
   *,
   dry_run: bool,
 ) -> None:
@@ -191,19 +194,26 @@ def print_stats(
   else:
     prefix = "Database stats."
   click.echo(prefix)
+  _print_sources(run_stats)
   for source in ["imessage", "email"]:
     if source in run_stats:
       seen = run_stats[source]["seen"]
       new = run_stats[source]["new"]
       skipped = run_stats[source].get("skipped", 0)
-      suffix = f"{new:,} new"
-      if skipped:
-        suffix = f"{suffix}, {skipped:,} skipped"
-      click.echo(f"  {source}: {seen:,} items ({suffix})")
+      if dry_run:
+        suffix = "would process, 0 written"
+        if skipped:
+          suffix = f"{suffix}, {skipped:,} skipped"
+        click.echo(f"  {source}: {seen:,} items ({suffix})")
+      else:
+        suffix = f"{new:,} new"
+        if skipped:
+          suffix = f"{suffix}, {skipped:,} skipped"
+        click.echo(f"  {source}: {seen:,} items ({suffix})")
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
   click.echo(
-    f"  Entities: {stats['entities']:,} unique, "
+    f"  Entities in DB: {stats['entities']:,} unique, "
     f"{stats['entity_links']:,} links"
   )
   if db_path.exists():
@@ -223,6 +233,35 @@ def _sources_to_run(source: str) -> list[str]:
 
 def _source_enabled(cfg: dict, source: str) -> bool:
   return bool(cfg.get("ingest", {}).get(source, {}).get("enabled", False))
+
+
+def _source_paths(source: str, cfg: dict) -> list[str]:
+  source_cfg = cfg.get("ingest", {}).get(source, {})
+  if source == "imessage":
+    path = source_cfg.get("chat_db_path")
+    return [f"chat.db: {Path(path).expanduser()}" if path else "chat.db: n/a"]
+  if source == "email":
+    paths = []
+    for entry in source_cfg.get("sources", []):
+      source_type = entry.get("type", "unknown")
+      path = entry.get("path", "n/a")
+      paths.append(f"{source_type}: {Path(path).expanduser()}")
+    return paths or ["n/a"]
+  return ["n/a"]
+
+
+def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
+  if not run_stats:
+    return
+  click.echo("  Sources:")
+  for source in ["imessage", "email"]:
+    if source not in run_stats:
+      continue
+    since = run_stats[source].get("since", "n/a")
+    paths = run_stats[source].get("paths", [])
+    click.echo(f"    {source} since {since}:")
+    for path in paths:
+      click.echo(f"      - {path}")
 
 
 def _embed_config(cfg: dict) -> dict:

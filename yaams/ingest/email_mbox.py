@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 import email
 from email import policy
 from email.message import EmailMessage, Message
@@ -24,28 +24,42 @@ MAX_EMAIL_CHARS = 50_000
 class EmailAdapter:
   sources: list[dict]
   skipped_emlx: int = field(default=0, init=False)
+  skipped_email_dates: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_emlx = 0
+    self.skipped_email_dates = 0
     cutoff = ensure_utc(since)
     for source in self.sources:
       source_type = source.get("type")
       path = expand_path(source["path"])
       if source_type == "mbox":
-        yield from extract_mbox(path, cutoff)
+        yield from extract_mbox(path, cutoff, on_skip_date=self._record_date_skip)
       elif source_type == "emlx":
-        yield from extract_emlx_tree(path, cutoff, on_skip=self._record_emlx_skip)
+        yield from extract_emlx_tree(
+          path,
+          cutoff,
+          on_skip=self._record_emlx_skip,
+          on_skip_date=self._record_date_skip,
+        )
       else:
         raise ValueError(f"Unsupported email source type: {source_type}")
 
   def _record_emlx_skip(self, path: Path, error: Exception) -> None:
     self.skipped_emlx += 1
 
+  def _record_date_skip(self, path: Path | None, date_header: str) -> None:
+    self.skipped_email_dates += 1
 
-def extract_mbox(path: Path, since: datetime) -> Iterator[Item]:
+
+def extract_mbox(
+  path: Path,
+  since: datetime,
+  on_skip_date: Callable[[Path | None, str], None] | None = None,
+) -> Iterator[Item]:
   mbox = mailbox.mbox(path)
   for message in mbox:
-    item = email_to_item(message, since)
+    item = email_to_item(message, since, on_skip_date=on_skip_date)
     if item is not None:
       yield item
 
@@ -54,6 +68,7 @@ def extract_emlx_tree(
   path: Path,
   since: datetime,
   on_skip: Callable[[Path, Exception], None] | None = None,
+  on_skip_date: Callable[[Path | None, str], None] | None = None,
 ) -> Iterator[Item]:
   files = [path] if path.is_file() else sorted(path.rglob("*.emlx"))
   for emlx_path in files:
@@ -63,7 +78,12 @@ def extract_emlx_tree(
       if on_skip is not None:
         on_skip(emlx_path, exc)
       continue
-    item = email_to_item(message, since, fallback_path=emlx_path)
+    item = email_to_item(
+      message,
+      since,
+      fallback_path=emlx_path,
+      on_skip_date=on_skip_date,
+    )
     if item is not None:
       yield item
 
@@ -80,11 +100,18 @@ def email_to_item(
   message: Message,
   since: datetime,
   fallback_path: Path | None = None,
+  on_skip_date: Callable[[Path | None, str], None] | None = None,
 ) -> Item | None:
   date_header = message.get("Date")
   if not date_header:
+    if on_skip_date is not None:
+      on_skip_date(fallback_path, str(date_header or ""))
     return None
-  timestamp = ensure_utc(email.utils.parsedate_to_datetime(date_header))
+  timestamp = parse_email_datetime(date_header)
+  if timestamp is None:
+    if on_skip_date is not None:
+      on_skip_date(fallback_path, str(date_header))
+    return None
   if timestamp < ensure_utc(since):
     return None
 
@@ -122,6 +149,29 @@ def email_to_item(
       "reply_to": message.get("Reply-To"),
     },
   )
+
+
+def parse_email_datetime(date_header: str) -> datetime | None:
+  try:
+    return ensure_utc(email.utils.parsedate_to_datetime(date_header))
+  except (TypeError, ValueError):
+    pass
+
+  normalized = " ".join(str(date_header).strip().split())
+  for fmt in [
+    "%A, %B %d, %Y",
+    "%A, %b %d, %Y",
+    "%a, %B %d, %Y",
+    "%a, %b %d, %Y",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%Y-%m-%d",
+  ]:
+    try:
+      return datetime.strptime(normalized, fmt).replace(tzinfo=UTC)
+    except ValueError:
+      continue
+  return None
 
 
 def extract_text_body(message: Message) -> str:

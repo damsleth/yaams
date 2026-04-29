@@ -84,6 +84,8 @@ def ingest(
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
+      run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
       run_stats[src]["decoded_attributed_body"] = source_stats[
         "decoded_attributed_body"
       ]
@@ -154,7 +156,10 @@ def ingest_source(
   return {
     "seen": seen,
     "new": inserted,
-    "skipped": int(getattr(adapter, "skipped_emlx", 0)),
+    "skipped": int(getattr(adapter, "skipped_emlx", 0))
+    + int(getattr(adapter, "skipped_email_dates", 0)),
+    "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
+    "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
@@ -279,6 +284,14 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
     skipped = int(stats.get("skipped_attributed_body", 0))
     if decoded or skipped:
       click.echo(f"    attributedBody: {decoded:,} decoded, {skipped:,} skipped")
+  if source == "email":
+    skipped_emlx = int(stats.get("skipped_emlx", 0))
+    skipped_dates = int(stats.get("skipped_email_dates", 0))
+    if skipped_emlx or skipped_dates:
+      click.echo(
+        f"    skipped email details: {skipped_emlx:,} parse errors, "
+        f"{skipped_dates:,} invalid dates"
+      )
 
 
 def _embed_config(cfg: dict) -> dict:

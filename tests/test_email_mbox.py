@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from email.message import EmailMessage
 
-from yaams.ingest.email_mbox import EmailAdapter, email_to_item, parse_emlx
+from yaams.ingest.email_mbox import (
+  EmailAdapter,
+  email_to_item,
+  parse_email_datetime,
+  parse_emlx,
+)
 
 
 def make_message() -> EmailMessage:
@@ -28,6 +33,35 @@ def test_email_to_item_extracts_plain_text_and_headers():
   assert item.recipients == ["bob@example.test", "alice@example.test"]
   assert item.timestamp == datetime(2026, 4, 29, 10, 0, tzinfo=UTC)
   assert "cabin plan" in item.content
+
+
+def test_email_to_item_accepts_date_only_header():
+  message = make_message()
+  message.replace_header("Date", "Thursday, April 10, 2014")
+
+  item = email_to_item(message, datetime(2014, 1, 1, tzinfo=UTC))
+
+  assert item is not None
+  assert item.timestamp == datetime(2014, 4, 10, tzinfo=UTC)
+
+
+def test_email_to_item_skips_unparseable_date():
+  message = make_message()
+  message.replace_header("Date", "not a date")
+  skipped = []
+
+  item = email_to_item(
+    message,
+    datetime(2014, 1, 1, tzinfo=UTC),
+    on_skip_date=lambda path, date: skipped.append((path, date)),
+  )
+
+  assert item is None
+  assert skipped == [(None, "not a date")]
+
+
+def test_parse_email_datetime_supports_date_only_formats():
+  assert parse_email_datetime("April 10, 2014") == datetime(2014, 4, 10, tzinfo=UTC)
 
 
 def test_email_thread_id_prefers_in_reply_to():
@@ -74,3 +108,17 @@ def test_email_adapter_counts_skipped_emlx_files(tmp_path):
 
   assert len(items) == 1
   assert adapter.skipped_emlx == 1
+
+
+def test_email_adapter_counts_invalid_dates(tmp_path):
+  bad = make_message()
+  bad.replace_header("Date", "not a date")
+  raw_message = bad.as_bytes()
+  emlx = tmp_path / "bad-date.emlx"
+  emlx.write_bytes(str(len(raw_message)).encode() + b"\n" + raw_message)
+  adapter = EmailAdapter([{"type": "emlx", "path": str(tmp_path)}])
+
+  items = list(adapter.extract(datetime(2026, 1, 1, tzinfo=UTC)))
+
+  assert items == []
+  assert adapter.skipped_email_dates == 1

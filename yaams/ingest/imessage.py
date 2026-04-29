@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 import shutil
@@ -16,11 +16,15 @@ from yaams.time import ensure_utc
 APPLE_EPOCH_UNIX_SECONDS = 978_307_200
 
 
-@dataclass(frozen=True)
+@dataclass
 class IMessageAdapter:
   chat_db_path: Path
+  decoded_attributed_body: int = field(default=0, init=False)
+  skipped_attributed_body: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
+    self.decoded_attributed_body = 0
+    self.skipped_attributed_body = 0
     source_path = expand_path(self.chat_db_path)
     cutoff = ensure_utc(since)
     with tempfile.TemporaryDirectory(prefix="yaams-imessage-") as tmpdir:
@@ -28,9 +32,19 @@ class IMessageAdapter:
       conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
       conn.row_factory = sqlite3.Row
       try:
-        yield from extract_from_connection(conn, cutoff)
+        stats = IMessageExtractStats()
+        for item in extract_from_connection(conn, cutoff, stats=stats):
+          yield item
+        self.decoded_attributed_body = stats.decoded_attributed_body
+        self.skipped_attributed_body = stats.skipped_attributed_body
       finally:
         conn.close()
+
+
+@dataclass
+class IMessageExtractStats:
+  decoded_attributed_body: int = 0
+  skipped_attributed_body: int = 0
 
 
 def copy_chat_db(chat_db_path: Path, tmpdir: Path) -> Path:
@@ -51,6 +65,7 @@ def copy_chat_db(chat_db_path: Path, tmpdir: Path) -> Path:
 def extract_from_connection(
   conn: sqlite3.Connection,
   since: datetime,
+  stats: IMessageExtractStats | None = None,
 ) -> Iterator[Item]:
   columns = _table_columns(conn, "message")
   _require_columns(columns, {"guid", "text", "date", "is_from_me", "handle_id"})
@@ -101,7 +116,16 @@ def extract_from_connection(
   apple_since = datetime_to_apple_ts_for_db(conn, since)
   participant_cache: dict[int, list[str]] = {}
   for row in conn.execute(query, (apple_since,)):
-    text = extract_message_text(row["text"], row["attributedBody"]).strip()
+    text, decoded_binary = extract_message_text(
+      row["text"],
+      row["attributedBody"],
+    )
+    text = text.strip()
+    if stats is not None and row["attributedBody"] and not row["text"]:
+      if text and decoded_binary:
+        stats.decoded_attributed_body += 1
+      elif not text:
+        stats.skipped_attributed_body += 1
     if not text:
       continue
     timestamp = apple_ts_to_datetime(row["date"])
@@ -160,22 +184,36 @@ def datetime_to_apple_ts_for_db(
 def extract_message_text(
   text: str | None,
   attributed_body: bytes | None,
-) -> str:
+) -> tuple[str, bool]:
   if text:
-    return text
+    return text, False
   if not attributed_body:
-    return ""
-  try:
-    import typedstream
+    return "", False
+  return extract_attributed_body_text(attributed_body), True
 
-    stream = typedstream.unarchive_from_data(attributed_body)
-    for obj in getattr(stream, "contents", []):
-      value = getattr(obj, "value", None)
-      if isinstance(value, str):
-        return value
+
+def extract_attributed_body_text(attributed_body: bytes) -> str:
+  try:
+    import Foundation
+  except ImportError:
+    return ""
+
+  try:
+    data = Foundation.NSData.dataWithBytes_length_(
+      attributed_body,
+      len(attributed_body),
+    )
+    obj = Foundation.NSUnarchiver.unarchiveObjectWithData_(data)
   except Exception:
     return ""
-  return ""
+
+  if obj is None:
+    return ""
+  if hasattr(obj, "string"):
+    value = obj.string()
+  else:
+    value = obj
+  return str(value or "")
 
 
 def fetch_chat_participants(

@@ -84,6 +84,12 @@ def ingest(
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["decoded_attributed_body"] = source_stats[
+        "decoded_attributed_body"
+      ]
+      run_stats[src]["skipped_attributed_body"] = source_stats[
+        "skipped_attributed_body"
+      ]
       run_stats[src]["since"] = source_stats["since"]
       run_stats[src]["paths"] = _source_paths(src, cfg)
     print_stats(conn, db_path, run_stats, dry_run=dry_run)
@@ -149,6 +155,8 @@ def ingest_source(
     "seen": seen,
     "new": inserted,
     "skipped": int(getattr(adapter, "skipped_emlx", 0)),
+    "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
+    "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
   }
 
@@ -210,6 +218,7 @@ def print_stats(
         if skipped:
           suffix = f"{suffix}, {skipped:,} skipped"
         click.echo(f"  {source}: {seen:,} items ({suffix})")
+      _print_source_diagnostics(source, run_stats[source])
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
   click.echo(
@@ -262,6 +271,14 @@ def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
     click.echo(f"    {source} since {since}:")
     for path in paths:
       click.echo(f"      - {path}")
+
+
+def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
+  if source == "imessage":
+    decoded = int(stats.get("decoded_attributed_body", 0))
+    skipped = int(stats.get("skipped_attributed_body", 0))
+    if decoded or skipped:
+      click.echo(f"    attributedBody: {decoded:,} decoded, {skipped:,} skipped")
 
 
 def _embed_config(cfg: dict) -> dict:

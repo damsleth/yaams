@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
+import yaams.ingest.imessage as imessage
 from yaams.ingest.imessage import (
   IMessageAdapter,
+  IMessageExtractStats,
   apple_ts_to_datetime,
   datetime_to_apple_ts_nanos,
+  extract_from_connection,
   extract_message_text,
 )
 
@@ -20,7 +23,86 @@ def test_apple_timestamp_round_trip():
 def test_attributed_body_parse_failure_returns_empty_text():
   body = b"NSMutableAttributedString probably-not-the-message-body"
 
-  assert extract_message_text(None, body) == ""
+  assert extract_message_text(None, body) == ("", True)
+
+
+def test_attributed_body_decoder_extracts_binary_text(monkeypatch, tmp_path):
+  monkeypatch.setattr(
+    imessage,
+    "extract_attributed_body_text",
+    lambda body: "Decoded message",
+  )
+  chat_db = tmp_path / "chat.db"
+  conn = sqlite3.connect(chat_db)
+  conn.row_factory = sqlite3.Row
+  conn.executescript(
+    """
+    CREATE TABLE message (
+      guid TEXT,
+      text TEXT,
+      attributedBody BLOB,
+      date INTEGER,
+      is_from_me INTEGER,
+      handle_id INTEGER,
+      associated_message_type INTEGER,
+      cache_has_attachments INTEGER
+    );
+    CREATE TABLE handle (
+      id TEXT,
+      service TEXT
+    );
+    CREATE TABLE chat (
+      guid TEXT,
+      chat_identifier TEXT,
+      display_name TEXT
+    );
+    CREATE TABLE chat_message_join (
+      chat_id INTEGER,
+      message_id INTEGER
+    );
+    CREATE TABLE chat_handle_join (
+      chat_id INTEGER,
+      handle_id INTEGER
+    );
+    """
+  )
+  sent_at = datetime(2026, 4, 29, 12, 0, tzinfo=UTC)
+  conn.execute(
+    "INSERT INTO handle (ROWID, id, service) VALUES (1, ?, 'iMessage')",
+    ("+4712345678",),
+  )
+  conn.execute(
+    "INSERT INTO chat (ROWID, guid, chat_identifier, display_name) VALUES (1, ?, ?, ?)",
+    ("chat-guid", "+4712345678", None),
+  )
+  conn.execute("INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (1, 1)")
+  conn.execute(
+    """
+    INSERT INTO message (
+      ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
+      associated_message_type, cache_has_attachments
+    )
+    VALUES (1, ?, NULL, ?, ?, 0, 1, 0, 0)
+    """,
+    ("binary-message", b"typedstream", datetime_to_apple_ts_nanos(sent_at)),
+  )
+  conn.execute("INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1)")
+  conn.commit()
+
+  stats = IMessageExtractStats()
+  items = list(
+    extract_from_connection(
+      conn,
+      datetime(2026, 1, 1, tzinfo=UTC),
+      stats=stats,
+    )
+  )
+  conn.close()
+
+  assert len(items) == 1
+  assert items[0].content == "Decoded message"
+  assert stats.decoded_attributed_body == 1
+  assert stats.skipped_attributed_body == 0
 
 
 def test_imessage_adapter_extracts_messages(tmp_path):

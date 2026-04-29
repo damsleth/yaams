@@ -20,6 +20,16 @@ Phase B query, synthesis, feedback, and signal logging are not implemented yet.
 
 Use Python 3.11 or newer.
 
+To run setup, database initialization, and dry-run ingest in one step:
+
+```bash
+scripts/install_phase_a.sh
+```
+
+The script creates `.venv`, installs requirements, downloads the spaCy model, runs `init_db`, runs `ingest --dry-run`, and prints the remaining real-ingest commands.
+
+Manual setup:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -83,4 +93,3 @@ sqlite3 ~/yaams/data.db "SELECT timestamp, sender, substr(content, 1, 80) FROM i
 ## Privacy
 
 YAAMS is designed for local-only compute. The default stack runs extraction, entity tagging, embeddings, and storage locally. See [docs/privacy-security.md](docs/privacy-security.md) before running against personal data.
-

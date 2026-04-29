@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import hashlib
 import mailbox
+import re
 from typing import Callable, Iterator
 
 from yaams.config import expand_path
@@ -17,7 +18,32 @@ from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
 
-MAX_EMAIL_CHARS = 50_000
+MAX_EMAIL_CHARS = 20_000
+
+_QUOTE_LINE = re.compile(r"^>+.*$", re.MULTILINE)
+_ON_WROTE = re.compile(
+  r"\n?-{2,}.*\n?On .{0,200}wrote:\s*\n?",
+  re.DOTALL,
+)
+_FORWARDED = re.compile(
+  r"\n?-{3,}\s*(Forwarded|Original) (message|Message)\s*-{3,}.*",
+  re.DOTALL | re.IGNORECASE,
+)
+_SIG_BOUNDARY = re.compile(r"\n--\s*\n.*", re.DOTALL)
+_SIG_KEYWORDS = re.compile(
+  r"\n(Best regards?|Kind regards?|Regards?|Mvh|Med vennlig hilsen|Vennlig hilsen|Hilsen|Cheers?|Thanks?|Thank you|Sent from my \w+)[^\n]*\n.*",
+  re.DOTALL | re.IGNORECASE,
+)
+
+
+def clean_email_body(text: str) -> str:
+  text = _FORWARDED.sub("", text)
+  text = _ON_WROTE.sub("", text)
+  text = _QUOTE_LINE.sub("", text)
+  text = _SIG_BOUNDARY.sub("", text)
+  text = _SIG_KEYWORDS.sub("", text)
+  lines = [l for l in text.splitlines() if l.strip()]
+  return "\n".join(lines)
 
 
 @dataclass
@@ -115,7 +141,7 @@ def email_to_item(
   if timestamp < ensure_utc(since):
     return None
 
-  body = extract_text_body(message).strip()
+  body = clean_email_body(extract_text_body(message).strip())
   if not body:
     return None
   if len(body) > MAX_EMAIL_CHARS:

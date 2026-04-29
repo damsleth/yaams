@@ -26,7 +26,7 @@ To run setup, database initialization, and dry-run ingest in one step:
 scripts/install_phase_a.sh
 ```
 
-The script creates `.venv`, installs requirements, downloads the spaCy model, runs `init_db`, runs `ingest --dry-run`, and prints the remaining real-ingest commands.
+The script creates `.venv`, installs requirements, walks you through Phase A settings with sane defaults, downloads the spaCy model, runs `init_db`, runs `ingest --dry-run`, and prints the remaining real-ingest commands.
 
 Manual setup:
 
@@ -34,7 +34,14 @@ Manual setup:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python scripts/configure_phase_a.py --config config.yaml
 python -m spacy download xx_ent_wiki_sm
+```
+
+On Apple Silicon, use the Homebrew arm64 Python explicitly - PyTorch 2.4+ has no x86_64 macOS wheels, so a Rosetta Python will be stuck on torch 2.2 and fail at embedding time:
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv .venv
 ```
 
 On Apple Silicon, `config.yaml` defaults embeddings to `mps`. Change `embed.device` to `cpu` if MPS is not available.
@@ -43,17 +50,24 @@ iMessage rows with plain `text` ingest normally. Rows that only contain Apple's 
 
 ## Configure
 
-Edit [config.yaml](config.yaml) before the first real ingest:
+The installer runs an onboarding wizard for [config.yaml](config.yaml). To rerun it:
+
+```bash
+python scripts/configure_phase_a.py --config config.yaml
+```
+
+Press Enter through the prompts to accept the batteries-included defaults:
 
 - `db_path`: destination SQLite database
 - `ingest.since`: earliest item timestamp to ingest
 - `ingest.imessage.chat_db_path`: Messages database path
 - `ingest.email.sources`: `.emlx` tree or `.mbox` inputs
 - `entities.dictionary`: known people, places, projects, and aliases
+- `embed.device`: `mps` on Apple Silicon, otherwise `cpu`
 
 ### Email Sources
 
-The default email source is Apple Mail's local store:
+The default email source is Apple Mail's local store. The wizard uses the newest `~/Library/Mail/V*` directory it finds:
 
 ```yaml
 ingest:
@@ -83,11 +97,20 @@ Dry-run ingestion first:
 python scripts/ingest.py --dry-run
 ```
 
-Run ingest:
+Run ingest (all sources):
 
 ```bash
 python scripts/ingest.py
 ```
+
+Run a single source:
+
+```bash
+python scripts/ingest.py --source imessage
+python scripts/ingest.py --source email
+```
+
+`--source` accepts `all` (default), `imessage`, or `email`. Add `--require-vec` to abort if sqlite-vec is not loaded.
 
 Check database stats:
 

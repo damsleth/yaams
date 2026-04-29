@@ -22,8 +22,9 @@ class Embedder:
     if device:
       kwargs["device"] = device
     self.model = SentenceTransformer(model, **kwargs)
+    self.model.max_seq_length = 512
     self.batch_size = batch_size
-    self.dim = self.model.get_sentence_embedding_dimension()
+    self.dim = self.model.get_embedding_dimension()
     if dimension is not None and self.dim != int(dimension):
       raise ValueError(
         f"Embedding model dimension {self.dim} does not match configured {dimension}"

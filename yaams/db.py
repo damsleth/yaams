@@ -34,8 +34,15 @@ def _load_sqlite_vec(conn: sqlite3.Connection, *, require_vec: bool) -> None:
   try:
     import sqlite_vec
 
-    sqlite_vec.load(conn)
-    loaded = True
+    try:
+      conn.enable_load_extension(True)
+      sqlite_vec.load(conn)
+      loaded = True
+    finally:
+      try:
+        conn.enable_load_extension(False)
+      except Exception:
+        pass
   except Exception as first_error:
     try:
       conn.enable_load_extension(True)

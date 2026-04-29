@@ -169,6 +169,10 @@ Next steps for initial ingestion
    - If MPS fails, edit config.yaml and set embed.device: cpu.
    - If sqlite-vec init fails, keep --require-vec for the real run and fix the dependency rather than ingesting data that Phase B cannot vector-search.
 
+7. Troubleshooting database path permissions:
+   - If init_db fails creating ${resolved_db_path}, create the parent directory manually or change db_path in ${CONFIG_PATH}.
+   - For a local repo-contained test run, use a scratch config with db_path under .tmp/.
+
 EOF
 
   if [ "$dry_run_status" != "0" ]; then
@@ -207,7 +211,13 @@ INIT_ARGS=(scripts/init_db.py --config "$CONFIG_PATH")
 if [ "$REQUIRE_VEC" != "0" ]; then
   INIT_ARGS+=(--require-vec)
 fi
-run "$VENV_PY" "${INIT_ARGS[@]}"
+if run "$VENV_PY" "${INIT_ARGS[@]}"; then
+  :
+else
+  status=$?
+  print_next_steps "$status"
+  exit "$status"
+fi
 
 log "Running dry-run ingest"
 DRY_RUN_ARGS=(scripts/ingest.py --config "$CONFIG_PATH" --source "$DRY_RUN_SOURCE" --dry-run)

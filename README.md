@@ -39,6 +39,8 @@ python -m spacy download xx_ent_wiki_sm
 
 On Apple Silicon, `config.yaml` defaults embeddings to `mps`. Change `embed.device` to `cpu` if MPS is not available.
 
+iMessage rows with plain `text` ingest normally. Rows that only contain Apple's binary `attributedBody` are best-effort; Phase A skips them if no compatible local parser is available.
+
 ## Configure
 
 Edit [config.yaml](config.yaml) before the first real ingest:

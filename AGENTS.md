@@ -90,8 +90,6 @@ YAAMS/
 └── scripts/                   # init_db, ingest, reset_db, analyze
 ```
 
-CLI command is `yaams` (not `sb` as the plans suggest).
-
 ## Phases
 
 - **Phase A** - iMessage + email ingest, end-to-end. Spec: `.plans/yaams_phase_a_ingest.md`.

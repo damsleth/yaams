@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 
-set -u
+set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${YAAMS_CONFIG:-config.yaml}"
 VENV_DIR="${YAAMS_VENV:-.venv}"
-PYTHON_BIN="${PYTHON:-python3}"
 SPACY_MODEL="${YAAMS_SPACY_MODEL:-xx_ent_wiki_sm}"
 DRY_RUN_SOURCE="${YAAMS_DRY_RUN_SOURCE:-all}"
 REQUIRE_VEC="${YAAMS_REQUIRE_VEC:-1}"
@@ -19,7 +18,7 @@ Usage: scripts/install_phase_a.sh
 Environment overrides:
   YAAMS_CONFIG=config.yaml          Config file to use
   YAAMS_VENV=.venv                 Virtualenv directory
-  PYTHON=python3                   Python executable for venv creation
+  PYTHON=python3.12                Python executable for venv creation
   YAAMS_SPACY_MODEL=xx_ent_wiki_sm spaCy model to download
   YAAMS_DRY_RUN_SOURCE=all         Dry-run source: all, imessage, or email
   YAAMS_REQUIRE_VEC=1              Use 0 to skip --require-vec during init
@@ -38,12 +37,83 @@ run() {
 }
 
 python_version_check() {
-  "$PYTHON_BIN" - <<'PY'
+  "$1" - <<'PY'
 import sys
 
 if sys.version_info < (3, 11):
   raise SystemExit("Python 3.11 or newer is required")
 PY
+}
+
+python_version() {
+  "$1" - <<'PY'
+import sys
+
+print(".".join(str(part) for part in sys.version_info[:3]))
+PY
+}
+
+python_is_compatible() {
+  "$1" - <<'PY'
+import sys
+
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+}
+
+select_python() {
+  local candidate
+  if [ -n "${PYTHON:-}" ]; then
+    if command -v "$PYTHON" >/dev/null 2>&1 && python_is_compatible "$PYTHON"; then
+      command -v "$PYTHON"
+      return 0
+    fi
+    printf 'Configured PYTHON=%s is not Python 3.11 or newer.\n' "$PYTHON" >&2
+    return 1
+  fi
+
+  for candidate in python3.12 python3.11 python3.13 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && python_is_compatible "$candidate"; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
+  cat >&2 <<'EOF'
+Could not find Python 3.11 or newer.
+
+On macOS, install one with Homebrew:
+  brew install python@3.12
+
+Then rerun:
+  PYTHON=python3.12 scripts/install_phase_a.sh
+EOF
+  return 1
+}
+
+ensure_venv() {
+  local python_bin="$1"
+
+  if [ -x "$VENV_DIR/bin/python" ]; then
+    if python_is_compatible "$VENV_DIR/bin/python"; then
+      log "Reusing virtualenv at $VENV_DIR"
+      return 0
+    fi
+
+    if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
+      log "Recreating incompatible virtualenv at $VENV_DIR"
+      rm -rf "$VENV_DIR"
+    else
+      cat >&2 <<EOF
+${VENV_DIR} exists but is not a compatible Python virtualenv.
+Move it aside or set YAAMS_VENV to another directory.
+EOF
+      return 1
+    fi
+  fi
+
+  log "Creating virtualenv at $VENV_DIR"
+  run "$python_bin" -m venv "$VENV_DIR"
 }
 
 db_path() {
@@ -116,17 +186,14 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 
 log "Checking Python"
+PYTHON_BIN="$(select_python)"
 run command -v "$PYTHON_BIN"
-python_version_check
-
-if [ ! -x "$VENV_DIR/bin/python" ]; then
-  log "Creating virtualenv at $VENV_DIR"
-  run "$PYTHON_BIN" -m venv "$VENV_DIR"
-else
-  log "Reusing virtualenv at $VENV_DIR"
-fi
+python_version_check "$PYTHON_BIN"
+printf 'Using Python %s\n' "$(python_version "$PYTHON_BIN")"
+ensure_venv "$PYTHON_BIN"
 
 VENV_PY="$VENV_DIR/bin/python"
+printf 'Using venv Python %s\n' "$(python_version "$VENV_PY")"
 
 log "Installing Python dependencies"
 run "$VENV_PY" -m pip install --upgrade pip
@@ -152,4 +219,3 @@ else
   print_next_steps "$status"
   exit "$status"
 fi
-

@@ -51,6 +51,22 @@ Edit [config.yaml](config.yaml) before the first real ingest:
 - `ingest.email.sources`: `.emlx` tree or `.mbox` inputs
 - `entities.dictionary`: known people, places, projects, and aliases
 
+### Email Sources
+
+The default email source is Apple Mail's local store:
+
+```yaml
+ingest:
+  email:
+    sources:
+      - type: emlx
+        path: ~/Library/Mail/V10
+```
+
+This is the native macOS Mail.app location. Outlook for Mac uses a separate profile/cache location under `~/Library/Group Containers/UBF8T346G9.Office/...`; YAAMS does not read that directly in Phase A.
+
+If you want Outlook mail included now, sync the same accounts into Mail.app and let YAAMS read the Apple Mail `.emlx` store, or export mail to `.mbox` and point `ingest.email.sources` at that file.
+
 Phase A writes only to the YAAMS SQLite database. It does not write to `cognitive-ledger` or `ledger-inbox`.
 
 ## Run

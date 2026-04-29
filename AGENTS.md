@@ -113,6 +113,7 @@ Other agents may be working in this repo at the same time as you - running A/B t
 - **Long-running runs go in the background.** Ingest passes, eval suites, A/B sweeps - launch them in the background and check back. Don't block the repo on a 40-minute embedding job.
 - **Branch for non-trivial changes.** Schema migrations, retrieval-weight changes, prompt rewrites, anything that changes outputs - branch. Trivial fixes on `main` are fine.
 - **Don't edit `.plans/` casually.** Those are the design source of truth. Propose changes in a PR or a `.tmp/proposal-*.md` first.
+- **Move finished plans to `.plans/done/`.** Once a plan's been implemented (or explicitly abandoned), move the file into `.plans/done/` so the top of `.plans/` only shows what's still live. Keep the filename so cross-references in commits and other plans still resolve.
 - **Append to signals, don't rewrite.** The `queries` and `signals` tables are append-only by design. If a record is wrong, write a correcting signal; don't `UPDATE` history.
 
 ## Coding conventions

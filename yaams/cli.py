@@ -14,6 +14,7 @@ from yaams.consolidate import (
   SessionConfig,
   build_consolidations,
 )
+from yaams.retrieve import HybridQueryConfig, query as run_query
 from yaams.db import open_db
 from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
@@ -140,6 +141,120 @@ def reset_db(config_path: str, yes: bool) -> None:
   if db_path.exists():
     db_path.unlink()
   click.echo(f"Removed database: {db_path}")
+
+
+@cli.command("query")
+@click.argument("text", nargs=-1, required=True)
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--top-k", default=10, show_default=True, type=int)
+@click.option(
+  "--source",
+  "source_filter",
+  multiple=True,
+  help="Filter to specific source(s); repeat for multiple (e.g. --source imessage --source teams_swon)",
+)
+@click.option("--since", default=None, help="ISO timestamp lower bound, e.g. 2026-01-01")
+@click.option("--until", default=None, help="ISO timestamp upper bound")
+@click.option(
+  "--no-vector",
+  is_flag=True,
+  help="Skip dense vector search; FTS-only (faster, no embedder load)",
+)
+@click.option(
+  "--no-consolidations",
+  is_flag=True,
+  help="Search raw items only (skip session consolidations)",
+)
+@click.option(
+  "--format",
+  "output_format",
+  type=click.Choice(["text", "json"]),
+  default="text",
+  show_default=True,
+)
+def query_cmd(
+  text: tuple[str, ...],
+  config_path: str,
+  top_k: int,
+  source_filter: tuple[str, ...],
+  since: str | None,
+  until: str | None,
+  no_vector: bool,
+  no_consolidations: bool,
+  output_format: str,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  query_text = " ".join(text).strip()
+  try:
+    embedding = None
+    if not no_vector:
+      embedder = Embedder(**_embed_config(cfg))
+      embedding = embedder.embed_batch([query_text])[0]
+
+    qcfg = HybridQueryConfig(
+      top_k=top_k,
+      source_filter=list(source_filter) or None,
+      since=parse_iso_datetime(since) if since else None,
+      until=parse_iso_datetime(until) if until else None,
+      include_consolidations=not no_consolidations,
+    )
+    results = run_query(conn, query_text, embedding=embedding, config=qcfg)
+  finally:
+    conn.close()
+
+  if output_format == "json":
+    import json as _json
+
+    click.echo(
+      _json.dumps(
+        [_result_to_dict(r) for r in results],
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+      )
+    )
+    return
+
+  if not results:
+    click.echo("No results.")
+    return
+  click.echo(f"Top {len(results)} results for: {query_text!r}")
+  click.echo()
+  for i, r in enumerate(results, 1):
+    _render_result(i, r)
+
+
+def _result_to_dict(r) -> dict:
+  return {
+    "id": r.id,
+    "kind": r.kind,
+    "source": r.source,
+    "timestamp": r.timestamp.isoformat() if hasattr(r.timestamp, "isoformat") else str(r.timestamp),
+    "sender": r.sender,
+    "subject": r.subject,
+    "thread_id": r.thread_id,
+    "score": round(r.score, 4),
+    "item_count": r.item_count,
+    "participants": r.participants,
+    "content_preview": (r.content or "")[:400],
+  }
+
+
+def _render_result(rank: int, r) -> None:
+  ts = r.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(r.timestamp, "strftime") else str(r.timestamp)
+  kind_tag = "C" if r.kind == "consolidation" else "i"
+  click.echo(f"[{rank:>2}] [{kind_tag}] {r.source:<14} {ts}  score={r.score:.3f}")
+  if r.kind == "consolidation":
+    click.echo(f"     {len(r.participants)} participants, {r.item_count} items: {', '.join(r.participants[:5])}")
+  else:
+    click.echo(f"     from: {r.sender}")
+  preview = (r.content or "").strip().replace("\n", " ")
+  if len(preview) > 240:
+    preview = preview[:237] + "..."
+  click.echo(f"     {preview}")
+  click.echo()
 
 
 @cli.command("consolidate")

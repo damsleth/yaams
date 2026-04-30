@@ -8,6 +8,8 @@ VENV_DIR="${YAAMS_VENV:-.venv}"
 SPACY_MODEL="${YAAMS_SPACY_MODEL:-xx_ent_wiki_sm}"
 DRY_RUN_SOURCE="${YAAMS_DRY_RUN_SOURCE:-all}"
 REQUIRE_VEC="${YAAMS_REQUIRE_VEC:-1}"
+CONFIGURE="${YAAMS_CONFIGURE:-1}"
+CONFIGURE_DEFAULTS="${YAAMS_CONFIGURE_DEFAULTS:-0}"
 
 cd "$ROOT_DIR"
 
@@ -22,6 +24,8 @@ Environment overrides:
   YAAMS_SPACY_MODEL=xx_ent_wiki_sm spaCy model to download
   YAAMS_DRY_RUN_SOURCE=all         Dry-run source: all, imessage, or email
   YAAMS_REQUIRE_VEC=1              Use 0 to skip --require-vec during init
+  YAAMS_CONFIGURE=1                Use 0 to skip the config onboarding wizard
+  YAAMS_CONFIGURE_DEFAULTS=0       Use 1 to accept defaults without prompts
 EOF
 }
 
@@ -125,6 +129,21 @@ print(get_db_path(load_config(sys.argv[1])))
 PY
 }
 
+configure_phase_a() {
+  if [ "$CONFIGURE" = "0" ]; then
+    return 0
+  fi
+
+  local -a args
+  args=(scripts/configure_phase_a.py --config "$CONFIG_PATH")
+  if [ "$CONFIGURE_DEFAULTS" = "1" ] || [ ! -t 0 ]; then
+    args+=(--defaults)
+  fi
+
+  log "Configuring YAAMS Phase A"
+  run "$VENV_PY" "${args[@]}"
+}
+
 print_next_steps() {
   local dry_run_status="$1"
   local resolved_db_path
@@ -135,13 +154,10 @@ print_next_steps() {
 Next steps for initial ingestion
 --------------------------------
 
-1. Review config before the real ingest:
-   - db_path: where YAAMS writes the SQLite database
-   - ingest.since: earliest item timestamp to ingest
-   - ingest.imessage.chat_db_path: Messages database path
-   - ingest.email.sources: Mail .emlx tree or .mbox export
-   - entities.dictionary: important people, projects, places, and aliases
-   - embed.device: mps on Apple Silicon, cpu if MPS causes issues
+1. Config is ready at ${CONFIG_PATH}.
+   - The installer walked through db_path, ingest.since, iMessage path, email sources, entity aliases, and embed.device.
+   - To adjust it later, rerun:
+     python scripts/configure_phase_a.py --config ${CONFIG_PATH}
 
 2. Activate the venv:
    source ${VENV_DIR}/bin/activate
@@ -166,7 +182,7 @@ Next steps for initial ingestion
 
 6. Troubleshooting model/device issues:
    - The first real ingest may download BAAI/bge-m3. Let it finish.
-   - If MPS fails, edit config.yaml and set embed.device: cpu.
+   - If MPS fails, edit ${CONFIG_PATH} and set embed.device: cpu.
    - If sqlite-vec init fails, keep --require-vec for the real run and fix the dependency rather than ingesting data that Phase B cannot vector-search.
 
 7. Troubleshooting database path permissions:
@@ -202,6 +218,8 @@ printf 'Using venv Python %s\n' "$(python_version "$VENV_PY")"
 log "Installing Python dependencies"
 run "$VENV_PY" -m pip install --upgrade pip
 run "$VENV_PY" -m pip install -r requirements.txt
+
+configure_phase_a
 
 log "Installing spaCy model"
 run "$VENV_PY" -m spacy download "$SPACY_MODEL"

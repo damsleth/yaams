@@ -25,6 +25,7 @@ from yaams.db import open_db
 from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
 from yaams.ingest.email_mbox import EmailAdapter
+from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
@@ -583,6 +584,14 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       notes_path=Path(notes_path),
       index_path=Path(index_path),
     )
+  if source == "github":
+    return GitHubAdapter(
+      username=cfg.get("username", ""),
+      include_private=bool(cfg.get("include_private", True)),
+      include_forks=bool(cfg.get("include_forks", False)),
+      fetch_issues=bool(cfg.get("fetch_issues", True)),
+      fetch_prs=bool(cfg.get("fetch_prs", True)),
+    )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     token_source = OwaPiggyTokenSource(profile)
@@ -649,7 +658,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
   teams_sources = [f"teams_{p}" for p in teams_profiles]
   if source == "all":
-    return ["imessage", "email", "notes", "tier2_ledger", *teams_sources]
+    return ["imessage", "email", "notes", "tier2_ledger", "github", *teams_sources]
   if source == "teams":
     return teams_sources
   return [source]
@@ -685,6 +694,8 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source == "tier2_ledger":
     path = source_cfg.get("notes_path")
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
+  if source == "github":
+    return [f"github: {source_cfg.get('username', 'unknown')} (issues + PRs)"]
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     return [f"graph (owa-piggy profile): {profile}"]

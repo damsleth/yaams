@@ -198,6 +198,10 @@ def _fetch_dict_entities(
       AND i.source NOT IN ('tier2_ledger')
       AND i.timestamp >= ?
       AND (? IS NULL OR e.canonical_name = ?)
+      AND lower(e.canonical_name) NOT IN (
+        SELECT lower(subject) FROM items
+        WHERE source = 'tier2_ledger' AND subject IS NOT NULL
+      )
     GROUP BY e.id
     HAVING cnt >= ?
     ORDER BY cnt DESC

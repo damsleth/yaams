@@ -159,6 +159,8 @@ def init_schema(
       """
     )
     _migrate_items_consolidated_into(conn)
+    _migrate_items_promoted_to(conn)
+    _migrate_promotion_candidates(conn)
     _init_vector_table(conn, embedding_dim, vector_enabled)
     _init_consolidations_vec(conn, embedding_dim, vector_enabled)
 
@@ -170,6 +172,41 @@ def _migrate_items_consolidated_into(conn: sqlite3.Connection) -> None:
   conn.execute("ALTER TABLE items ADD COLUMN consolidated_into TEXT")
   conn.execute(
     "CREATE INDEX IF NOT EXISTS idx_items_consolidated ON items(consolidated_into)"
+  )
+
+
+def _migrate_items_promoted_to(conn: sqlite3.Connection) -> None:
+  cols = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+  if "promoted_to" not in cols:
+    conn.execute("ALTER TABLE items ADD COLUMN promoted_to TEXT")
+
+
+def _migrate_promotion_candidates(conn: sqlite3.Connection) -> None:
+  conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS promotion_candidates (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      entity TEXT,
+      draft_type TEXT,
+      draft_title TEXT NOT NULL,
+      draft_statement TEXT NOT NULL,
+      draft_body TEXT,
+      draft_tags TEXT,
+      source_item_ids TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewed_at TEXT,
+      promoted_path TEXT,
+      backend TEXT,
+      model TEXT
+    )
+    """
+  )
+  conn.execute(
+    "CREATE INDEX IF NOT EXISTS idx_promo_status ON promotion_candidates(status)"
+  )
+  conn.execute(
+    "CREATE INDEX IF NOT EXISTS idx_promo_entity ON promotion_candidates(entity)"
   )
 
 

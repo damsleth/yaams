@@ -4,14 +4,15 @@ Yet Another Agent Memory System. YAAMS is a local-first Tier 1 memory store for 
 
 ## Current Status
 
-Phases A and B are implemented:
+Phases A, B, C (partial), D, and F are implemented:
 
-- iMessage, email, and Microsoft Teams ingest
+- iMessage, email, Microsoft Teams, Obsidian vault, and Tier 2 curated ledger notes ingest
 - Idempotent `Item` records with deterministic IDs
 - SQLite storage with FTS5, entity tables, watermarks, and sqlite-vec when available
 - Dictionary entity tagging plus optional spaCy NER
 - Local embeddings through `sentence-transformers`
 - Hybrid retrieval (dense + sparse) with reciprocal rank fusion
+- Cross-tier query fusion: Tier 2 (curated ledger notes) surface with a configurable boost alongside Tier 1 raw items
 - Session consolidation (LightMem-style grouping of conversational items)
 - LLM synthesis with grounded, cited answers via a pluggable backend adapter
 - Per-query and per-feedback signal logging for an offline improvement loop
@@ -121,8 +122,10 @@ Run a single source:
 ```bash
 python -m yaams.cli ingest --source imessage
 python -m yaams.cli ingest --source email
+python -m yaams.cli ingest --source notes           # Obsidian vault
+python -m yaams.cli ingest --source tier2_ledger    # curated ledger notes (Tier 2)
 python -m yaams.cli ingest --source teams_swon
-python -m yaams.cli ingest --source teams   # all configured Teams profiles
+python -m yaams.cli ingest --source teams           # all configured Teams profiles
 ```
 
 ### Stats
@@ -186,6 +189,23 @@ Inspect recent query history:
 python -m yaams.cli signals
 python -m yaams.cli signals --limit 50
 ```
+
+### Promote
+
+Generate candidate atomic notes from recent items and review them for promotion to the Tier 2 ledger:
+
+```bash
+python -m yaams.cli promote generate            # scan last 30 days
+python -m yaams.cli promote generate --days 60  # wider window
+python -m yaams.cli promote generate --entity "ATLAS"  # single entity
+python -m yaams.cli promote list                # show pending candidates
+python -m yaams.cli promote list --status accepted
+python -m yaams.cli promote review              # interactive review queue
+```
+
+In the review loop: `a` accept (writes to ledger inbox), `e` edit in `$EDITOR`, `r` reject, `s` skip, `q` quit.
+
+Accepted candidates are written to `promote.inbox_path` (default `~/yaams/ledger-inbox/00_inbox/`) in the standard ledger note format. Nothing is promoted without your explicit acceptance.
 
 ### Reset
 

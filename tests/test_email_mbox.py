@@ -259,7 +259,7 @@ def test_is_automated_sender_matches_common_patterns():
   assert is_automated_sender("ikkesvar@mail.human.no")
   assert is_automated_sender("MAILER-DAEMON@example.com")
   assert not is_automated_sender("alice@example.test")
-  assert not is_automated_sender("Carl.Joakim.Damsleth@crayon.no")
+  assert not is_automated_sender("first.last@example.com")
 
 
 def test_is_newsletter_matches_list_unsubscribe():
@@ -315,19 +315,19 @@ def test_email_to_item_skips_newsletter_with_list_header():
 
 def test_email_to_item_keeps_user_addressed_sends_even_with_list_header():
   msg = make_message()
-  msg.replace_header("From", "kim@damsleth.no")
+  msg.replace_header("From", "user@example.test")
   msg["List-Unsubscribe"] = "<https://example.com/unsubscribe>"
   skipped = []
 
   item = email_to_item(
     msg,
     datetime(2026, 1, 1, tzinfo=UTC),
-    user_addresses={"kim@damsleth.no"},
+    user_addresses={"user@example.test"},
     on_skip_newsletter=lambda path, sender: skipped.append(sender),
   )
 
   assert item is not None
-  assert item.sender == "kim@damsleth.no"
+  assert item.sender == "user@example.test"
   assert skipped == []
 
 

@@ -69,13 +69,13 @@ def test_query_filters_by_source():
   conn = _open_db()
   items = [
     _make_item(source="imessage", content="kim has a dog", msg_id="1"),
-    _make_item(source="teams_swon", content="kim has a cat", msg_id="2"),
+    _make_item(source="teams_work", content="kim has a cat", msg_id="2"),
   ]
   store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
 
-  cfg = HybridQueryConfig(source_filter=["teams_swon"])
+  cfg = HybridQueryConfig(source_filter=["teams_work"])
   results = query(conn, "kim", config=cfg)
-  assert all(r.source == "teams_swon" for r in results)
+  assert all(r.source == "teams_work" for r in results)
   assert len(results) >= 1
 
 

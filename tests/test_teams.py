@@ -57,7 +57,7 @@ def _make_chat(chat_id: str = "19:abc@unq.gbl.spaces", chat_type: str = "oneOnOn
 def _make_members() -> list[dict]:
   return [
     {"userId": "user-1", "email": "alice@example.test", "displayName": "Alice"},
-    {"userId": "user-2", "email": "kim@damsleth.no", "displayName": "Kim"},
+    {"userId": "user-2", "email": "user@example.test", "displayName": "Kim"},
   ]
 
 
@@ -112,21 +112,21 @@ def test_is_system_message_detects_event_detail():
 def test_message_to_item_resolves_email_from_members():
   chat = _make_chat()
   msg = _make_user_message(user_id="user-1")
-  item = message_to_item("swon", chat, msg, _make_members())
+  item = message_to_item("work", chat, msg, _make_members())
   assert item is not None
   assert item.sender == "alice@example.test"
-  assert item.recipients == ["kim@damsleth.no"]
+  assert item.recipients == ["user@example.test"]
   assert "jobber du" in item.content
   assert item.thread_id == chat["id"]
-  assert item.source == "teams_swon"
-  assert item.raw_metadata["profile"] == "swon"
+  assert item.source == "teams_work"
+  assert item.raw_metadata["profile"] == "work"
   assert item.raw_metadata["chat_type"] == "oneOnOne"
 
 
 def test_message_to_item_falls_back_to_display_name_when_no_member_email():
   chat = _make_chat()
   msg = _make_user_message(user_id="ghost-id", display_name="External Person")
-  item = message_to_item("swon", chat, msg, _make_members())
+  item = message_to_item("work", chat, msg, _make_members())
   assert item is not None
   assert item.sender == "External Person"
 
@@ -134,7 +134,7 @@ def test_message_to_item_falls_back_to_display_name_when_no_member_email():
 def test_message_to_item_uses_topic_for_group_chat_subject():
   chat = _make_chat(chat_type="group", topic="OPS operativt")
   msg = _make_user_message()
-  item = message_to_item("brkh", chat, msg, _make_members())
+  item = message_to_item("volunteer", chat, msg, _make_members())
   assert item is not None
   assert item.subject == "OPS operativt"
 
@@ -143,14 +143,14 @@ def test_message_to_item_skips_deleted_messages():
   chat = _make_chat()
   msg = _make_user_message()
   msg["deletedDateTime"] = "2026-04-15T11:00:00.000Z"
-  item = message_to_item("swon", chat, msg, _make_members())
+  item = message_to_item("work", chat, msg, _make_members())
   assert item is None
 
 
 def test_message_to_item_skips_empty_body():
   chat = _make_chat()
   msg = _make_user_message(body_html="")
-  item = message_to_item("swon", chat, msg, _make_members())
+  item = message_to_item("work", chat, msg, _make_members())
   assert item is None
 
 
@@ -158,8 +158,8 @@ def test_message_to_item_id_is_stable_across_runs():
   chat = _make_chat()
   msg = _make_user_message()
   members = _make_members()
-  a = message_to_item("swon", chat, msg, members)
-  b = message_to_item("swon", chat, msg, members)
+  a = message_to_item("work", chat, msg, members)
+  b = message_to_item("work", chat, msg, members)
   assert a is not None and b is not None
   assert a.id == b.id
 
@@ -220,7 +220,7 @@ def test_teams_adapter_yields_user_messages_and_skips_bots():
     members_by_chat={chat["id"]: _make_members()},
   )
 
-  adapter = TeamsAdapter(profile="swon", graph_client=fake)
+  adapter = TeamsAdapter(profile="work", graph_client=fake)
   items = list(adapter.extract(datetime(2026, 1, 1, tzinfo=UTC)))
 
   assert len(items) == 1
@@ -240,7 +240,7 @@ def test_teams_adapter_stops_walking_chat_when_messages_predate_cutoff():
     members_by_chat={chat["id"]: _make_members()},
   )
 
-  adapter = TeamsAdapter(profile="swon", graph_client=fake)
+  adapter = TeamsAdapter(profile="work", graph_client=fake)
   items = list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
 
   assert len(items) == 1
@@ -258,7 +258,7 @@ def test_teams_adapter_skips_chats_with_no_recent_activity():
     members_by_chat={"recent": _make_members(), "stale": _make_members()},
   )
 
-  adapter = TeamsAdapter(profile="swon", graph_client=fake)
+  adapter = TeamsAdapter(profile="work", graph_client=fake)
   items = list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
 
   assert len(items) == 1

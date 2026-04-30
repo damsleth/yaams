@@ -1,0 +1,59 @@
+# YAAMS configuration. Copy to config.yaml and fill in your own values.
+# See README.md and .plans/ for what each block does.
+
+db_path: ~/yaams/data.db
+
+ingest:
+  since: '2025-01-01T00:00:00Z'
+
+  imessage:
+    enabled: true
+    chat_db_path: ~/Library/Messages/chat.db
+
+  email:
+    enabled: true
+    sources:
+      # Apple Mail .emlx tree (point at the newest ~/Library/Mail/Vxx)
+      - type: emlx
+        path: ~/Library/Mail/V10
+      # Or one or more .mbox exports:
+      # - type: mbox
+      #   path: ~/Downloads/all-mail.mbox
+    skip_newsletters: true
+    # Emails From these addresses are always kept regardless of List-* headers
+    # or noreply patterns. Add every address you send from across roles.
+    user_addresses:
+      - you@example.com
+
+  teams:
+    enabled: false
+    # owa-piggy profile names (configure with `owa-piggy setup --profile <name>`)
+    profiles:
+      - work
+    skip_bots: true
+    page_size: 50
+
+embed:
+  model: BAAI/bge-m3
+  batch_size: 32
+  # Apple Silicon: mps. Otherwise: cpu. CUDA also works if torch sees it.
+  device: mps
+  dimension: 1024
+  # Use only the locally cached HF snapshot; no network calls per run.
+  # Set to false the first time you change `model` so the new weights download.
+  offline: true
+
+entities:
+  spacy_model: xx_ent_wiki_sm
+  dictionary:
+    # Known people, places, projects, and aliases for entity tagging.
+    # Surface form on the left, casual variants under aliases.
+    - canonical: Example Person
+      type: person
+      aliases:
+        - Ex
+        - E. Person
+    - canonical: Example Org
+      type: org
+      aliases:
+        - EX

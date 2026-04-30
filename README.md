@@ -34,9 +34,12 @@ Manual setup:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp config.yaml.example config.yaml      # then edit to fit your setup
 python scripts/configure_phase_a.py --config config.yaml
 python -m spacy download xx_ent_wiki_sm
 ```
+
+`config.yaml` is gitignored - it carries your personal addresses, paths, and entity dictionary. Track changes by editing `config.yaml.example` instead when contributing structural changes upstream.
 
 On Apple Silicon, use the Homebrew arm64 Python explicitly - PyTorch 2.4+ has no x86_64 macOS wheels, so a Rosetta Python will be stuck on torch 2.2 and fail at embedding time:
 

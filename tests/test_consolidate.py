@@ -75,10 +75,10 @@ def test_iter_sessions_keeps_sources_separate():
   base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
   items = [
     make_item(source="imessage", thread_id="t", msg_id="a", ts=base),
-    make_item(source="teams_swon", thread_id="t", msg_id="b", ts=base + timedelta(minutes=1)),
+    make_item(source="teams_work", thread_id="t", msg_id="b", ts=base + timedelta(minutes=1)),
   ]
   sessions = list(iter_sessions(items))
-  assert {s.source for s in sessions} == {"imessage", "teams_swon"}
+  assert {s.source for s in sessions} == {"imessage", "teams_work"}
 
 
 def test_build_consolidations_skips_small_sessions():
@@ -96,7 +96,7 @@ def test_build_consolidations_consolidates_long_session():
   items = [
     make_item(
       msg_id=f"m{i}",
-      sender="alice@example.test" if i % 2 == 0 else "kim@damsleth.no",
+      sender="alice@example.test" if i % 2 == 0 else "user@example.test",
       content=f"message {i}",
       ts=base + timedelta(minutes=i),
     )
@@ -107,7 +107,7 @@ def test_build_consolidations_consolidates_long_session():
   c = consolidations[0]
   assert c.item_count == 8
   assert c.consolidator_version == CONSOLIDATOR_VERSION
-  assert sorted(c.participants) == sorted(["alice@example.test", "kim@damsleth.no"])
+  assert sorted(c.participants) == sorted(["alice@example.test", "user@example.test"])
   assert "message 0" in c.summary
   assert "message 7" in c.summary
   assert c.start_timestamp == items[0].timestamp
@@ -151,10 +151,10 @@ def test_build_summary_single_session_single_day_header():
 
 def test_participants_deduplicate_preserve_order():
   base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
-  senders = ["alice@example.test", "kim@damsleth.no", "alice@example.test", "kim@damsleth.no"]
+  senders = ["alice@example.test", "user@example.test", "alice@example.test", "user@example.test"]
   items = [
     make_item(msg_id=f"m{i}", sender=senders[i], ts=base + timedelta(minutes=i))
     for i in range(4)
   ]
   consolidations = build_consolidations(items)
-  assert consolidations[0].participants == ["alice@example.test", "kim@damsleth.no"]
+  assert consolidations[0].participants == ["alice@example.test", "user@example.test"]

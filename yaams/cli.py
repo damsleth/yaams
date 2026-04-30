@@ -15,6 +15,12 @@ from yaams.consolidate import (
   build_consolidations,
 )
 from yaams.retrieve import HybridQueryConfig, query as run_query
+from yaams.signals import log_feedback, log_query, new_query_id, recent_queries
+from yaams.synthesize import (
+  build_synthesis_prompt,
+  llm_adapter_from_config,
+  synthesize_answer,
+)
 from yaams.db import open_db
 from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
@@ -172,6 +178,8 @@ def reset_db(config_path: str, yes: bool) -> None:
   default="text",
   show_default=True,
 )
+@click.option("--answer/--no-answer", default=False, help="Synthesize a grounded answer with citations using the configured LLM backend")
+@click.option("--no-log", is_flag=True, help="Skip signal logging for this query (default is to log)")
 def query_cmd(
   text: tuple[str, ...],
   config_path: str,
@@ -182,11 +190,20 @@ def query_cmd(
   no_vector: bool,
   no_consolidations: bool,
   output_format: str,
+  answer: bool,
+  no_log: bool,
 ) -> None:
+  import time as _time
+
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
-  conn = open_db(db_path, readonly=True)
   query_text = " ".join(text).strip()
+  if not query_text:
+    click.echo("Empty query.")
+    return
+
+  retrieve_start = _time.perf_counter()
+  conn_ro = open_db(db_path, readonly=True)
   try:
     embedding = None
     if not no_vector:
@@ -200,30 +217,135 @@ def query_cmd(
       until=parse_iso_datetime(until) if until else None,
       include_consolidations=not no_consolidations,
     )
-    results = run_query(conn, query_text, embedding=embedding, config=qcfg)
+    results = run_query(conn_ro, query_text, embedding=embedding, config=qcfg)
   finally:
-    conn.close()
+    conn_ro.close()
+  retrieval_ms = (_time.perf_counter() - retrieve_start) * 1000
+
+  answer_result = None
+  synthesis_ms = None
+  if answer and results:
+    synth_start = _time.perf_counter()
+    adapter = llm_adapter_from_config(cfg)
+    answer_result = synthesize_answer(query_text, results, adapter)
+    synthesis_ms = (_time.perf_counter() - synth_start) * 1000
+
+  query_id = new_query_id()
+  if not no_log:
+    conn_rw = open_db(db_path)
+    try:
+      init_schema(conn_rw, embedding_dim=_embedding_dim(cfg))
+      log_query(
+        conn_rw,
+        query_id=query_id,
+        text=query_text,
+        top_k=top_k,
+        source_filter=list(source_filter) or None,
+        since=since,
+        until=until,
+        results=results,
+        cited_result_ids=answer_result.cited_result_ids if answer_result else (),
+        answer=answer_result.answer if answer_result else None,
+        backend=answer_result.backend if answer_result else None,
+        model=answer_result.model if answer_result else None,
+        latency_ms=retrieval_ms + (synthesis_ms or 0),
+        retrieval_ms=retrieval_ms,
+        synthesis_ms=synthesis_ms,
+      )
+    finally:
+      conn_rw.close()
 
   if output_format == "json":
     import json as _json
 
-    click.echo(
-      _json.dumps(
-        [_result_to_dict(r) for r in results],
-        ensure_ascii=False,
-        indent=2,
-        default=str,
-      )
-    )
+    payload = {
+      "query_id": query_id,
+      "question": query_text,
+      "retrieval_ms": round(retrieval_ms, 1),
+      "synthesis_ms": round(synthesis_ms, 1) if synthesis_ms is not None else None,
+      "results": [_result_to_dict(r) for r in results],
+    }
+    if answer_result:
+      payload["answer"] = answer_result.answer
+      payload["cited_ranks"] = answer_result.cited_ranks
+      payload["cited_result_ids"] = answer_result.cited_result_ids
+      payload["backend"] = answer_result.backend
+      payload["model"] = answer_result.model
+    click.echo(_json.dumps(payload, ensure_ascii=False, indent=2, default=str))
     return
 
   if not results:
     click.echo("No results.")
     return
-  click.echo(f"Top {len(results)} results for: {query_text!r}")
+
+  if answer_result:
+    click.echo(f"Answer ({answer_result.backend}{':' + answer_result.model if answer_result.model else ''}):")
+    click.echo()
+    click.echo(answer_result.answer)
+    click.echo()
+    if answer_result.cited_ranks:
+      click.echo(f"Cited: {answer_result.cited_ranks}")
+    click.echo()
+
+  click.echo(f"Top {len(results)} results for: {query_text!r}  (query_id={query_id})")
   click.echo()
   for i, r in enumerate(results, 1):
     _render_result(i, r)
+
+
+@cli.command("feedback")
+@click.argument("query_id")
+@click.argument("kind", type=click.Choice(["hit", "miss", "correction", "note"]))
+@click.option("--result", "result_id", default=None, help="Result id this feedback targets (omit for query-level)")
+@click.option("--message", "-m", default=None, help="Free-text payload (e.g. \"expected X\" or correction details)")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def feedback_cmd(
+  query_id: str,
+  kind: str,
+  result_id: str | None,
+  message: str | None,
+  config_path: str,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    fid = log_feedback(
+      conn,
+      query_id=query_id,
+      kind=kind,
+      result_id=result_id,
+      payload=message,
+    )
+  finally:
+    conn.close()
+  click.echo(f"Logged {kind} feedback for {query_id} (id={fid})")
+
+
+@cli.command("signals")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--limit", default=20, show_default=True, type=int)
+def signals_cmd(config_path: str, limit: int) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    rows = recent_queries(conn, limit=limit)
+  finally:
+    conn.close()
+  if not rows:
+    click.echo("No queries logged yet.")
+    return
+  click.echo(f"Last {len(rows)} queries:")
+  for row in rows:
+    backend = row.get("backend") or "-"
+    latency = row.get("latency_ms")
+    latency_s = f"{latency:.0f}ms" if isinstance(latency, (int, float)) else "-"
+    click.echo(
+      f"  {row['ts']}  {row['id']}  results={row['results_returned']:>2}  "
+      f"latency={latency_s:>7}  backend={backend}  text={row['text'][:80]!r}"
+    )
 
 
 def _result_to_dict(r) -> dict:

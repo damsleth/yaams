@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_EMBEDDING_DIM = 1024
 
 
@@ -109,6 +109,53 @@ def init_schema(
         participants,
         tokenize = 'unicode61 remove_diacritics 2'
       );
+
+      CREATE TABLE IF NOT EXISTS queries (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        top_k INTEGER NOT NULL,
+        source_filter TEXT,
+        since TEXT,
+        until TEXT,
+        backend TEXT,
+        model TEXT,
+        latency_ms REAL,
+        retrieval_ms REAL,
+        synthesis_ms REAL,
+        results_returned INTEGER NOT NULL DEFAULT 0,
+        answer TEXT,
+        ts TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_queries_ts ON queries(ts);
+
+      CREATE TABLE IF NOT EXISTS query_results (
+        query_id TEXT NOT NULL,
+        rank INTEGER NOT NULL,
+        result_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT,
+        rrf_score REAL,
+        fts_rank INTEGER,
+        vector_rank INTEGER,
+        cited INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (query_id, rank),
+        FOREIGN KEY (query_id) REFERENCES queries(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_query_results_result ON query_results(result_id);
+
+      CREATE TABLE IF NOT EXISTS query_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        query_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        result_id TEXT,
+        payload TEXT,
+        ts TEXT NOT NULL,
+        FOREIGN KEY (query_id) REFERENCES queries(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_query_feedback_query ON query_feedback(query_id);
       """
     )
     _migrate_items_consolidated_into(conn)

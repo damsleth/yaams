@@ -13,8 +13,18 @@ ingest:
     skip_newsletters: true
     user_addresses:
       - Carl.Joakim.Damsleth@crayon.no
+      - carljoakim.damsleth@softwareone.com
+      - carl.damsleth@rodekors.org
       - kim@damsleth.no
       - carl.joakim.damsleth@pzl.no
+  teams:
+    enabled: true
+    profiles:
+      - swon
+      - brkh
+      - crayon
+    skip_bots: true
+    page_size: 50
 
 embed:
   model: BAAI/bge-m3

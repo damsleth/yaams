@@ -14,6 +14,7 @@ from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
 from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.imessage import IMessageAdapter
+from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
 from yaams.schema import DEFAULT_EMBEDDING_DIM, init_schema
 from yaams.store import database_stats, seed_entities, store_items
 from yaams.time import parse_iso_datetime
@@ -44,9 +45,9 @@ def init_db(config_path: str, require_vec: bool) -> None:
 @click.option("--config", "config_path", default="config.yaml", show_default=True)
 @click.option(
   "--source",
-  type=click.Choice(["all", "imessage", "email"]),
   default="all",
   show_default=True,
+  help="all, imessage, email, teams, or teams_<profile> (e.g. teams_swon)",
 )
 @click.option("--dry-run", is_flag=True)
 @click.option("--batch-size", default=64, show_default=True)
@@ -68,10 +69,10 @@ def ingest(
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))
     processors = None if dry_run else ProcessingContext(cfg)
-    for src in _sources_to_run(source):
+    for src in _sources_to_run(source, cfg):
       if not _source_enabled(cfg, src):
         continue
-      adapter = get_adapter(src, cfg["ingest"][src])
+      adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
       source_stats = ingest_source(
         conn,
         src,
@@ -87,6 +88,9 @@ def ingest(
       run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
       run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
       run_stats[src]["skipped_newsletters"] = source_stats.get("skipped_newsletters", 0)
+      run_stats[src]["skipped_bots"] = source_stats.get("skipped_bots", 0)
+      run_stats[src]["skipped_system"] = source_stats.get("skipped_system", 0)
+      run_stats[src]["skipped_empty"] = source_stats.get("skipped_empty", 0)
       run_stats[src]["decoded_attributed_body"] = source_stats[
         "decoded_attributed_body"
       ]
@@ -159,10 +163,16 @@ def ingest_source(
     "new": inserted,
     "skipped": int(getattr(adapter, "skipped_emlx", 0))
     + int(getattr(adapter, "skipped_email_dates", 0))
-    + int(getattr(adapter, "skipped_newsletters", 0)),
+    + int(getattr(adapter, "skipped_newsletters", 0))
+    + int(getattr(adapter, "skipped_bots", 0))
+    + int(getattr(adapter, "skipped_system", 0))
+    + int(getattr(adapter, "skipped_empty", 0)),
     "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
     "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
     "skipped_newsletters": int(getattr(adapter, "skipped_newsletters", 0)),
+    "skipped_bots": int(getattr(adapter, "skipped_bots", 0)),
+    "skipped_system": int(getattr(adapter, "skipped_system", 0)),
+    "skipped_empty": int(getattr(adapter, "skipped_empty", 0)),
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
@@ -196,6 +206,16 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       user_addresses=list(cfg.get("user_addresses", [])),
       skip_newsletters=bool(cfg.get("skip_newsletters", True)),
     )
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    token_source = OwaPiggyTokenSource(profile)
+    graph = GraphClient(token_source)
+    return TeamsAdapter(
+      profile=profile,
+      graph_client=graph,
+      skip_bots=bool(cfg.get("skip_bots", True)),
+      page_size=int(cfg.get("page_size", 50)),
+    )
   raise ValueError(f"Unknown source: {source}")
 
 
@@ -215,22 +235,21 @@ def print_stats(
     prefix = "Database stats."
   click.echo(prefix)
   _print_sources(run_stats)
-  for source in ["imessage", "email"]:
-    if source in run_stats:
-      seen = run_stats[source]["seen"]
-      new = run_stats[source]["new"]
-      skipped = run_stats[source].get("skipped", 0)
-      if dry_run:
-        suffix = "would process, 0 written"
-        if skipped:
-          suffix = f"{suffix}, {skipped:,} skipped"
-        click.echo(f"  {source}: {seen:,} items ({suffix})")
-      else:
-        suffix = f"{new:,} new"
-        if skipped:
-          suffix = f"{suffix}, {skipped:,} skipped"
-        click.echo(f"  {source}: {seen:,} items ({suffix})")
-      _print_source_diagnostics(source, run_stats[source])
+  for source in _ordered_sources(run_stats):
+    seen = run_stats[source]["seen"]
+    new = run_stats[source]["new"]
+    skipped = run_stats[source].get("skipped", 0)
+    if dry_run:
+      suffix = "would process, 0 written"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix})")
+    else:
+      suffix = f"{new:,} new"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix})")
+    _print_source_diagnostics(source, run_stats[source])
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
   click.echo(
@@ -248,16 +267,31 @@ def _effective_since(conn, source: str, cfg: dict) -> datetime:
   return max(configured, watermark or floor)
 
 
-def _sources_to_run(source: str) -> list[str]:
-  return ["imessage", "email"] if source == "all" else [source]
+def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
+  cfg = cfg or {}
+  teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
+  teams_sources = [f"teams_{p}" for p in teams_profiles]
+  if source == "all":
+    return ["imessage", "email", *teams_sources]
+  if source == "teams":
+    return teams_sources
+  return [source]
+
+
+def _config_section(source: str) -> str:
+  if source.startswith("teams_") or source == "teams":
+    return "teams"
+  return source
 
 
 def _source_enabled(cfg: dict, source: str) -> bool:
-  return bool(cfg.get("ingest", {}).get(source, {}).get("enabled", False))
+  section = _config_section(source)
+  return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
 
 
 def _source_paths(source: str, cfg: dict) -> list[str]:
-  source_cfg = cfg.get("ingest", {}).get(source, {})
+  section = _config_section(source)
+  source_cfg = cfg.get("ingest", {}).get(section, {})
   if source == "imessage":
     path = source_cfg.get("chat_db_path")
     return [f"chat.db: {Path(path).expanduser()}" if path else "chat.db: n/a"]
@@ -268,16 +302,26 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
       path = entry.get("path", "n/a")
       paths.append(f"{source_type}: {Path(path).expanduser()}")
     return paths or ["n/a"]
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    return [f"graph (owa-piggy profile): {profile}"]
   return ["n/a"]
+
+
+def _ordered_sources(run_stats: dict[str, dict[str, object]]) -> list[str]:
+  fixed = [s for s in ("imessage", "email") if s in run_stats]
+  teams = sorted(s for s in run_stats if s.startswith("teams_"))
+  others = sorted(
+    s for s in run_stats if s not in fixed and not s.startswith("teams_")
+  )
+  return fixed + teams + others
 
 
 def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
   if not run_stats:
     return
   click.echo("  Sources:")
-  for source in ["imessage", "email"]:
-    if source not in run_stats:
-      continue
+  for source in _ordered_sources(run_stats):
     since = run_stats[source].get("since", "n/a")
     paths = run_stats[source].get("paths", [])
     click.echo(f"    {source} since {since}:")
@@ -300,6 +344,15 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
         f"    skipped email details: {skipped_emlx:,} parse errors, "
         f"{skipped_dates:,} invalid dates, "
         f"{skipped_news:,} newsletters/automated"
+      )
+  if source.startswith("teams_"):
+    skipped_bots = int(stats.get("skipped_bots", 0))
+    skipped_system = int(stats.get("skipped_system", 0))
+    skipped_empty = int(stats.get("skipped_empty", 0))
+    if skipped_bots or skipped_system or skipped_empty:
+      click.echo(
+        f"    skipped teams details: {skipped_bots:,} bots/automated, "
+        f"{skipped_system:,} system events, {skipped_empty:,} empty/deleted"
       )
 
 

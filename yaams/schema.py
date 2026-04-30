@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_EMBEDDING_DIM = 1024
 
 
@@ -84,9 +84,76 @@ def init_schema(
         last_ingested_at TEXT NOT NULL,
         last_run_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS consolidations (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        start_timestamp TEXT NOT NULL,
+        end_timestamp TEXT NOT NULL,
+        participants TEXT NOT NULL,
+        item_count INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        raw_item_ids TEXT NOT NULL,
+        consolidator_version TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cons_source ON consolidations(source);
+      CREATE INDEX IF NOT EXISTS idx_cons_thread ON consolidations(thread_id);
+      CREATE INDEX IF NOT EXISTS idx_cons_time ON consolidations(start_timestamp);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS consolidations_fts USING fts5(
+        consolidation_id UNINDEXED,
+        summary,
+        participants,
+        tokenize = 'unicode61 remove_diacritics 2'
+      );
       """
     )
+    _migrate_items_consolidated_into(conn)
     _init_vector_table(conn, embedding_dim, vector_enabled)
+    _init_consolidations_vec(conn, embedding_dim, vector_enabled)
+
+
+def _migrate_items_consolidated_into(conn: sqlite3.Connection) -> None:
+  cols = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+  if "consolidated_into" in cols:
+    return
+  conn.execute("ALTER TABLE items ADD COLUMN consolidated_into TEXT")
+  conn.execute(
+    "CREATE INDEX IF NOT EXISTS idx_items_consolidated ON items(consolidated_into)"
+  )
+
+
+def _init_consolidations_vec(
+  conn: sqlite3.Connection,
+  embedding_dim: int,
+  vector_enabled: bool,
+) -> None:
+  existing = conn.execute(
+    "SELECT sql FROM sqlite_master WHERE name = 'consolidations_vec'"
+  ).fetchone()
+  if existing:
+    return
+  if vector_enabled:
+    conn.execute(
+      f"""
+      CREATE VIRTUAL TABLE consolidations_vec USING vec0(
+        consolidation_id TEXT PRIMARY KEY,
+        embedding FLOAT[{embedding_dim}]
+      )
+      """
+    )
+    return
+  conn.execute(
+    """
+    CREATE TABLE consolidations_vec (
+      consolidation_id TEXT PRIMARY KEY,
+      embedding BLOB NOT NULL
+    )
+    """
+  )
 
 
 def _init_vector_table(

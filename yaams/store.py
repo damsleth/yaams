@@ -6,6 +6,7 @@ import json
 import sqlite3
 from typing import Iterable, Sequence
 
+from yaams.consolidate.session import Consolidation
 from yaams.ingest.base import Item
 from yaams.time import ensure_utc
 
@@ -223,3 +224,194 @@ def _embedding_to_blob(embedding: object) -> bytes:
   if isinstance(embedding, bytes):
     return embedding
   return array("f", [float(value) for value in embedding]).tobytes()
+
+
+def store_consolidations(
+  conn: sqlite3.Connection,
+  consolidations: Sequence[Consolidation],
+  embeddings: Sequence[object] | None = None,
+) -> int:
+  if embeddings is not None and len(embeddings) != len(consolidations):
+    raise ValueError("embeddings length must match consolidations length")
+  inserted = 0
+  with conn:
+    for idx, consolidation in enumerate(consolidations):
+      inserted += _insert_consolidation(conn, consolidation)
+      _replace_consolidation_fts(conn, consolidation)
+      if embeddings is not None:
+        _replace_consolidation_embedding(conn, consolidation.id, embeddings[idx])
+      _mark_items_consolidated(conn, consolidation.id, consolidation.raw_item_ids)
+  return inserted
+
+
+def _insert_consolidation(conn: sqlite3.Connection, consolidation: Consolidation) -> int:
+  cursor = conn.execute(
+    """
+    INSERT OR REPLACE INTO consolidations (
+      id, source, thread_id, start_timestamp, end_timestamp,
+      participants, item_count, summary, raw_item_ids,
+      consolidator_version, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+      consolidation.id,
+      consolidation.source,
+      consolidation.thread_id,
+      ensure_utc(consolidation.start_timestamp).isoformat(),
+      ensure_utc(consolidation.end_timestamp).isoformat(),
+      json.dumps(consolidation.participants, ensure_ascii=False),
+      consolidation.item_count,
+      consolidation.summary,
+      json.dumps(consolidation.raw_item_ids, ensure_ascii=False),
+      consolidation.consolidator_version,
+      ensure_utc(consolidation.created_at).isoformat(),
+    ),
+  )
+  return int(cursor.rowcount == 1)
+
+
+def _replace_consolidation_fts(conn: sqlite3.Connection, consolidation: Consolidation) -> None:
+  conn.execute(
+    "DELETE FROM consolidations_fts WHERE consolidation_id = ?", (consolidation.id,)
+  )
+  conn.execute(
+    "INSERT INTO consolidations_fts (consolidation_id, summary, participants) VALUES (?, ?, ?)",
+    (
+      consolidation.id,
+      consolidation.summary,
+      " ".join(consolidation.participants),
+    ),
+  )
+
+
+def _replace_consolidation_embedding(
+  conn: sqlite3.Connection,
+  consolidation_id: str,
+  embedding: object,
+) -> None:
+  conn.execute(
+    "DELETE FROM consolidations_vec WHERE consolidation_id = ?", (consolidation_id,)
+  )
+  conn.execute(
+    "INSERT INTO consolidations_vec (consolidation_id, embedding) VALUES (?, ?)",
+    (consolidation_id, _embedding_to_blob(embedding)),
+  )
+
+
+def _mark_items_consolidated(
+  conn: sqlite3.Connection,
+  consolidation_id: str,
+  item_ids: Sequence[str],
+) -> None:
+  if not item_ids:
+    return
+  placeholders = ",".join("?" * len(item_ids))
+  conn.execute(
+    f"UPDATE items SET consolidated_into = ? WHERE id IN ({placeholders})",
+    (consolidation_id, *item_ids),
+  )
+
+
+def clear_consolidations(conn: sqlite3.Connection, sources: Sequence[str] | None = None) -> int:
+  with conn:
+    if sources:
+      placeholders = ",".join("?" * len(sources))
+      ids = [
+        row[0]
+        for row in conn.execute(
+          f"SELECT id FROM consolidations WHERE source IN ({placeholders})",
+          tuple(sources),
+        )
+      ]
+      if not ids:
+        return 0
+      id_placeholders = ",".join("?" * len(ids))
+      conn.execute(
+        f"UPDATE items SET consolidated_into = NULL WHERE consolidated_into IN ({id_placeholders})",
+        tuple(ids),
+      )
+      conn.execute(
+        f"DELETE FROM consolidations_vec WHERE consolidation_id IN ({id_placeholders})",
+        tuple(ids),
+      )
+      conn.execute(
+        f"DELETE FROM consolidations_fts WHERE consolidation_id IN ({id_placeholders})",
+        tuple(ids),
+      )
+      conn.execute(
+        f"DELETE FROM consolidations WHERE id IN ({id_placeholders})",
+        tuple(ids),
+      )
+      return len(ids)
+    count = conn.execute("SELECT count(*) FROM consolidations").fetchone()[0]
+    conn.execute("UPDATE items SET consolidated_into = NULL")
+    conn.execute("DELETE FROM consolidations_vec")
+    conn.execute("DELETE FROM consolidations_fts")
+    conn.execute("DELETE FROM consolidations")
+    return int(count)
+
+
+def fetch_items_for_consolidation(
+  conn: sqlite3.Connection,
+  source: str,
+  since: str | None = None,
+  only_unconsolidated: bool = True,
+) -> list[Item]:
+  query = """
+    SELECT id, source, source_id, timestamp, sender, recipients,
+           content, subject, thread_id, lang, raw_metadata, ingested_at
+    FROM items
+    WHERE source = ?
+  """
+  params: list[object] = [source]
+  if since:
+    query += " AND timestamp >= ?"
+    params.append(since)
+  if only_unconsolidated:
+    query += " AND consolidated_into IS NULL"
+  query += " ORDER BY thread_id, timestamp"
+
+  out: list[Item] = []
+  for row in conn.execute(query, tuple(params)):
+    out.append(
+      Item(
+        id=row["id"],
+        source=row["source"],
+        source_id=row["source_id"],
+        timestamp=ensure_utc(_parse_iso(row["timestamp"])),
+        sender=row["sender"],
+        recipients=json.loads(row["recipients"] or "[]"),
+        content=row["content"],
+        subject=row["subject"],
+        thread_id=row["thread_id"],
+        raw_metadata=json.loads(row["raw_metadata"] or "{}") if row["raw_metadata"] else None,
+      )
+    )
+  return out
+
+
+def _parse_iso(value: str):
+  from datetime import datetime
+  return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def consolidation_stats(conn: sqlite3.Connection) -> dict:
+  by_source: dict[str, dict[str, int]] = {}
+  for row in conn.execute(
+    "SELECT source, count(*) AS n, sum(item_count) AS items FROM consolidations GROUP BY source"
+  ):
+    by_source[row["source"]] = {
+      "consolidations": int(row["n"] or 0),
+      "items_consolidated": int(row["items"] or 0),
+    }
+  total_consolidations = conn.execute(
+    "SELECT count(*) FROM consolidations"
+  ).fetchone()[0]
+  total_items_consolidated = conn.execute(
+    "SELECT count(*) FROM items WHERE consolidated_into IS NOT NULL"
+  ).fetchone()[0]
+  return {
+    "by_source": by_source,
+    "total_consolidations": int(total_consolidations or 0),
+    "total_items_consolidated": int(total_items_consolidated or 0),
+  }

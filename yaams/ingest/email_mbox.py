@@ -26,23 +26,71 @@ _ON_WROTE = re.compile(
   re.DOTALL,
 )
 _FORWARDED = re.compile(
-  r"\n?-{3,}\s*(Forwarded|Original) (message|Message)\s*-{3,}.*",
+  r"\n?-{3,}\s*(Forwarded|Original|Begin forwarded) (message|Message)\s*-{0,3}.*",
+  re.DOTALL | re.IGNORECASE,
+)
+_FROM_HEADER_BLOCK = re.compile(
+  r"\n?(From|Fra):\s.{0,400}?\n(Sent|Date|Sendt|Til|To):\s.*",
   re.DOTALL | re.IGNORECASE,
 )
 _SIG_BOUNDARY = re.compile(r"\n--\s*\n.*", re.DOTALL)
 _SIG_KEYWORDS = re.compile(
-  r"\n(Best regards?|Kind regards?|Regards?|Mvh|Med vennlig hilsen|Vennlig hilsen|Hilsen|Cheers?|Thanks?|Thank you|Sent from my \w+)[^\n]*\n.*",
+  r"\n(Best regards|Kind regards|Med vennlig hilsen|Vennlig hilsen|Mvh\b|"
+  r"Sent from my \w+|Get Outlook for \w+)[ ,!.]*\n.*",
   re.DOTALL | re.IGNORECASE,
 )
+_UNSUBSCRIBE = re.compile(
+  r"\n[^\n]*(unsubscribe|view (this|the) (email|message) in (your|a) browser|"
+  r"avregistrer|meld deg av|click here to (opt[- ]?out|unsubscribe))[^\n]*",
+  re.IGNORECASE,
+)
+_DISCLAIMER = re.compile(
+  r"\n[^\n]*(this (e[- ]?mail|message) (and|with) any attachments? (is|are|may be) "
+  r"(confidential|privileged)|denne e[- ]?posten[^\n]{0,40}konfidensiel|"
+  r"if you (are|have received) this (e[- ]?mail|message) in error)[^\n]*.*",
+  re.DOTALL | re.IGNORECASE,
+)
+_TRACKING_URL_LINE = re.compile(
+  r"^[\(\[\s]*https?://[^\s]*?(click|track|mail|email|ses|mandrill|sendgrid|mailchimp|hubspot|"
+  r"campaign-archive|list-manage|ablink|spmailtechnol|sparkpostmail|sendlane|"
+  r"convertkit|substackcdn|emltrk|mkt[0-9]+\.com|customeriomail)[^\s]*[\s\)\]]*$",
+  re.IGNORECASE | re.MULTILINE,
+)
+_LONG_URL = re.compile(r"https?://[^\s]{120,}")
+_WHITESPACE_RUN = re.compile(r"[ \t]+")
+_BLANK_LINE_RUN = re.compile(r"\n\s*\n+")
+
+
+def _dedupe_lines(text: str, min_len: int = 25) -> str:
+  seen: set[str] = set()
+  out: list[str] = []
+  for line in text.splitlines():
+    key = _WHITESPACE_RUN.sub(" ", line).strip().lower()
+    if not key:
+      out.append(line)
+      continue
+    if len(key) >= min_len and key in seen:
+      continue
+    seen.add(key)
+    out.append(line)
+  return "\n".join(out)
 
 
 def clean_email_body(text: str) -> str:
   text = _FORWARDED.sub("", text)
+  text = _FROM_HEADER_BLOCK.sub("", text)
   text = _ON_WROTE.sub("", text)
   text = _QUOTE_LINE.sub("", text)
   text = _SIG_BOUNDARY.sub("", text)
   text = _SIG_KEYWORDS.sub("", text)
-  lines = [l for l in text.splitlines() if l.strip()]
+  text = _DISCLAIMER.sub("", text)
+  text = _UNSUBSCRIBE.sub("", text)
+  text = _TRACKING_URL_LINE.sub("", text)
+  text = _LONG_URL.sub("[link]", text)
+  text = _BLANK_LINE_RUN.sub("\n", text)
+  text = _dedupe_lines(text)
+  lines = [_WHITESPACE_RUN.sub(" ", l).rstrip() for l in text.splitlines()]
+  lines = [l for l in lines if l.strip()]
   return "\n".join(lines)
 
 
@@ -200,16 +248,35 @@ def parse_email_datetime(date_header: str) -> datetime | None:
   return None
 
 
+_HTML_SHAPED = re.compile(
+  r"<!doctype\s+html|<html[\s>]|<body[\s>]|<style[\s>]|<head[\s>]",
+  re.IGNORECASE,
+)
+
+
+def _looks_like_html(text: str) -> bool:
+  sample = text[:2000]
+  if _HTML_SHAPED.search(sample):
+    return True
+  if sample.count("<") + sample.count(">") > 40 and sample.count("</") > 5:
+    return True
+  return False
+
+
 def extract_text_body(message: Message) -> str:
   if message.is_multipart():
     plain = _first_part(message, "text/plain")
-    if plain:
+    if plain and not _looks_like_html(plain):
       return plain
     html = _first_part(message, "text/html")
-    return strip_html(html) if html else ""
+    if html:
+      return strip_html(html)
+    if plain:
+      return strip_html(plain)
+    return ""
   content_type = message.get_content_type()
   payload = _decode_message_part(message)
-  if content_type == "text/html":
+  if content_type == "text/html" or _looks_like_html(payload):
     return strip_html(payload)
   return payload
 
@@ -284,12 +351,69 @@ def _thread_id(message: Message) -> str | None:
   return thread_id.strip() if thread_id else None
 
 
+_HTML_DROP_TAGS = {"style", "script", "head", "title", "meta", "link"}
+_HTML_QUOTE_TAGS = {"blockquote"}
+_HTML_QUOTE_CLASS_PREFIXES = (
+  "gmail_quote",
+  "gmail_attr",
+  "gmail_extra",
+  "yahoo_quoted",
+  "moz-cite-prefix",
+  "OutlookMessageHeader",
+)
+_HTML_QUOTE_IDS = {
+  "divRplyFwdMsg",
+  "appendonsend",
+  "reply-intro",
+}
+
+
+def _attr_dict(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
+  return {k: (v or "") for k, v in attrs}
+
+
+def _is_quote_container(tag: str, attrs: dict[str, str]) -> bool:
+  if tag in _HTML_QUOTE_TAGS:
+    return True
+  cls = attrs.get("class", "")
+  if cls and any(cls.startswith(prefix) or f" {prefix}" in f" {cls}" for prefix in _HTML_QUOTE_CLASS_PREFIXES):
+    return True
+  if attrs.get("id", "") in _HTML_QUOTE_IDS:
+    return True
+  return False
+
+
 class _HTMLTextExtractor(HTMLParser):
   def __init__(self):
     super().__init__()
     self.parts: list[str] = []
+    self._drop_depth = 0
+    self._quote_depth = 0
+    self._stack: list[str] = []
+
+  def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    self._stack.append(tag)
+    if tag in _HTML_DROP_TAGS:
+      self._drop_depth += 1
+      return
+    if _is_quote_container(tag, _attr_dict(attrs)):
+      self._quote_depth += 1
+      self._stack[-1] = f"__quote__{tag}"
+
+  def handle_endtag(self, tag: str) -> None:
+    if not self._stack:
+      return
+    last = self._stack.pop()
+    if last == f"__quote__{tag}":
+      if self._quote_depth > 0:
+        self._quote_depth -= 1
+    elif tag in _HTML_DROP_TAGS:
+      if self._drop_depth > 0:
+        self._drop_depth -= 1
 
   def handle_data(self, data: str) -> None:
+    if self._drop_depth > 0 or self._quote_depth > 0:
+      return
     stripped = data.strip()
     if stripped:
       self.parts.append(stripped)

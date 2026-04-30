@@ -1,0 +1,799 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Iterable
+
+import click
+
+from yaams.config import get_db_path, load_config
+from yaams.consolidate import (
+  Consolidation,
+  SessionConfig,
+  build_consolidations,
+)
+from yaams.retrieve import HybridQueryConfig, query as run_query
+from yaams.signals import log_feedback, log_query, new_query_id, recent_queries
+from yaams.synthesize import (
+  build_synthesis_prompt,
+  llm_adapter_from_config,
+  synthesize_answer,
+)
+from yaams.db import open_db
+from yaams.enrich import Embedder, EntityTagger
+from yaams.ingest import Adapter, Item
+from yaams.ingest.email_mbox import EmailAdapter
+from yaams.ingest.imessage import IMessageAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.obsidian import ObsidianAdapter
+from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
+from yaams.schema import DEFAULT_EMBEDDING_DIM, init_schema
+from yaams.store import (
+  clear_consolidations,
+  consolidation_stats,
+  database_stats,
+  fetch_items_for_consolidation,
+  seed_entities,
+  store_consolidations,
+  store_items,
+)
+from yaams.time import parse_iso_datetime
+from yaams.watermark import get_watermark, update_watermark
+
+
+@click.group()
+def cli() -> None:
+  pass
+
+
+@cli.command("init-db")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--require-vec", is_flag=True)
+def init_db(config_path: str, require_vec: bool) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, require_vec=require_vec)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    seed_entities(conn, _entity_dictionary(cfg))
+  finally:
+    conn.close()
+  click.echo(f"Initialized database: {db_path}")
+
+
+@cli.command("ingest")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option(
+  "--source",
+  default="all",
+  show_default=True,
+  help="all, imessage, email, teams, or teams_<profile> (e.g. teams_swon)",
+)
+@click.option("--dry-run", is_flag=True)
+@click.option("--batch-size", default=64, show_default=True)
+@click.option("--require-vec", is_flag=True)
+def ingest(
+  config_path: str,
+  source: str,
+  dry_run: bool,
+  batch_size: int,
+  require_vec: bool,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, require_vec=require_vec)
+  run_stats: dict[str, dict[str, object]] = defaultdict(
+    lambda: {"seen": 0, "new": 0, "skipped": 0}
+  )
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    seed_entities(conn, _entity_dictionary(cfg))
+    processors = None if dry_run else ProcessingContext(cfg)
+    for src in _sources_to_run(source, cfg):
+      if not _source_enabled(cfg, src):
+        continue
+      adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
+      source_stats = ingest_source(
+        conn,
+        src,
+        adapter,
+        cfg,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        processors=processors,
+      )
+      run_stats[src]["seen"] += source_stats["seen"]
+      run_stats[src]["new"] += source_stats["new"]
+      run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
+      run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
+      run_stats[src]["skipped_newsletters"] = source_stats.get("skipped_newsletters", 0)
+      run_stats[src]["skipped_bots"] = source_stats.get("skipped_bots", 0)
+      run_stats[src]["skipped_system"] = source_stats.get("skipped_system", 0)
+      run_stats[src]["skipped_empty"] = source_stats.get("skipped_empty", 0)
+      run_stats[src]["decoded_attributed_body"] = source_stats[
+        "decoded_attributed_body"
+      ]
+      run_stats[src]["skipped_attributed_body"] = source_stats[
+        "skipped_attributed_body"
+      ]
+      run_stats[src]["since"] = source_stats["since"]
+      run_stats[src]["paths"] = _source_paths(src, cfg)
+    print_stats(conn, db_path, run_stats, dry_run=dry_run)
+  finally:
+    conn.close()
+
+
+@cli.command("stats")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def stats(config_path: str) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    print_stats(conn, db_path, {}, dry_run=False)
+  finally:
+    conn.close()
+
+
+@cli.command("reset-db")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--yes", is_flag=True)
+def reset_db(config_path: str, yes: bool) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  if not yes:
+    click.confirm(f"Delete database at {db_path}?", abort=True)
+  if db_path.exists():
+    db_path.unlink()
+  click.echo(f"Removed database: {db_path}")
+
+
+@cli.command("query")
+@click.argument("text", nargs=-1, required=True)
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--top-k", default=10, show_default=True, type=int)
+@click.option(
+  "--source",
+  "source_filter",
+  multiple=True,
+  help="Filter to specific source(s); repeat for multiple (e.g. --source imessage --source teams_swon)",
+)
+@click.option("--since", default=None, help="ISO timestamp lower bound, e.g. 2026-01-01")
+@click.option("--until", default=None, help="ISO timestamp upper bound")
+@click.option(
+  "--no-vector",
+  is_flag=True,
+  help="Skip dense vector search; FTS-only (faster, no embedder load)",
+)
+@click.option(
+  "--no-consolidations",
+  is_flag=True,
+  help="Search raw items only (skip session consolidations)",
+)
+@click.option(
+  "--format",
+  "output_format",
+  type=click.Choice(["text", "json"]),
+  default="text",
+  show_default=True,
+)
+@click.option("--answer/--no-answer", default=False, help="Synthesize a grounded answer with citations using the configured LLM backend")
+@click.option("--no-log", is_flag=True, help="Skip signal logging for this query (default is to log)")
+def query_cmd(
+  text: tuple[str, ...],
+  config_path: str,
+  top_k: int,
+  source_filter: tuple[str, ...],
+  since: str | None,
+  until: str | None,
+  no_vector: bool,
+  no_consolidations: bool,
+  output_format: str,
+  answer: bool,
+  no_log: bool,
+) -> None:
+  import time as _time
+
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  query_text = " ".join(text).strip()
+  if not query_text:
+    click.echo("Empty query.")
+    return
+
+  retrieve_start = _time.perf_counter()
+  conn_ro = open_db(db_path, readonly=True)
+  try:
+    embedding = None
+    if not no_vector:
+      embedder = Embedder(**_embed_config(cfg))
+      embedding = embedder.embed_batch([query_text])[0]
+
+    qcfg = HybridQueryConfig(
+      top_k=top_k,
+      source_filter=list(source_filter) or None,
+      since=parse_iso_datetime(since) if since else None,
+      until=parse_iso_datetime(until) if until else None,
+      include_consolidations=not no_consolidations,
+    )
+    results = run_query(conn_ro, query_text, embedding=embedding, config=qcfg)
+  finally:
+    conn_ro.close()
+  retrieval_ms = (_time.perf_counter() - retrieve_start) * 1000
+
+  answer_result = None
+  synthesis_ms = None
+  if answer and results:
+    synth_start = _time.perf_counter()
+    adapter = llm_adapter_from_config(cfg)
+    answer_result = synthesize_answer(query_text, results, adapter)
+    synthesis_ms = (_time.perf_counter() - synth_start) * 1000
+
+  query_id = new_query_id()
+  if not no_log:
+    conn_rw = open_db(db_path)
+    try:
+      init_schema(conn_rw, embedding_dim=_embedding_dim(cfg))
+      log_query(
+        conn_rw,
+        query_id=query_id,
+        text=query_text,
+        top_k=top_k,
+        source_filter=list(source_filter) or None,
+        since=since,
+        until=until,
+        results=results,
+        cited_result_ids=answer_result.cited_result_ids if answer_result else (),
+        answer=answer_result.answer if answer_result else None,
+        backend=answer_result.backend if answer_result else None,
+        model=answer_result.model if answer_result else None,
+        latency_ms=retrieval_ms + (synthesis_ms or 0),
+        retrieval_ms=retrieval_ms,
+        synthesis_ms=synthesis_ms,
+      )
+    finally:
+      conn_rw.close()
+
+  if output_format == "json":
+    import json as _json
+
+    payload = {
+      "query_id": query_id,
+      "question": query_text,
+      "retrieval_ms": round(retrieval_ms, 1),
+      "synthesis_ms": round(synthesis_ms, 1) if synthesis_ms is not None else None,
+      "results": [_result_to_dict(r) for r in results],
+    }
+    if answer_result:
+      payload["answer"] = answer_result.answer
+      payload["cited_ranks"] = answer_result.cited_ranks
+      payload["cited_result_ids"] = answer_result.cited_result_ids
+      payload["backend"] = answer_result.backend
+      payload["model"] = answer_result.model
+    click.echo(_json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return
+
+  if not results:
+    click.echo("No results.")
+    return
+
+  if answer_result:
+    click.echo(f"Answer ({answer_result.backend}{':' + answer_result.model if answer_result.model else ''}):")
+    click.echo()
+    click.echo(answer_result.answer)
+    click.echo()
+    if answer_result.cited_ranks:
+      click.echo(f"Cited: {answer_result.cited_ranks}")
+    click.echo()
+
+  click.echo(f"Top {len(results)} results for: {query_text!r}  (query_id={query_id})")
+  click.echo()
+  for i, r in enumerate(results, 1):
+    _render_result(i, r)
+
+
+@cli.command("feedback")
+@click.argument("query_id")
+@click.argument("kind", type=click.Choice(["hit", "miss", "correction", "note"]))
+@click.option("--result", "result_id", default=None, help="Result id this feedback targets (omit for query-level)")
+@click.option("--message", "-m", default=None, help="Free-text payload (e.g. \"expected X\" or correction details)")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def feedback_cmd(
+  query_id: str,
+  kind: str,
+  result_id: str | None,
+  message: str | None,
+  config_path: str,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    fid = log_feedback(
+      conn,
+      query_id=query_id,
+      kind=kind,
+      result_id=result_id,
+      payload=message,
+    )
+  finally:
+    conn.close()
+  click.echo(f"Logged {kind} feedback for {query_id} (id={fid})")
+
+
+@cli.command("signals")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--limit", default=20, show_default=True, type=int)
+def signals_cmd(config_path: str, limit: int) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    rows = recent_queries(conn, limit=limit)
+  finally:
+    conn.close()
+  if not rows:
+    click.echo("No queries logged yet.")
+    return
+  click.echo(f"Last {len(rows)} queries:")
+  for row in rows:
+    backend = row.get("backend") or "-"
+    latency = row.get("latency_ms")
+    latency_s = f"{latency:.0f}ms" if isinstance(latency, (int, float)) else "-"
+    click.echo(
+      f"  {row['ts']}  {row['id']}  results={row['results_returned']:>2}  "
+      f"latency={latency_s:>7}  backend={backend}  text={row['text'][:80]!r}"
+    )
+
+
+def _result_to_dict(r) -> dict:
+  return {
+    "id": r.id,
+    "kind": r.kind,
+    "source": r.source,
+    "timestamp": r.timestamp.isoformat() if hasattr(r.timestamp, "isoformat") else str(r.timestamp),
+    "sender": r.sender,
+    "subject": r.subject,
+    "thread_id": r.thread_id,
+    "score": round(r.score, 4),
+    "item_count": r.item_count,
+    "participants": r.participants,
+    "content_preview": (r.content or "")[:400],
+  }
+
+
+def _render_result(rank: int, r) -> None:
+  ts = r.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(r.timestamp, "strftime") else str(r.timestamp)
+  kind_tag = "C" if r.kind == "consolidation" else "i"
+  click.echo(f"[{rank:>2}] [{kind_tag}] {r.source:<14} {ts}  score={r.score:.3f}")
+  if r.kind == "consolidation":
+    click.echo(f"     {len(r.participants)} participants, {r.item_count} items: {', '.join(r.participants[:5])}")
+  else:
+    click.echo(f"     from: {r.sender}")
+  preview = (r.content or "").strip().replace("\n", " ")
+  if len(preview) > 240:
+    preview = preview[:237] + "..."
+  click.echo(f"     {preview}")
+  click.echo()
+
+
+@cli.command("consolidate")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option(
+  "--source",
+  default="all",
+  show_default=True,
+  help="all, imessage, teams, or a specific teams_<profile>",
+)
+@click.option("--dry-run", is_flag=True)
+@click.option("--rebuild", is_flag=True, help="Clear existing consolidations first")
+@click.option("--require-vec", is_flag=True)
+def consolidate(
+  config_path: str,
+  source: str,
+  dry_run: bool,
+  rebuild: bool,
+  require_vec: bool,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, require_vec=require_vec)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    sources = _consolidation_sources(source, conn)
+    if not sources:
+      click.echo("No conversational sources to consolidate.")
+      return
+
+    cons_cfg = SessionConfig(**_consolidation_config(cfg))
+
+    if rebuild and not dry_run:
+      cleared = clear_consolidations(conn, sources)
+      click.echo(f"Cleared {cleared:,} existing consolidations.")
+
+    processors = None if dry_run else ProcessingContext(cfg)
+    totals = {"sessions": 0, "raw_items": 0}
+    click.echo("Consolidating sources:")
+    for src in sources:
+      items = fetch_items_for_consolidation(
+        conn,
+        src,
+        only_unconsolidated=not rebuild,
+      )
+      consolidations = build_consolidations(items, cons_cfg)
+      summary_items = sum(c.item_count for c in consolidations)
+      click.echo(
+        f"  {src}: {len(items):,} candidate items -> "
+        f"{len(consolidations):,} consolidations ({summary_items:,} items folded)"
+      )
+      totals["sessions"] += len(consolidations)
+      totals["raw_items"] += summary_items
+      if dry_run or not consolidations:
+        continue
+      _persist_consolidations(conn, consolidations, processors)
+
+    if not dry_run:
+      conn.commit()
+    click.echo(
+      f"Total: {totals['sessions']:,} consolidations across "
+      f"{totals['raw_items']:,} folded items"
+    )
+    db_stats = consolidation_stats(conn)
+    click.echo(
+      f"  DB now: {db_stats['total_consolidations']:,} consolidations covering "
+      f"{db_stats['total_items_consolidated']:,} items"
+    )
+  finally:
+    conn.close()
+
+
+def _consolidation_sources(requested: str, conn) -> list[str]:
+  rows = conn.execute(
+    """
+    SELECT DISTINCT source FROM items
+    WHERE source = 'imessage' OR source LIKE 'teams_%'
+    ORDER BY source
+    """
+  ).fetchall()
+  available = [row["source"] for row in rows]
+  if requested == "all":
+    return available
+  if requested == "teams":
+    return [s for s in available if s.startswith("teams_")]
+  if requested == "imessage":
+    return [s for s in available if s == "imessage"]
+  if requested in available:
+    return [requested]
+  return []
+
+
+def _consolidation_config(cfg: dict) -> dict:
+  raw = dict(cfg.get("consolidate", {}) or {})
+  allowed = {"gap_minutes", "max_session_items", "min_session_items", "summary_max_chars"}
+  return {k: int(v) for k, v in raw.items() if k in allowed}
+
+
+def _persist_consolidations(
+  conn,
+  consolidations: list[Consolidation],
+  processors,
+) -> None:
+  if processors is None:
+    raise RuntimeError("processors required when persisting consolidations")
+  texts = [c.summary for c in consolidations]
+  embeddings = processors.embedder.embed_batch(texts)
+  store_consolidations(conn, consolidations, embeddings=embeddings)
+
+
+def ingest_source(
+  conn,
+  source: str,
+  adapter: Adapter,
+  cfg: dict,
+  *,
+  batch_size: int,
+  dry_run: bool,
+  processors,
+) -> dict[str, object]:
+  since = _effective_since(conn, source, cfg)
+  batch: list[Item] = []
+  latest_ts = since
+  seen = 0
+  inserted = 0
+  iterator = _progress(adapter.extract(since), desc=f"Ingesting {source}")
+  for item in iterator:
+    seen += 1
+    batch.append(item)
+    if item.timestamp > latest_ts:
+      latest_ts = item.timestamp
+    if len(batch) >= batch_size:
+      inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+      batch = []
+  if batch:
+    inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+  if not dry_run:
+    update_watermark(conn, source, latest_ts)
+    conn.commit()
+  return {
+    "seen": seen,
+    "new": inserted,
+    "skipped": int(getattr(adapter, "skipped_emlx", 0))
+    + int(getattr(adapter, "skipped_email_dates", 0))
+    + int(getattr(adapter, "skipped_newsletters", 0))
+    + int(getattr(adapter, "skipped_bots", 0))
+    + int(getattr(adapter, "skipped_system", 0))
+    + int(getattr(adapter, "skipped_empty", 0)),
+    "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
+    "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
+    "skipped_newsletters": int(getattr(adapter, "skipped_newsletters", 0)),
+    "skipped_bots": int(getattr(adapter, "skipped_bots", 0)),
+    "skipped_system": int(getattr(adapter, "skipped_system", 0)),
+    "skipped_empty": int(getattr(adapter, "skipped_empty", 0)),
+    "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
+    "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
+    "since": since.isoformat(),
+  }
+
+
+def process_batch(
+  conn,
+  items: list[Item],
+  processors,
+  *,
+  dry_run: bool,
+) -> int:
+  if dry_run:
+    return 0
+  if processors is None:
+    raise RuntimeError("processors are required unless dry_run is set")
+  texts = [item.content for item in items]
+  embeddings = processors.embedder.embed_batch(texts)
+  tags = [processors.tagger.tag(text) for text in texts]
+  stats = store_items(conn, items, embeddings, tags)
+  return stats.items_inserted
+
+
+def get_adapter(source: str, cfg: dict) -> Adapter:
+  if source == "imessage":
+    return IMessageAdapter(Path(cfg["chat_db_path"]))
+  if source == "email":
+    return EmailAdapter(
+      sources=list(cfg.get("sources", [])),
+      user_addresses=list(cfg.get("user_addresses", [])),
+      skip_newsletters=bool(cfg.get("skip_newsletters", True)),
+    )
+  if source == "notes":
+    from yaams.ingest.obsidian import DEFAULT_SKIP_DIRS as _DEFAULT_SKIP_DIRS
+    skip_dirs = set(cfg.get("skip_dirs") or _DEFAULT_SKIP_DIRS)
+    return ObsidianAdapter(
+      vault_path=Path(cfg["vault_path"]),
+      skip_dirs=skip_dirs,
+    )
+  if source == "tier2_ledger":
+    notes_path = cfg.get("notes_path", "~/yaams/ledger-inbox")
+    index_path = cfg.get("index_path", "~/yaams/ledger-inbox/08_indices/note_index.json")
+    return LedgerNotesAdapter(
+      notes_path=Path(notes_path),
+      index_path=Path(index_path),
+    )
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    token_source = OwaPiggyTokenSource(profile)
+    graph = GraphClient(token_source)
+    return TeamsAdapter(
+      profile=profile,
+      graph_client=graph,
+      skip_bots=bool(cfg.get("skip_bots", True)),
+      page_size=int(cfg.get("page_size", 50)),
+    )
+  raise ValueError(f"Unknown source: {source}")
+
+
+def print_stats(
+  conn,
+  db_path: Path,
+  run_stats: dict[str, dict[str, object]],
+  *,
+  dry_run: bool,
+) -> None:
+  stats = database_stats(conn)
+  if dry_run:
+    prefix = "Dry run complete."
+  elif run_stats:
+    prefix = "Ingest complete."
+  else:
+    prefix = "Database stats."
+  click.echo(prefix)
+  _print_sources(run_stats)
+  for source in _ordered_sources(run_stats):
+    seen = run_stats[source]["seen"]
+    new = run_stats[source]["new"]
+    skipped = run_stats[source].get("skipped", 0)
+    if dry_run:
+      suffix = "would process, 0 written"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix})")
+    else:
+      suffix = f"{new:,} new"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix})")
+    _print_source_diagnostics(source, run_stats[source])
+  click.echo(f"  Total in DB: {stats['total']:,} items")
+  click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
+  click.echo(
+    f"  Entities in DB: {stats['entities']:,} unique, "
+    f"{stats['entity_links']:,} links"
+  )
+  if db_path.exists():
+    click.echo(f"  Storage: {_size_mb(db_path):.1f} MB")
+
+
+def _effective_since(conn, source: str, cfg: dict) -> datetime:
+  configured = parse_iso_datetime(cfg["ingest"]["since"])
+  watermark = get_watermark(conn, source)
+  floor = datetime.min.replace(tzinfo=UTC)
+  return max(configured, watermark or floor)
+
+
+def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
+  cfg = cfg or {}
+  teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
+  teams_sources = [f"teams_{p}" for p in teams_profiles]
+  if source == "all":
+    return ["imessage", "email", "notes", "tier2_ledger", *teams_sources]
+  if source == "teams":
+    return teams_sources
+  return [source]
+
+
+def _config_section(source: str) -> str:
+  if source.startswith("teams_") or source == "teams":
+    return "teams"
+  return source
+
+
+def _source_enabled(cfg: dict, source: str) -> bool:
+  section = _config_section(source)
+  return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
+
+
+def _source_paths(source: str, cfg: dict) -> list[str]:
+  section = _config_section(source)
+  source_cfg = cfg.get("ingest", {}).get(section, {})
+  if source == "imessage":
+    path = source_cfg.get("chat_db_path")
+    return [f"chat.db: {Path(path).expanduser()}" if path else "chat.db: n/a"]
+  if source == "email":
+    paths = []
+    for entry in source_cfg.get("sources", []):
+      source_type = entry.get("type", "unknown")
+      path = entry.get("path", "n/a")
+      paths.append(f"{source_type}: {Path(path).expanduser()}")
+    return paths or ["n/a"]
+  if source == "notes":
+    path = source_cfg.get("vault_path")
+    return [f"vault: {Path(path).expanduser()}" if path else "vault: n/a"]
+  if source == "tier2_ledger":
+    path = source_cfg.get("notes_path")
+    return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    return [f"graph (owa-piggy profile): {profile}"]
+  return ["n/a"]
+
+
+def _ordered_sources(run_stats: dict[str, dict[str, object]]) -> list[str]:
+  fixed = [s for s in ("imessage", "email") if s in run_stats]
+  teams = sorted(s for s in run_stats if s.startswith("teams_"))
+  others = sorted(
+    s for s in run_stats if s not in fixed and not s.startswith("teams_")
+  )
+  return fixed + teams + others
+
+
+def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
+  if not run_stats:
+    return
+  click.echo("  Sources:")
+  for source in _ordered_sources(run_stats):
+    since = run_stats[source].get("since", "n/a")
+    paths = run_stats[source].get("paths", [])
+    click.echo(f"    {source} since {since}:")
+    for path in paths:
+      click.echo(f"      - {path}")
+
+
+def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
+  if source == "imessage":
+    decoded = int(stats.get("decoded_attributed_body", 0))
+    skipped = int(stats.get("skipped_attributed_body", 0))
+    if decoded or skipped:
+      click.echo(f"    attributedBody: {decoded:,} decoded, {skipped:,} skipped")
+  if source == "email":
+    skipped_emlx = int(stats.get("skipped_emlx", 0))
+    skipped_dates = int(stats.get("skipped_email_dates", 0))
+    skipped_news = int(stats.get("skipped_newsletters", 0))
+    if skipped_emlx or skipped_dates or skipped_news:
+      click.echo(
+        f"    skipped email details: {skipped_emlx:,} parse errors, "
+        f"{skipped_dates:,} invalid dates, "
+        f"{skipped_news:,} newsletters/automated"
+      )
+  if source.startswith("teams_"):
+    skipped_bots = int(stats.get("skipped_bots", 0))
+    skipped_system = int(stats.get("skipped_system", 0))
+    skipped_empty = int(stats.get("skipped_empty", 0))
+    if skipped_bots or skipped_system or skipped_empty:
+      click.echo(
+        f"    skipped teams details: {skipped_bots:,} bots/automated, "
+        f"{skipped_system:,} system events, {skipped_empty:,} empty/deleted"
+      )
+
+
+def _embed_config(cfg: dict) -> dict:
+  raw = dict(cfg.get("embed", {}))
+  model = raw.pop("model")
+  return {"model": model, **raw}
+
+
+@dataclass
+class ProcessingContext:
+  cfg: dict
+  _embedder: Embedder | None = field(default=None, init=False)
+  _tagger: EntityTagger | None = field(default=None, init=False)
+
+  @property
+  def embedder(self) -> Embedder:
+    if self._embedder is None:
+      self._embedder = Embedder(**_embed_config(self.cfg))
+    return self._embedder
+
+  @property
+  def tagger(self) -> EntityTagger:
+    if self._tagger is None:
+      self._tagger = EntityTagger(
+        _entities_config(self.cfg).get("spacy_model"),
+        _entity_dictionary(self.cfg),
+      )
+    return self._tagger
+
+
+def _embedding_dim(cfg: dict) -> int:
+  return int(cfg.get("embed", {}).get("dimension", DEFAULT_EMBEDDING_DIM))
+
+
+def _entities_config(cfg: dict) -> dict:
+  return dict(cfg.get("entities", {}))
+
+
+def _entity_dictionary(cfg: dict) -> list[dict]:
+  return list(_entities_config(cfg).get("dictionary", []))
+
+
+def _progress(iterable: Iterable[Item], desc: str) -> Iterable[Item]:
+  try:
+    from tqdm import tqdm
+
+    return tqdm(iterable, desc=desc)
+  except ImportError:
+    return iterable
+
+
+def _date(value: str | None) -> str:
+  if not value:
+    return "n/a"
+  return value[:10]
+
+
+def _size_mb(path: Path) -> float:
+  return path.stat().st_size / (1024 * 1024)
+
+
+if __name__ == "__main__":
+  cli()

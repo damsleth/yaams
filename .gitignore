@@ -1,3 +1,23 @@
 .DS_Store
+.claude/
 .plans/
 .tmp/
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+*.db
+*.db-shm
+*.db-wal
+
+# Local-only configuration with personal addresses, paths, and dictionary entries.
+# Track config.yaml.example instead.
+config.yaml
+
+# Local data directories that may end up under the repo root.
+# (Ingest sources at ~/Library/... live in $HOME and never enter the repo.)
+data/
+yaams-data/
+*.mbox
+*.emlx

@@ -4,17 +4,18 @@ Yet Another Agent Memory System. YAAMS is a local-first Tier 1 memory store for 
 
 ## Current Status
 
-Phase A is implemented:
+Phases A and B are implemented:
 
-- iMessage ingest from a read-only copy of `~/Library/Messages/chat.db`
-- Email ingest from `.emlx` trees and `.mbox` files
+- iMessage, email, and Microsoft Teams ingest
 - Idempotent `Item` records with deterministic IDs
 - SQLite storage with FTS5, entity tables, watermarks, and sqlite-vec when available
 - Dictionary entity tagging plus optional spaCy NER
 - Local embeddings through `sentence-transformers`
-- CLI commands for database setup, ingest, stats, and reset
-
-Phase B query, synthesis, feedback, and signal logging are not implemented yet.
+- Hybrid retrieval (dense + sparse) with reciprocal rank fusion
+- Session consolidation (LightMem-style grouping of conversational items)
+- LLM synthesis with grounded, cited answers via a pluggable backend adapter
+- Per-query and per-feedback signal logging for an offline improvement loop
+- CLI commands for all of the above
 
 ## Install
 
@@ -88,38 +89,131 @@ Phase A writes only to the YAAMS SQLite database. It does not write to `cognitiv
 
 ## Run
 
-Initialize the database:
+All commands go through the CLI entry point:
 
 ```bash
-python scripts/init_db.py
+python -m yaams.cli <command> [options]
 ```
 
-Dry-run ingestion first:
+### Database setup
 
 ```bash
-python scripts/ingest.py --dry-run
+python -m yaams.cli init-db
+python -m yaams.cli init-db --require-vec   # abort if sqlite-vec is not loaded
+```
+
+### Ingest
+
+Dry-run first to verify source access and item counts without writing:
+
+```bash
+python -m yaams.cli ingest --dry-run
 ```
 
 Run ingest (all sources):
 
 ```bash
-python scripts/ingest.py
+python -m yaams.cli ingest
 ```
 
 Run a single source:
 
 ```bash
-python scripts/ingest.py --source imessage
-python scripts/ingest.py --source email
+python -m yaams.cli ingest --source imessage
+python -m yaams.cli ingest --source email
+python -m yaams.cli ingest --source teams_swon
+python -m yaams.cli ingest --source teams   # all configured Teams profiles
 ```
 
-`--source` accepts `all` (default), `imessage`, or `email`. Add `--require-vec` to abort if sqlite-vec is not loaded.
-
-Check database stats:
+### Stats
 
 ```bash
 python -m yaams.cli stats
 ```
+
+### Session consolidation
+
+Groups conversational items (iMessage, Teams) into sessions before querying:
+
+```bash
+python -m yaams.cli consolidate
+python -m yaams.cli consolidate --source imessage
+python -m yaams.cli consolidate --dry-run
+python -m yaams.cli consolidate --rebuild   # clear and redo all consolidations
+```
+
+### Query
+
+Full-text and vector search across all ingested items:
+
+```bash
+python -m yaams.cli query "what did Alice say about the project"
+python -m yaams.cli query --top-k 20 "budget discussion"
+python -m yaams.cli query --no-vector "ATLAS"          # FTS only, no embedder load
+python -m yaams.cli query --source imessage "holiday plans"
+python -m yaams.cli query --source teams_swon --since 2026-01-01 "onboarding"
+python -m yaams.cli query --since 2025-06-01 --until 2025-09-01 "summer"
+python -m yaams.cli query --no-consolidations "raw items only"
+python -m yaams.cli query --format json "search term"
+```
+
+Add `--answer` to synthesize a grounded answer with inline citations using the configured LLM backend:
+
+```bash
+python -m yaams.cli query --answer "what are the open items from the ATLAS kickoff"
+```
+
+Add `--no-log` to skip writing the query to the signals table.
+
+### Feedback
+
+Log relevance signals against a previous query result (use `query_id` from output):
+
+```bash
+python -m yaams.cli feedback <query_id> hit
+python -m yaams.cli feedback <query_id> miss -m "expected the June thread"
+python -m yaams.cli feedback <query_id> correction --result <item_id> -m "wrong sender"
+python -m yaams.cli feedback <query_id> note -m "follow up on this"
+```
+
+Feedback kinds: `hit`, `miss`, `correction`, `note`.
+
+### Signals
+
+Inspect recent query history:
+
+```bash
+python -m yaams.cli signals
+python -m yaams.cli signals --limit 50
+```
+
+### Reset
+
+```bash
+python -m yaams.cli reset-db        # prompts for confirmation
+python -m yaams.cli reset-db --yes  # skip prompt
+```
+
+## LLM backend
+
+The `--answer` flag in `query` and the future `parse` step use a pluggable LLM adapter configured in `config.yaml`:
+
+```yaml
+synth:
+  backend: claude          # claude | codex | ollama | subprocess | dummy
+  model: claude-sonnet-4-6 # omit to use the CLI or server default
+  timeout: 120
+```
+
+Available backends:
+
+| backend | how it works | notes |
+|---|---|---|
+| `claude` | `claude -p --input-format text` via stdin | requires Claude Code CLI |
+| `codex` | `codex exec -` via stdin | requires Codex CLI |
+| `ollama` | HTTP to `localhost:11434` | set `model` and optionally `host` |
+| `subprocess` | pipes to `synth.command` list via stdin | any CLI that reads stdin |
+| `dummy` | returns a placeholder, no LLM call | default when `synth:` is absent |
 
 ## Validate
 

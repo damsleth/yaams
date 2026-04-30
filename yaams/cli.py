@@ -26,6 +26,8 @@ from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
 from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.imessage import IMessageAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
 from yaams.schema import DEFAULT_EMBEDDING_DIM, init_schema
 from yaams.store import (
@@ -564,6 +566,20 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       user_addresses=list(cfg.get("user_addresses", [])),
       skip_newsletters=bool(cfg.get("skip_newsletters", True)),
     )
+  if source == "notes":
+    from yaams.ingest.obsidian import DEFAULT_SKIP_DIRS as _DEFAULT_SKIP_DIRS
+    skip_dirs = set(cfg.get("skip_dirs") or _DEFAULT_SKIP_DIRS)
+    return ObsidianAdapter(
+      vault_path=Path(cfg["vault_path"]),
+      skip_dirs=skip_dirs,
+    )
+  if source == "tier2_ledger":
+    notes_path = cfg.get("notes_path", "~/yaams/ledger-inbox")
+    index_path = cfg.get("index_path", "~/yaams/ledger-inbox/08_indices/note_index.json")
+    return LedgerNotesAdapter(
+      notes_path=Path(notes_path),
+      index_path=Path(index_path),
+    )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     token_source = OwaPiggyTokenSource(profile)
@@ -630,7 +646,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
   teams_sources = [f"teams_{p}" for p in teams_profiles]
   if source == "all":
-    return ["imessage", "email", *teams_sources]
+    return ["imessage", "email", "notes", "tier2_ledger", *teams_sources]
   if source == "teams":
     return teams_sources
   return [source]
@@ -660,6 +676,12 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
       path = entry.get("path", "n/a")
       paths.append(f"{source_type}: {Path(path).expanduser()}")
     return paths or ["n/a"]
+  if source == "notes":
+    path = source_cfg.get("vault_path")
+    return [f"vault: {Path(path).expanduser()}" if path else "vault: n/a"]
+  if source == "tier2_ledger":
+    path = source_cfg.get("notes_path")
+    return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     return [f"graph (owa-piggy profile): {profile}"]

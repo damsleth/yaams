@@ -65,7 +65,7 @@ class OllamaAdapter:
 
   def __init__(
     self,
-    model_name: str = "llama3.1",
+    model_name: str | None = "llama3.1",
     host: str = "http://localhost:11434",
     timeout: float = 60.0,
   ):
@@ -149,11 +149,104 @@ class SubprocessAdapter:
     )
 
 
+class ClaudeCliAdapter:
+  """Drives `claude -p --input-format text` via stdin."""
+
+  backend_name = "claude"
+
+  def __init__(
+    self,
+    model_name: str | None = None,
+    timeout: float = 120.0,
+  ):
+    self.model_name = model_name
+    self.timeout = timeout
+
+  def complete(
+    self,
+    prompt: str,
+    *,
+    max_tokens: int = 1024,
+    temperature: float = 0.0,
+  ) -> LLMResponse:
+    cmd = ["claude", "-p", "--input-format", "text"]
+    if self.model_name:
+      cmd += ["--model", self.model_name]
+    result = subprocess.run(
+      cmd,
+      input=prompt,
+      capture_output=True,
+      text=True,
+      timeout=self.timeout,
+    )
+    if result.returncode != 0:
+      raise RuntimeError(
+        f"claude CLI exited {result.returncode}: {result.stderr.strip()}"
+      )
+    return LLMResponse(
+      text=result.stdout.strip(),
+      backend=self.backend_name,
+      model=self.model_name,
+    )
+
+
+class CodexCliAdapter:
+  """Drives `codex exec -` via stdin."""
+
+  backend_name = "codex"
+
+  def __init__(
+    self,
+    model_name: str | None = None,
+    timeout: float = 120.0,
+  ):
+    self.model_name = model_name
+    self.timeout = timeout
+
+  def complete(
+    self,
+    prompt: str,
+    *,
+    max_tokens: int = 1024,
+    temperature: float = 0.0,
+  ) -> LLMResponse:
+    cmd = ["codex", "exec", "-"]
+    if self.model_name:
+      cmd = ["codex", "--model", self.model_name, "exec", "-"]
+    result = subprocess.run(
+      cmd,
+      input=prompt,
+      capture_output=True,
+      text=True,
+      timeout=self.timeout,
+    )
+    if result.returncode != 0:
+      raise RuntimeError(
+        f"codex CLI exited {result.returncode}: {result.stderr.strip()}"
+      )
+    return LLMResponse(
+      text=result.stdout.strip(),
+      backend=self.backend_name,
+      model=self.model_name,
+    )
+
+
 def llm_adapter_from_config(cfg: dict) -> LLMAdapter:
   synth = cfg.get("synth", {}) or {}
   backend = (synth.get("backend") or "dummy").strip().lower()
   model = synth.get("model")
+  timeout = float(synth.get("timeout") or 120.0)
 
+  if backend == "claude":
+    return ClaudeCliAdapter(
+      model_name=str(model) if model else None,
+      timeout=timeout,
+    )
+  if backend == "codex":
+    return CodexCliAdapter(
+      model_name=str(model) if model else None,
+      timeout=timeout,
+    )
   if backend == "ollama":
     return OllamaAdapter(
       model_name=str(model or "llama3.1"),
@@ -167,7 +260,7 @@ def llm_adapter_from_config(cfg: dict) -> LLMAdapter:
     return SubprocessAdapter(
       command=list(command),
       model_name=str(model) if model else None,
-      timeout=float(synth.get("timeout") or 120.0),
+      timeout=timeout,
     )
   if backend == "dummy":
     return DummyAdapter(model_name=str(model) if model else None)

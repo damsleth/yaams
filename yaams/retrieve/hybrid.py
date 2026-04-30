@@ -38,6 +38,8 @@ class HybridQueryConfig:
   sender_filter: list[str] | None = None
   rrf_k: int = RRF_K
   consolidation_boost: float = 1.1
+  tier2_source: str = "tier2_ledger"
+  tier2_boost: float = 1.2
 
 
 @dataclass
@@ -324,6 +326,9 @@ def _hydrate_item(
   if cfg.sender_filter and row["sender"] not in cfg.sender_filter:
     return None
   recipients = json.loads(row["recipients"] or "[]")
+  score = components.rrf_score
+  if cfg.tier2_boost != 1.0 and row["source"] == cfg.tier2_source:
+    score *= cfg.tier2_boost
   return HybridResult(
     id=row["id"],
     kind="item",
@@ -333,7 +338,7 @@ def _hydrate_item(
     subject=row["subject"] or "",
     content=row["content"] or "",
     thread_id=row["thread_id"],
-    score=components.rrf_score,
+    score=score,
     components=components,
     participants=recipients,
   )

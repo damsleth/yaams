@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from yaams.synthesize.llm import LLMAdapter
 
@@ -69,21 +69,33 @@ def generate_candidates(
   adapter: LLMAdapter,
   config: PromoteConfig,
   entity_filter: str | None = None,
+  on_progress: Callable[[str], None] | None = None,
 ) -> list[PromotionCandidate]:
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
   index_texts = _load_index_texts(config.note_index_path)
   candidates: list[PromotionCandidate] = []
+  total = len(entities)
 
-  for entity_name, entity_id in entities:
+  for i, (entity_name, entity_id) in enumerate(entities, 1):
+    if on_progress:
+      on_progress(f"[{i}/{total}] {entity_name} ...")
     if _is_covered(entity_name, existing_tier2, index_texts):
+      if on_progress:
+        on_progress(f"  skipped (already in Tier 2)")
       continue
     cluster = _fetch_cluster(conn, entity_id, config)
     if len(cluster) < config.min_cluster_items:
+      if on_progress:
+        on_progress(f"  skipped (cluster too small: {len(cluster)} items)")
       continue
     candidate = _draft(adapter, entity_name, cluster)
     if candidate:
       candidates.append(candidate)
+      if on_progress:
+        on_progress(f"  drafted: {candidate.draft_title}")
+    elif on_progress:
+      on_progress(f"  LLM draft failed")
 
   return candidates
 

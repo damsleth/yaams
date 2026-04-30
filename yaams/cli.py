@@ -836,9 +836,9 @@ def promote_generate(
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     adapter = llm_adapter_from_config(cfg)
     click.echo(f"Generating candidates (window={pcfg.window_days}d, min_cluster={pcfg.min_cluster_items}) ...")
-    candidates = generate_candidates(conn, adapter, pcfg, entity_filter=entity)
+    candidates = generate_candidates(conn, adapter, pcfg, entity_filter=entity, on_progress=click.echo)
     stored = store_candidates(conn, candidates)
-    click.echo(f"Generated {len(candidates)} candidates, {stored} new stored.")
+    click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored.")
   finally:
     conn.close()
 

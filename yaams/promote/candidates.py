@@ -58,7 +58,8 @@ class PromotionCandidate:
 
 @dataclass
 class PromoteConfig:
-  window_days: int = 30
+  window_days: int = 90
+  window_days_by_type: dict[str, int] = field(default_factory=lambda: {"person": 365})
   min_cluster_items: int = 3
   cluster_fetch_k: int = 10
   note_index_path: Path | None = None
@@ -182,33 +183,54 @@ def mark_items_promoted(
   conn.commit()
 
 
+_ENTITY_QUERY = """
+  SELECT e.canonical_name, e.id, count(*) AS cnt
+  FROM item_entities ie
+  JOIN entities e ON e.id = ie.entity_id
+  JOIN items i ON i.id = ie.item_id
+  WHERE ie.source = 'dictionary'
+    AND i.source NOT IN ('tier2_ledger')
+    AND i.timestamp >= ?
+    AND {type_filter}
+    AND (? IS NULL OR e.canonical_name = ?)
+    AND lower(e.canonical_name) NOT IN (
+      SELECT lower(subject) FROM items
+      WHERE source = 'tier2_ledger' AND subject IS NOT NULL
+    )
+  GROUP BY e.id
+  HAVING cnt >= ?
+  ORDER BY cnt DESC
+"""
+
+
 def _fetch_dict_entities(
   conn: sqlite3.Connection,
   config: PromoteConfig,
   entity_filter: str | None,
 ) -> list[tuple[str, int]]:
-  cutoff = _cutoff_iso(config.window_days)
-  rows = conn.execute(
-    """
-    SELECT e.canonical_name, e.id, count(*) AS cnt
-    FROM item_entities ie
-    JOIN entities e ON e.id = ie.entity_id
-    JOIN items i ON i.id = ie.item_id
-    WHERE ie.source = 'dictionary'
-      AND i.source NOT IN ('tier2_ledger')
-      AND i.timestamp >= ?
-      AND (? IS NULL OR e.canonical_name = ?)
-      AND lower(e.canonical_name) NOT IN (
-        SELECT lower(subject) FROM items
-        WHERE source = 'tier2_ledger' AND subject IS NOT NULL
-      )
-    GROUP BY e.id
-    HAVING cnt >= ?
-    ORDER BY cnt DESC
-    """,
-    (cutoff, entity_filter, entity_filter, config.min_cluster_items),
-  ).fetchall()
-  return [(r["canonical_name"], r["id"]) for r in rows]
+  seen: dict[int, tuple[str, int]] = {}
+
+  # Per-type windows (e.g. person -> 365 days)
+  for etype, days in config.window_days_by_type.items():
+    sql = _ENTITY_QUERY.format(type_filter="e.entity_type = ?")
+    for r in conn.execute(sql, (
+      _cutoff_iso(days), etype, entity_filter, entity_filter, config.min_cluster_items
+    )).fetchall():
+      seen.setdefault(r["id"], (r["canonical_name"], r["id"]))
+
+  # Default window for types not explicitly configured
+  known = list(config.window_days_by_type.keys())
+  if known:
+    placeholders = ",".join("?" * len(known))
+    sql = _ENTITY_QUERY.format(type_filter=f"e.entity_type NOT IN ({placeholders})")
+    params = (_cutoff_iso(config.window_days), *known, entity_filter, entity_filter, config.min_cluster_items)
+  else:
+    sql = _ENTITY_QUERY.format(type_filter="1=1")
+    params = (_cutoff_iso(config.window_days), entity_filter, entity_filter, config.min_cluster_items)
+  for r in conn.execute(sql, params).fetchall():
+    seen.setdefault(r["id"], (r["canonical_name"], r["id"]))
+
+  return list(seen.values())
 
 
 def _fetch_tier2_titles(conn: sqlite3.Connection) -> list[str]:

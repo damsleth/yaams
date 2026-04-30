@@ -826,7 +826,8 @@ def promote_generate(
     or promote_cfg_raw.get("note_index_path")
   )
   pcfg = PromoteConfig(
-    window_days=days or int(promote_cfg_raw.get("window_days", 30)),
+    window_days=days or int(promote_cfg_raw.get("window_days", 90)),
+    window_days_by_type=dict(promote_cfg_raw.get("window_days_by_type") or {"person": 365}),
     min_cluster_items=min_cluster or int(promote_cfg_raw.get("min_cluster_items", 3)),
     cluster_fetch_k=int(promote_cfg_raw.get("cluster_fetch_k", 10)),
     note_index_path=Path(raw_index_path) if raw_index_path else None,

@@ -21,6 +21,7 @@ embed:
   batch_size: 32
   device: mps
   dimension: 1024
+  offline: true
 
 entities:
   spacy_model: xx_ent_wiki_sm

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Sequence
 
 
@@ -10,7 +11,12 @@ class Embedder:
     device: str | None = None,
     batch_size: int = 32,
     dimension: int | None = None,
+    offline: bool = True,
   ):
+    if offline:
+      os.environ.setdefault("HF_HUB_OFFLINE", "1")
+      os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
     try:
       from sentence_transformers import SentenceTransformer
     except ImportError as exc:

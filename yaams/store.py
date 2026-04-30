@@ -54,6 +54,30 @@ def seed_entities(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> None:
         )
 
 
+def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> int:
+  """Upgrade item_entities.source from 'ner' to 'dictionary' for entities now in the dictionary.
+
+  When entities are added via discover/add after initial ingest, their existing
+  item_entity links have source='ner'. This makes them invisible to the promotion
+  pipeline which filters on source='dictionary'. Call this after seed_entities.
+  """
+  upgraded = 0
+  with conn:
+    for entry in dictionary:
+      canonical = str(entry["canonical"])
+      row = conn.execute(
+        "SELECT id FROM entities WHERE lower(canonical_name) = lower(?)", (canonical,)
+      ).fetchone()
+      if row is None:
+        continue
+      cur = conn.execute(
+        "UPDATE item_entities SET source = 'dictionary' WHERE entity_id = ? AND source = 'ner'",
+        (row["id"],),
+      )
+      upgraded += cur.rowcount
+  return upgraded
+
+
 def store_items(
   conn: sqlite3.Connection,
   items: Sequence[Item],

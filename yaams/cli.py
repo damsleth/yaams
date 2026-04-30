@@ -31,6 +31,7 @@ from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
 from yaams.schema import DEFAULT_EMBEDDING_DIM, init_schema
 from yaams.store import (
+  backfill_entity_sources,
   clear_consolidations,
   consolidation_stats,
   database_stats,
@@ -58,6 +59,7 @@ def init_db(config_path: str, require_vec: bool) -> None:
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))
+    backfill_entity_sources(conn, _entity_dictionary(cfg))
   finally:
     conn.close()
   click.echo(f"Initialized database: {db_path}")
@@ -90,6 +92,7 @@ def ingest(
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))
+    backfill_entity_sources(conn, _entity_dictionary(cfg))
     processors = None if dry_run else ProcessingContext(cfg)
     for src in _sources_to_run(source, cfg):
       if not _source_enabled(cfg, src):
@@ -1010,7 +1013,9 @@ def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_pa
   conn = open_db(db_path)
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
-    seed_entities(conn, load_config(config_path).get("entities", {}).get("dictionary", []))
+    dictionary = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, dictionary)
+    backfill_entity_sources(conn, dictionary)
   finally:
     conn.close()
   click.echo(f"Added '{canonical}' ({etype}).")
@@ -1138,7 +1143,9 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
           _save_entities(config_path, entities_cfg)
           cfg = load_config(config_path)
           known.add(new_canonical.lower())
-          seed_entities(conn, cfg.get("entities", {}).get("dictionary", []))
+          d = cfg.get("entities", {}).get("dictionary", [])
+          seed_entities(conn, d)
+          backfill_entity_sources(conn, d)
           click.echo(f"  Added '{new_canonical}'.")
           break
 
@@ -1208,7 +1215,9 @@ def entities_manage(config_path: str) -> None:
         dictionary.append(entry)
         entities_cfg["dictionary"] = dictionary
         _save_entities(config_path, entities_cfg)
-        seed_entities(conn, load_config(config_path).get("entities", {}).get("dictionary", []))
+        d = load_config(config_path).get("entities", {}).get("dictionary", [])
+        seed_entities(conn, d)
+        backfill_entity_sources(conn, d)
         click.echo(f"  Added '{canonical}'.")
 
       elif choice == "r":

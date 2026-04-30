@@ -940,5 +940,176 @@ def promote_review(config_path: str, review_all: bool) -> None:
     conn.close()
 
 
+def _save_entities(config_path: str, entities_cfg: dict) -> None:
+  import re
+  import yaml
+  p = Path(config_path)
+  text = p.read_text(encoding="utf-8")
+  block = yaml.dump({"entities": entities_cfg}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+  new_text = re.sub(r"^entities:.*?(?=^\S|\Z)", block, text, flags=re.MULTILINE | re.DOTALL)
+  if new_text == text:
+    new_text = text.rstrip() + "\n\n" + block
+  p.write_text(new_text, encoding="utf-8")
+
+
+@cli.group("entities")
+def entities_group() -> None:
+  """Manage the entity dictionary used for promotion candidate clustering."""
+  pass
+
+
+@entities_group.command("list")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def entities_list(config_path: str) -> None:
+  """Show all dictionary entities with item hit counts."""
+  cfg = load_config(config_path)
+  dictionary = (cfg.get("entities") or {}).get("dictionary") or []
+  if not dictionary:
+    click.echo("No entities in dictionary. Add some with: entities add <name>")
+    return
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    for entry in dictionary:
+      canonical = entry["canonical"]
+      etype = entry.get("type", "?")
+      aliases = entry.get("aliases") or []
+      row = conn.execute(
+        """SELECT count(*) FROM item_entities ie
+           JOIN entities e ON e.id = ie.entity_id
+           WHERE e.canonical_name = ? AND ie.source = 'dictionary'""",
+        (canonical,),
+      ).fetchone()
+      count = row[0] if row else 0
+      alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
+      click.echo(f"  {canonical:<22} {etype:<12} {count:>5} items{alias_str}")
+  finally:
+    conn.close()
+
+
+@entities_group.command("add")
+@click.argument("canonical")
+@click.option("--type", "etype", default="person", show_default=True)
+@click.option("--alias", "aliases", multiple=True, help="Repeatable: --alias JX --alias Jacob")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_path: str) -> None:
+  """Add an entity to the dictionary and seed the DB immediately."""
+  cfg = load_config(config_path)
+  entities_cfg = dict(cfg.get("entities") or {})
+  dictionary = list(entities_cfg.get("dictionary") or [])
+  if any(e["canonical"].lower() == canonical.lower() for e in dictionary):
+    click.echo(f"'{canonical}' is already in the dictionary.")
+    return
+  entry: dict = {"canonical": canonical, "type": etype}
+  if aliases:
+    entry["aliases"] = list(aliases)
+  dictionary.append(entry)
+  entities_cfg["dictionary"] = dictionary
+  _save_entities(config_path, entities_cfg)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    seed_entities(conn, load_config(config_path).get("entities", {}).get("dictionary", []))
+  finally:
+    conn.close()
+  click.echo(f"Added '{canonical}' ({etype}).")
+
+
+@entities_group.command("remove")
+@click.argument("canonical")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def entities_remove(canonical: str, config_path: str) -> None:
+  """Remove an entity from the dictionary (existing DB links are kept)."""
+  cfg = load_config(config_path)
+  entities_cfg = dict(cfg.get("entities") or {})
+  dictionary = list(entities_cfg.get("dictionary") or [])
+  before = len(dictionary)
+  dictionary = [e for e in dictionary if e["canonical"].lower() != canonical.lower()]
+  if len(dictionary) == before:
+    click.echo(f"'{canonical}' not found in dictionary.")
+    return
+  entities_cfg["dictionary"] = dictionary
+  _save_entities(config_path, entities_cfg)
+  click.echo(f"Removed '{canonical}'. Existing item links in the DB are untouched.")
+
+
+@entities_group.command("manage")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def entities_manage(config_path: str) -> None:
+  """Interactive entity dictionary manager."""
+
+  def _show(cfg: dict, conn: "sqlite3.Connection") -> None:
+    dictionary = (cfg.get("entities") or {}).get("dictionary") or []
+    if not dictionary:
+      click.echo("  (empty - add some with [a])")
+      return
+    for entry in dictionary:
+      canonical = entry["canonical"]
+      etype = entry.get("type", "?")
+      aliases = entry.get("aliases") or []
+      row = conn.execute(
+        """SELECT count(*) FROM item_entities ie
+           JOIN entities e ON e.id = ie.entity_id
+           WHERE e.canonical_name = ? AND ie.source = 'dictionary'""",
+        (canonical,),
+      ).fetchone()
+      count = row[0] if row else 0
+      alias_str = f" [{', '.join(aliases)}]" if aliases else ""
+      click.echo(f"  {canonical:<22} {etype:<12} {count:>5} items{alias_str}")
+
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    while True:
+      cfg = load_config(config_path)
+      click.echo("\nEntity dictionary:")
+      _show(cfg, conn)
+      click.echo("\n  [a]dd  [r]emove  [q]uit")
+      choice = click.prompt("", prompt_suffix="> ", default="q").strip().lower()
+
+      if choice == "q":
+        break
+
+      elif choice == "a":
+        canonical = click.prompt("  Name").strip()
+        if not canonical:
+          continue
+        etype = click.prompt("  Type", default="person").strip()
+        raw = click.prompt("  Aliases (comma-separated, or blank)", default="").strip()
+        aliases = [a.strip() for a in raw.split(",") if a.strip()]
+        entities_cfg = dict(cfg.get("entities") or {})
+        dictionary = list(entities_cfg.get("dictionary") or [])
+        if any(e["canonical"].lower() == canonical.lower() for e in dictionary):
+          click.echo(f"  '{canonical}' already exists.")
+          continue
+        entry: dict = {"canonical": canonical, "type": etype}
+        if aliases:
+          entry["aliases"] = aliases
+        dictionary.append(entry)
+        entities_cfg["dictionary"] = dictionary
+        _save_entities(config_path, entities_cfg)
+        seed_entities(conn, load_config(config_path).get("entities", {}).get("dictionary", []))
+        click.echo(f"  Added '{canonical}'.")
+
+      elif choice == "r":
+        canonical = click.prompt("  Remove which entity?").strip()
+        entities_cfg = dict(cfg.get("entities") or {})
+        dictionary = list(entities_cfg.get("dictionary") or [])
+        before = len(dictionary)
+        dictionary = [e for e in dictionary if e["canonical"].lower() != canonical.lower()]
+        if len(dictionary) == before:
+          click.echo(f"  '{canonical}' not found.")
+          continue
+        entities_cfg["dictionary"] = dictionary
+        _save_entities(config_path, entities_cfg)
+        click.echo(f"  Removed '{canonical}'.")
+
+  finally:
+    conn.close()
+
+
 if __name__ == "__main__":
   cli()

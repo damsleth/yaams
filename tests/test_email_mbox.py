@@ -7,6 +7,8 @@ from yaams.ingest.email_mbox import (
   EmailAdapter,
   clean_email_body,
   email_to_item,
+  is_automated_sender,
+  is_newsletter,
   parse_email_datetime,
   parse_emlx,
   strip_html,
@@ -243,6 +245,108 @@ def test_clean_email_body_collapses_long_tracking_urls():
   assert "Read this update." in cleaned
   assert "More content here." in cleaned
   assert "spmailtechnol" not in cleaned
+
+
+def test_is_automated_sender_matches_common_patterns():
+  assert is_automated_sender("noreply@steampowered.com")
+  assert is_automated_sender("no-reply@digipost.no")
+  assert is_automated_sender("no_reply@email.apple.com")
+  assert is_automated_sender("do-not-reply@theoatmeal.com")
+  assert is_automated_sender("automated@airbnb.com")
+  assert is_automated_sender("notifications@eu.yammer.com")
+  assert is_automated_sender("invitations@linkedin.com")
+  assert is_automated_sender("informer@daily.dev")
+  assert is_automated_sender("ikkesvar@mail.human.no")
+  assert is_automated_sender("MAILER-DAEMON@example.com")
+  assert not is_automated_sender("alice@example.test")
+  assert not is_automated_sender("Carl.Joakim.Damsleth@crayon.no")
+
+
+def test_is_newsletter_matches_list_unsubscribe():
+  from email.message import EmailMessage
+  msg = EmailMessage()
+  msg["From"] = "company@example.com"
+  msg["List-Unsubscribe"] = "<https://example.com/unsubscribe?id=123>"
+  assert is_newsletter(msg)
+
+
+def test_is_newsletter_matches_precedence_bulk():
+  from email.message import EmailMessage
+  msg = EmailMessage()
+  msg["Precedence"] = "bulk"
+  assert is_newsletter(msg)
+
+
+def test_is_newsletter_returns_false_for_personal_email():
+  msg = make_message()
+  assert not is_newsletter(msg)
+
+
+def test_email_to_item_skips_automated_sender():
+  msg = make_message()
+  msg.replace_header("From", "noreply@github.com")
+  skipped = []
+
+  item = email_to_item(
+    msg,
+    datetime(2026, 1, 1, tzinfo=UTC),
+    on_skip_newsletter=lambda path, sender: skipped.append(sender),
+  )
+
+  assert item is None
+  assert skipped == ["noreply@github.com"]
+
+
+def test_email_to_item_skips_newsletter_with_list_header():
+  msg = make_message()
+  msg.replace_header("From", "team@somecompany.com")
+  msg["List-Unsubscribe"] = "<https://somecompany.com/unsubscribe>"
+  skipped = []
+
+  item = email_to_item(
+    msg,
+    datetime(2026, 1, 1, tzinfo=UTC),
+    on_skip_newsletter=lambda path, sender: skipped.append(sender),
+  )
+
+  assert item is None
+  assert skipped == ["team@somecompany.com"]
+
+
+def test_email_to_item_keeps_user_addressed_sends_even_with_list_header():
+  msg = make_message()
+  msg.replace_header("From", "kim@damsleth.no")
+  msg["List-Unsubscribe"] = "<https://example.com/unsubscribe>"
+  skipped = []
+
+  item = email_to_item(
+    msg,
+    datetime(2026, 1, 1, tzinfo=UTC),
+    user_addresses={"kim@damsleth.no"},
+    on_skip_newsletter=lambda path, sender: skipped.append(sender),
+  )
+
+  assert item is not None
+  assert item.sender == "kim@damsleth.no"
+  assert skipped == []
+
+
+def test_email_to_item_keeps_personal_email():
+  msg = make_message()
+  item = email_to_item(msg, datetime(2026, 1, 1, tzinfo=UTC))
+  assert item is not None
+  assert "cabin plan" in item.content
+
+
+def test_email_to_item_can_disable_newsletter_filter():
+  msg = make_message()
+  msg.replace_header("From", "noreply@github.com")
+  item = email_to_item(
+    msg,
+    datetime(2026, 1, 1, tzinfo=UTC),
+    skip_newsletters=False,
+  )
+  assert item is not None
 
 
 def test_extract_text_body_handles_html_in_text_plain_alternative():

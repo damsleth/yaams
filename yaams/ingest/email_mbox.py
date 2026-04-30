@@ -60,6 +60,31 @@ _LONG_URL = re.compile(r"https?://[^\s]{120,}")
 _WHITESPACE_RUN = re.compile(r"[ \t]+")
 _BLANK_LINE_RUN = re.compile(r"\n\s*\n+")
 
+_AUTOMATED_LOCAL_PARTS = re.compile(
+  r"^(no[-_]?reply|do[-_]?not[-_]?reply|donotreply|automated|"
+  r"notifications?|invitations?|informer|newsletter|mailer|bouncer?|"
+  r"reply|alerts?|updates?|digest|ikkesvar|noresponse|noresponder|"
+  r"postmaster|mailer-daemon|notify|notification|hello|team|news|"
+  r"announce|automatic|system)@",
+  re.IGNORECASE,
+)
+
+
+def is_automated_sender(sender: str) -> bool:
+  return bool(_AUTOMATED_LOCAL_PARTS.match(sender or ""))
+
+
+def is_newsletter(message: Message) -> bool:
+  if message.get("List-Unsubscribe") or message.get("List-Id") or message.get("List-Help"):
+    return True
+  precedence = (message.get("Precedence") or "").strip().lower()
+  if precedence in {"bulk", "list", "junk"}:
+    return True
+  auto = (message.get("Auto-Submitted") or "").strip().lower()
+  if auto and auto != "no":
+    return True
+  return False
+
 
 def _dedupe_lines(text: str, min_len: int = 25) -> str:
   seen: set[str] = set()
@@ -97,24 +122,39 @@ def clean_email_body(text: str) -> str:
 @dataclass
 class EmailAdapter:
   sources: list[dict]
+  user_addresses: list[str] = field(default_factory=list)
+  skip_newsletters: bool = True
   skipped_emlx: int = field(default=0, init=False)
   skipped_email_dates: int = field(default=0, init=False)
+  skipped_newsletters: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_emlx = 0
     self.skipped_email_dates = 0
+    self.skipped_newsletters = 0
     cutoff = ensure_utc(since)
+    user_set = {a.strip().lower() for a in self.user_addresses if a}
     for source in self.sources:
       source_type = source.get("type")
       path = expand_path(source["path"])
       if source_type == "mbox":
-        yield from extract_mbox(path, cutoff, on_skip_date=self._record_date_skip)
+        yield from extract_mbox(
+          path,
+          cutoff,
+          on_skip_date=self._record_date_skip,
+          user_addresses=user_set,
+          skip_newsletters=self.skip_newsletters,
+          on_skip_newsletter=self._record_newsletter_skip,
+        )
       elif source_type == "emlx":
         yield from extract_emlx_tree(
           path,
           cutoff,
           on_skip=self._record_emlx_skip,
           on_skip_date=self._record_date_skip,
+          user_addresses=user_set,
+          skip_newsletters=self.skip_newsletters,
+          on_skip_newsletter=self._record_newsletter_skip,
         )
       else:
         raise ValueError(f"Unsupported email source type: {source_type}")
@@ -125,15 +165,28 @@ class EmailAdapter:
   def _record_date_skip(self, path: Path | None, date_header: str) -> None:
     self.skipped_email_dates += 1
 
+  def _record_newsletter_skip(self, path: Path | None, sender: str) -> None:
+    self.skipped_newsletters += 1
+
 
 def extract_mbox(
   path: Path,
   since: datetime,
   on_skip_date: Callable[[Path | None, str], None] | None = None,
+  user_addresses: set[str] | None = None,
+  skip_newsletters: bool = True,
+  on_skip_newsletter: Callable[[Path | None, str], None] | None = None,
 ) -> Iterator[Item]:
   mbox = mailbox.mbox(path)
   for message in mbox:
-    item = email_to_item(message, since, on_skip_date=on_skip_date)
+    item = email_to_item(
+      message,
+      since,
+      on_skip_date=on_skip_date,
+      user_addresses=user_addresses,
+      skip_newsletters=skip_newsletters,
+      on_skip_newsletter=on_skip_newsletter,
+    )
     if item is not None:
       yield item
 
@@ -143,6 +196,9 @@ def extract_emlx_tree(
   since: datetime,
   on_skip: Callable[[Path, Exception], None] | None = None,
   on_skip_date: Callable[[Path | None, str], None] | None = None,
+  user_addresses: set[str] | None = None,
+  skip_newsletters: bool = True,
+  on_skip_newsletter: Callable[[Path | None, str], None] | None = None,
 ) -> Iterator[Item]:
   files = [path] if path.is_file() else sorted(path.rglob("*.emlx"))
   for emlx_path in files:
@@ -157,6 +213,9 @@ def extract_emlx_tree(
       since,
       fallback_path=emlx_path,
       on_skip_date=on_skip_date,
+      user_addresses=user_addresses,
+      skip_newsletters=skip_newsletters,
+      on_skip_newsletter=on_skip_newsletter,
     )
     if item is not None:
       yield item
@@ -175,6 +234,9 @@ def email_to_item(
   since: datetime,
   fallback_path: Path | None = None,
   on_skip_date: Callable[[Path | None, str], None] | None = None,
+  user_addresses: set[str] | None = None,
+  skip_newsletters: bool = True,
+  on_skip_newsletter: Callable[[Path | None, str], None] | None = None,
 ) -> Item | None:
   date_header = message.get("Date")
   if not date_header:
@@ -189,6 +251,15 @@ def email_to_item(
   if timestamp < ensure_utc(since):
     return None
 
+  sender = _first_address(message.get("From", "")) or "unknown"
+  sender_lower = sender.lower()
+  user_set = user_addresses or set()
+  if skip_newsletters and sender_lower not in user_set:
+    if is_newsletter(message) or is_automated_sender(sender):
+      if on_skip_newsletter is not None:
+        on_skip_newsletter(fallback_path, sender)
+      return None
+
   body = clean_email_body(extract_text_body(message).strip())
   if not body:
     return None
@@ -200,7 +271,6 @@ def email_to_item(
     body,
     fallback_path=fallback_path,
   )).strip()
-  sender = _first_address(message.get("From", "")) or "unknown"
   to = _addresses(message.get_all("To", []))
   cc = _addresses(message.get_all("Cc", []))
   bcc = _addresses(message.get_all("Bcc", []))

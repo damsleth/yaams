@@ -86,6 +86,7 @@ def ingest(
       run_stats[src]["skipped"] += source_stats["skipped"]
       run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
       run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
+      run_stats[src]["skipped_newsletters"] = source_stats.get("skipped_newsletters", 0)
       run_stats[src]["decoded_attributed_body"] = source_stats[
         "decoded_attributed_body"
       ]
@@ -157,9 +158,11 @@ def ingest_source(
     "seen": seen,
     "new": inserted,
     "skipped": int(getattr(adapter, "skipped_emlx", 0))
-    + int(getattr(adapter, "skipped_email_dates", 0)),
+    + int(getattr(adapter, "skipped_email_dates", 0))
+    + int(getattr(adapter, "skipped_newsletters", 0)),
     "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
     "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
+    "skipped_newsletters": int(getattr(adapter, "skipped_newsletters", 0)),
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
@@ -188,7 +191,11 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
   if source == "imessage":
     return IMessageAdapter(Path(cfg["chat_db_path"]))
   if source == "email":
-    return EmailAdapter(list(cfg.get("sources", [])))
+    return EmailAdapter(
+      sources=list(cfg.get("sources", [])),
+      user_addresses=list(cfg.get("user_addresses", [])),
+      skip_newsletters=bool(cfg.get("skip_newsletters", True)),
+    )
   raise ValueError(f"Unknown source: {source}")
 
 
@@ -287,10 +294,12 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
   if source == "email":
     skipped_emlx = int(stats.get("skipped_emlx", 0))
     skipped_dates = int(stats.get("skipped_email_dates", 0))
-    if skipped_emlx or skipped_dates:
+    skipped_news = int(stats.get("skipped_newsletters", 0))
+    if skipped_emlx or skipped_dates or skipped_news:
       click.echo(
         f"    skipped email details: {skipped_emlx:,} parse errors, "
-        f"{skipped_dates:,} invalid dates"
+        f"{skipped_dates:,} invalid dates, "
+        f"{skipped_news:,} newsletters/automated"
       )
 
 

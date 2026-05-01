@@ -59,6 +59,8 @@ class EntityTagger:
 
   def _tag_ner(self, content: str) -> list[EntityTag]:
     snippet = content[:5000]
+    # strip markdown heading markers so NER doesn't tag them as entities
+    snippet = re.sub(r"^#{1,6}\s*", "", snippet, flags=re.MULTILINE)
     use_nb = self.nlp_nb is not None and _is_norwegian(snippet)
     nlp = self.nlp_nb if use_nb else self.nlp
     if nlp is None:
@@ -70,12 +72,16 @@ class EntityTagger:
       entity_type = label_map.get(ent.label_)
       if entity_type is None:
         continue
-      canonical, resolved_type = self._resolve_dictionary(ent.text)
+      text = ent.text.strip()
+      # skip tokens that are purely symbolic (markdown artifacts, punctuation)
+      if not re.search(r"\w", text):
+        continue
+      canonical, resolved_type = self._resolve_dictionary(text)
       if canonical:
         tags.append((canonical, resolved_type, 1.0, "dictionary"))
       else:
         tags.append(
-          (normalize_ner_canonical(ent.text, entity_type), entity_type, 0.7, "ner")
+          (normalize_ner_canonical(text, entity_type), entity_type, 0.7, "ner")
         )
     return tags
 

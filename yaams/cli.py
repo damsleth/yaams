@@ -1098,9 +1098,22 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
     ).fetchall()
 
     _NOISE = {
-      "var", "hvordan", "ikke", "men", "inn", "nice", "eta", "faks",
-      "unett", "deg", "meg", "jeg", "oss", "noe", "det", "den", "han",
-      "hun", "her", "der", "fra", "til", "via", "ved", "som", "for",
+      # pronouns / function words (NO)
+      "var", "hvordan", "ikke", "men", "inn", "deg", "meg", "jeg", "oss",
+      "noe", "det", "den", "han", "hun", "her", "der", "fra", "til", "via",
+      "ved", "som", "for", "alle", "noen", "hva", "når", "hvor", "også",
+      # pronouns / function words (EN)
+      "nice", "eta", "faks", "unett",
+      # temporal terms (NO + EN) - not useful as entities
+      "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday",
+      "thursday", "friday", "saturday", "sunday",
+      "januar", "februar", "mars", "april", "mai", "juni",
+      "juli", "august", "september", "oktober", "november", "desember",
+      "january", "february", "march", "june", "july", "october",
+      "november", "december",
+      "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag",
+      "igår", "idag", "imorgen", "uke", "måned", "år", "week", "month", "year",
+      "morning", "evening", "night", "afternoon",
     }
     candidates = [
       r for r in rows

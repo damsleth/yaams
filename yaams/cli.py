@@ -24,6 +24,7 @@ from yaams.synthesize import (
 from yaams.db import open_db
 from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Adapter, Item
+from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
@@ -592,6 +593,12 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       fetch_issues=bool(cfg.get("fetch_issues", True)),
       fetch_prs=bool(cfg.get("fetch_prs", True)),
     )
+  if source.startswith("calendar_"):
+    profile = source[len("calendar_"):]
+    return CalendarAdapter(
+      profile=profile,
+      skip_free=bool(cfg.get("skip_free", True)),
+    )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     token_source = OwaPiggyTokenSource(profile)
@@ -657,16 +664,22 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cfg = cfg or {}
   teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
   teams_sources = [f"teams_{p}" for p in teams_profiles]
+  cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
+  cal_sources = [f"calendar_{p}" for p in cal_profiles]
   if source == "all":
-    return ["imessage", "email", "notes", "tier2_ledger", "github", *teams_sources]
+    return ["imessage", "email", "notes", "tier2_ledger", "github", *teams_sources, *cal_sources]
   if source == "teams":
     return teams_sources
+  if source == "calendar":
+    return cal_sources
   return [source]
 
 
 def _config_section(source: str) -> str:
   if source.startswith("teams_") or source == "teams":
     return "teams"
+  if source.startswith("calendar_") or source == "calendar":
+    return "calendar"
   return source
 
 
@@ -696,6 +709,9 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
   if source == "github":
     return [f"github: {source_cfg.get('username', 'unknown')} (issues + PRs)"]
+  if source.startswith("calendar_"):
+    profile = source[len("calendar_"):]
+    return [f"owa-cal profile: {profile}"]
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     return [f"graph (owa-piggy profile): {profile}"]

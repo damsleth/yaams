@@ -4,9 +4,9 @@ Yet Another Agent Memory System. YAAMS is a local-first Tier 1 memory store for 
 
 ## Current Status
 
-Phases A, B, C (partial), D, and F are implemented:
+Phases A, B, C, D, E, and F are implemented:
 
-- iMessage, email, Microsoft Teams, Obsidian vault, and Tier 2 curated ledger notes ingest
+- iMessage, email, Microsoft Teams, Obsidian vault, Outlook calendar, GitHub, and Tier 2 curated ledger notes ingest
 - Idempotent `Item` records with deterministic IDs
 - SQLite storage with FTS5, entity tables, watermarks, and sqlite-vec when available
 - Dictionary entity tagging plus optional spaCy NER
@@ -122,11 +122,26 @@ Run a single source:
 ```bash
 python -m yaams.cli ingest --source imessage
 python -m yaams.cli ingest --source email
-python -m yaams.cli ingest --source notes           # Obsidian vault
-python -m yaams.cli ingest --source tier2_ledger    # curated ledger notes (Tier 2)
+python -m yaams.cli ingest --source notes               # Obsidian vault
+python -m yaams.cli ingest --source tier2_ledger        # curated ledger notes (Tier 2)
+python -m yaams.cli ingest --source github              # GitHub issues + PRs
+python -m yaams.cli ingest --source calendar            # all configured Outlook calendar profiles
+python -m yaams.cli ingest --source calendar_swon       # single calendar profile
 python -m yaams.cli ingest --source teams_swon
-python -m yaams.cli ingest --source teams           # all configured Teams profiles
+python -m yaams.cli ingest --source teams               # all configured Teams profiles
 ```
+
+## Ingest sources
+
+| Source | Config key | What it ingests |
+|--------|-----------|-----------------|
+| `imessage` | `ingest.imessage` | iMessage conversations from local `chat.db` |
+| `email` | `ingest.email` | Email from `.emlx` files (Apple Mail) |
+| `notes` | `ingest.notes` | Obsidian vault markdown notes |
+| `tier2_ledger` | `ingest.tier2_ledger` | Curated atomic notes from cognitive-ledger (Tier 2) |
+| `github` | `ingest.github` | GitHub issues and PRs from all your repos (public + private) |
+| `calendar` / `calendar_<profile>` | `ingest.calendar` | Outlook calendar events via owa-cal |
+| `teams` / `teams_<profile>` | `ingest.teams` | Microsoft Teams messages via Graph API |
 
 ### Stats
 

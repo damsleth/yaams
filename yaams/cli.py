@@ -1210,6 +1210,44 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
     conn.close()
 
 
+@entities_group.command("denied")
+@click.option("--config", "config_path", default="config.yaml", show_default=True)
+def entities_denied(config_path: str) -> None:
+  """List previously denied NER candidates and optionally restore them."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    rows = conn.execute(
+      """
+      SELECT e.id, e.canonical_name, e.entity_type, count(ie.item_id) AS cnt
+      FROM entities e
+      LEFT JOIN item_entities ie ON ie.entity_id = e.id
+      WHERE e.pending_review = 2
+      GROUP BY e.id
+      ORDER BY cnt DESC
+      """,
+    ).fetchall()
+    if not rows:
+      click.echo("No denied entities.")
+      return
+    click.echo(f"{len(rows)} denied entities.  [u]ndeny  [q]uit\n")
+    for row in rows:
+      click.echo(f"  {row['canonical_name']:<28} {row['entity_type']:<12} {row['cnt']} appearances")
+      choice = click.prompt("", default="q", prompt_suffix="[u/q] > ").strip().lower()
+      if choice == "u":
+        with conn:
+          conn.execute(
+            "UPDATE entities SET pending_review = 1 WHERE id = ?", (row["id"],)
+          )
+        click.echo(f"  '{row['canonical_name']}' restored - will appear in discover again.")
+      elif choice == "q":
+        return
+    click.echo("Done.")
+  finally:
+    conn.close()
+
+
 @entities_group.command("manage")
 @click.option("--config", "config_path", default="config.yaml", show_default=True)
 def entities_manage(config_path: str) -> None:

@@ -13,22 +13,38 @@ LABEL_TYPES = {
   "LOC": "place",
 }
 
+# nb_core_news_sm uses different label names
+_NB_LABEL_TYPES = {
+  "PER": "person",
+  "ORG": "org",
+  "LOC": "place",
+  "GPE": "place",
+}
+
+_NB_CHARS = frozenset("æøåÆØÅ")
+
+
+def _is_norwegian(text: str) -> bool:
+  return bool(_NB_CHARS.intersection(text))
+
 
 class EntityTagger:
   def __init__(
     self,
     spacy_model: str | None,
     dictionary: Iterable[dict] | None = None,
+    spacy_model_nb: str | None = None,
   ):
     self.dictionary_entries = list(dictionary or [])
     self.dictionary = self._build_alias_index(self.dictionary_entries)
     self.alias_pattern = self._build_alias_pattern(self.dictionary)
     self.nlp = self._load_spacy(spacy_model) if spacy_model else None
+    self.nlp_nb = self._load_spacy(spacy_model_nb) if spacy_model_nb else None
 
   def tag(self, content: str) -> list[EntityTag]:
     results: list[EntityTag] = []
     results.extend(self._tag_dictionary(content))
-    if self.nlp is not None:
+    if self.nlp is not None or self.nlp_nb is not None:
       results.extend(self._tag_ner(content))
     return self._dedupe(results)
 
@@ -42,10 +58,16 @@ class EntityTagger:
     return tags
 
   def _tag_ner(self, content: str) -> list[EntityTag]:
-    doc = self.nlp(content[:5000])
+    snippet = content[:5000]
+    use_nb = self.nlp_nb is not None and _is_norwegian(snippet)
+    nlp = self.nlp_nb if use_nb else self.nlp
+    if nlp is None:
+      return []
+    label_map = _NB_LABEL_TYPES if use_nb else LABEL_TYPES
+    doc = nlp(snippet)
     tags: list[EntityTag] = []
     for ent in doc.ents:
-      entity_type = LABEL_TYPES.get(ent.label_)
+      entity_type = label_map.get(ent.label_)
       if entity_type is None:
         continue
       canonical, resolved_type = self._resolve_dictionary(ent.text)

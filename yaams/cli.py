@@ -1089,6 +1089,7 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
       FROM item_entities ie
       JOIN entities e ON e.id = ie.entity_id
       WHERE ie.source = 'ner'
+        AND e.pending_review != 2
       GROUP BY e.id
       HAVING cnt >= ?
       ORDER BY cnt DESC
@@ -1161,6 +1162,14 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
           return
 
         if choice == "d":
+          with conn:
+            conn.execute(
+              """
+              UPDATE entities SET pending_review = 2
+              WHERE lower(canonical_name) = lower(?)
+              """,
+              (canonical,),
+            )
           break
 
         if choice in ("a", "e"):

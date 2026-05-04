@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterator
 
 from yaams.ingest.base import Item, hash_id
-from yaams.time import ensure_utc
+from yaams.time import ensure_utc, parse_iso_datetime
 
 
 @dataclass
@@ -58,7 +58,7 @@ def _to_item(event: dict, profile: str) -> Item | None:
     content += f"\nCategories: {', '.join(event['categories'])}"
 
   try:
-    ts = datetime.fromisoformat(start_str).replace(tzinfo=UTC)
+    ts = parse_iso_datetime(start_str)
   except ValueError:
     return None
 

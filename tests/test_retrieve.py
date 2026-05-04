@@ -140,6 +140,34 @@ def test_consolidation_boost_lifts_consolidations_above_raw_items():
   assert results[0].kind == "consolidation"
 
 
+def test_tier2_boost_promotes_ledger_above_raw_for_equal_match():
+  conn = _open_db()
+  raw = _make_item(
+    source="email",
+    thread_id="t-raw",
+    content="alpha tier2 distinguishing token",
+    msg_id="raw-1",
+  )
+  ledger = _make_item(
+    source="tier2_ledger",
+    thread_id="t-ledger",
+    content="alpha tier2 distinguishing token",
+    msg_id="ledger-1",
+  )
+  store_items(conn, [raw, ledger], [b"\x00" * 16] * 2, [[]] * 2)
+
+  baseline = HybridQueryConfig(tier2_boost=1.0, include_consolidations=False)
+  baseline_results = query(conn, "alpha tier2 distinguishing", config=baseline)
+  baseline_sources = [r.source for r in baseline_results]
+  assert "tier2_ledger" in baseline_sources
+  assert "email" in baseline_sources
+
+  boosted = HybridQueryConfig(tier2_boost=2.0, include_consolidations=False)
+  boosted_results = query(conn, "alpha tier2 distinguishing", config=boosted)
+  assert boosted_results
+  assert boosted_results[0].source == "tier2_ledger"
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

@@ -73,7 +73,10 @@ def init_db(config_path: str, require_vec: bool) -> None:
   "--source",
   default="all",
   show_default=True,
-  help="all, imessage, email, teams, or teams_<profile> (e.g. teams_swon)",
+  help=(
+    "all, imessage, email, notes, tier2_ledger, github, "
+    "teams or teams_<profile>, calendar or calendar_<profile>"
+  ),
 )
 @click.option("--dry-run", is_flag=True)
 @click.option("--batch-size", default=64, show_default=True)
@@ -973,10 +976,11 @@ def promote_review(config_path: str, review_all: bool) -> None:
     conn.close()
 
 
-def _save_entities(config_path: str, entities_cfg: dict) -> None:
+def _save_entities(config_path: str | None, entities_cfg: dict) -> None:
   import re
   import yaml
-  p = Path(config_path)
+  from yaams.config import resolve_config_path
+  p = resolve_config_path(config_path)
   text = p.read_text(encoding="utf-8")
   block = yaml.dump({"entities": entities_cfg}, default_flow_style=False, allow_unicode=True, sort_keys=False)
   new_text = re.sub(r"^entities:.*?(?=^\S|\Z)", block, text, flags=re.MULTILINE | re.DOTALL)

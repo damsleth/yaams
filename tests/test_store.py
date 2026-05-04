@@ -64,6 +64,47 @@ def test_store_items_replaces_entity_links_for_existing_item(tmp_path):
   assert [row["canonical_name"] for row in rows] == ["Diana"]
 
 
+def test_store_items_updates_canonical_fields_on_reingest(tmp_path):
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+  base = Item(
+    id=hash_id("tier2_ledger", "fact__example.md"),
+    source="tier2_ledger",
+    source_id="fact__example.md",
+    timestamp=datetime(2025, 1, 1, 12, 0, tzinfo=UTC),
+    sender="me",
+    recipients=[],
+    content="Original statement.",
+    subject="Original title",
+  )
+  updated = Item(
+    id=base.id,
+    source=base.source,
+    source_id=base.source_id,
+    timestamp=datetime(2025, 2, 1, 9, 30, tzinfo=UTC),
+    sender="me",
+    recipients=[],
+    content="Updated statement with new detail.",
+    subject="Updated title",
+  )
+
+  store_items(conn, [base], [[0.1]], [[]])
+  store_items(conn, [updated], [[0.2]], [[]])
+
+  row = conn.execute(
+    "SELECT content, subject, timestamp FROM items WHERE id = ?", (base.id,)
+  ).fetchone()
+  assert row["content"] == "Updated statement with new detail."
+  assert row["subject"] == "Updated title"
+  assert row["timestamp"].startswith("2025-02-01")
+
+  fts_row = conn.execute(
+    "SELECT content, subject FROM items_fts WHERE item_id = ?", (base.id,)
+  ).fetchone()
+  assert fts_row["content"] == "Updated statement with new detail."
+  assert fts_row["subject"] == "Updated title"
+
+
 def test_open_db_readonly_does_not_require_writes(tmp_path):
   path = tmp_path / "yaams.db"
   conn = open_db(path)

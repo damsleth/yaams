@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import urllib.error
 import urllib.request
@@ -10,6 +11,18 @@ from typing import Iterator
 
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
+
+
+logger = logging.getLogger(__name__)
+
+
+class GitHubAPIError(RuntimeError):
+  """Raised for GitHub HTTP failures that should abort or surface, not silently skip."""
+
+  def __init__(self, status: int, url: str, message: str = ""):
+    self.status = status
+    self.url = url
+    super().__init__(f"GitHub API {status} on {url}: {message}".rstrip(": "))
 
 
 @dataclass
@@ -79,8 +92,16 @@ class GitHubAdapter:
         link = resp.headers.get("Link", "")
         next_url = _parse_next_link(link)
         return data, next_url
-    except urllib.error.HTTPError:
-      return [], None
+    except urllib.error.HTTPError as exc:
+      if exc.code == 404:
+        logger.warning("GitHub 404 on %s - skipping", url)
+        return [], None
+      body = ""
+      try:
+        body = exc.read().decode("utf-8", errors="replace")[:200]
+      except Exception:
+        pass
+      raise GitHubAPIError(exc.code, url, body) from exc
 
 
 def _get_token() -> str:

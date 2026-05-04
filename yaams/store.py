@@ -128,15 +128,48 @@ def database_stats(conn: sqlite3.Connection) -> dict:
 
 
 def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
-  cursor = conn.execute(
+  exists = conn.execute("SELECT 1 FROM items WHERE id = ?", (item.id,)).fetchone()
+  params = (
+    item.id,
+    item.source,
+    item.source_id,
+    ensure_utc(item.timestamp).isoformat(),
+    item.sender,
+    json.dumps(item.recipients, ensure_ascii=False),
+    item.content,
+    item.subject,
+    item.thread_id,
+    item.lang,
+    json.dumps(item.raw_metadata, ensure_ascii=False),
+    ensure_utc(item.ingested_at).isoformat(),
+  )
+  if exists is None:
+    conn.execute(
+      """
+      INSERT INTO items
+        (id, source, source_id, timestamp, sender, recipients, content,
+         subject, thread_id, lang, raw_metadata, ingested_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """,
+      params,
+    )
+    return 1
+  conn.execute(
     """
-    INSERT OR IGNORE INTO items
-      (id, source, source_id, timestamp, sender, recipients, content,
-       subject, thread_id, lang, raw_metadata, ingested_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    UPDATE items SET
+      source = ?,
+      source_id = ?,
+      timestamp = ?,
+      sender = ?,
+      recipients = ?,
+      content = ?,
+      subject = ?,
+      thread_id = ?,
+      lang = ?,
+      raw_metadata = ?
+    WHERE id = ?
     """,
     (
-      item.id,
       item.source,
       item.source_id,
       ensure_utc(item.timestamp).isoformat(),
@@ -147,10 +180,10 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
       item.thread_id,
       item.lang,
       json.dumps(item.raw_metadata, ensure_ascii=False),
-      ensure_utc(item.ingested_at).isoformat(),
+      item.id,
     ),
   )
-  return int(cursor.rowcount == 1)
+  return 0
 
 
 def _replace_embedding(

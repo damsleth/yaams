@@ -78,14 +78,14 @@ def generate_candidates(
   candidates: list[PromotionCandidate] = []
   total = len(entities)
 
-  for i, (entity_name, entity_id) in enumerate(entities, 1):
+  for i, (entity_name, entity_id, window_days) in enumerate(entities, 1):
     if on_progress:
       on_progress(f"[{i}/{total}] {entity_name} ...")
     if _is_covered(entity_name, existing_tier2, index_texts):
       if on_progress:
         on_progress(f"  skipped (already in Tier 2)")
       continue
-    cluster = _fetch_cluster(conn, entity_id, config)
+    cluster = _fetch_cluster(conn, entity_id, config, window_days)
     if len(cluster) < config.min_cluster_items:
       if on_progress:
         on_progress(f"  skipped (cluster too small: {len(cluster)} items)")
@@ -207,8 +207,8 @@ def _fetch_dict_entities(
   conn: sqlite3.Connection,
   config: PromoteConfig,
   entity_filter: str | None,
-) -> list[tuple[str, int]]:
-  seen: dict[int, tuple[str, int]] = {}
+) -> list[tuple[str, int, int]]:
+  seen: dict[int, tuple[str, int, int]] = {}
 
   # Per-type windows (e.g. person -> 365 days)
   for etype, days in config.window_days_by_type.items():
@@ -216,7 +216,7 @@ def _fetch_dict_entities(
     for r in conn.execute(sql, (
       _cutoff_iso(days), etype, entity_filter, entity_filter, config.min_cluster_items
     )).fetchall():
-      seen.setdefault(r["id"], (r["canonical_name"], r["id"]))
+      seen.setdefault(r["id"], (r["canonical_name"], r["id"], days))
 
   # Default window for types not explicitly configured
   known = list(config.window_days_by_type.keys())
@@ -228,7 +228,7 @@ def _fetch_dict_entities(
     sql = _ENTITY_QUERY.format(type_filter="1=1")
     params = (_cutoff_iso(config.window_days), entity_filter, entity_filter, config.min_cluster_items)
   for r in conn.execute(sql, params).fetchall():
-    seen.setdefault(r["id"], (r["canonical_name"], r["id"]))
+    seen.setdefault(r["id"], (r["canonical_name"], r["id"], config.window_days))
 
   return list(seen.values())
 
@@ -274,8 +274,10 @@ def _fetch_cluster(
   conn: sqlite3.Connection,
   entity_id: int,
   config: PromoteConfig,
+  window_days: int | None = None,
 ) -> list[dict[str, Any]]:
-  cutoff = _cutoff_iso(config.window_days)
+  effective_window = window_days if window_days is not None else config.window_days
+  cutoff = _cutoff_iso(effective_window)
   rows = conn.execute(
     """
     SELECT i.id, i.source, i.timestamp, i.sender, i.content, i.subject

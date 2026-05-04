@@ -96,6 +96,7 @@ def query(
     cfg=cfg,
   )
   hydrated = _hydrate(conn, fused, cfg)
+  hydrated.sort(key=lambda r: r.score, reverse=True)
   return hydrated[: cfg.top_k]
 
 

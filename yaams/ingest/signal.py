@@ -39,7 +39,7 @@ CHROMIUM_SAFE_STORAGE_IV = b" " * 16
 CHROMIUM_SAFE_STORAGE_PREFIX = b"v10"
 
 KEYCHAIN_SERVICE = "Signal Safe Storage"
-KEYCHAIN_ACCOUNT = "Signal"
+KEYCHAIN_ACCOUNT = "Signal Key"
 
 ALLOWED_MESSAGE_TYPES = {"incoming", "outgoing"}
 
@@ -199,7 +199,7 @@ def extract_from_connection(
   has_received_at = "received_at" in message_columns
   since_ms = int(ensure_utc(since).timestamp() * 1000)
 
-  conv_lookup = _build_conversation_lookup(conn)
+  conv_lookup, label_by_service_id = _build_conversation_lookup(conn)
 
   fields = [
     "m.id AS id",
@@ -213,6 +213,10 @@ def extract_from_connection(
     fields.append("m.source AS source")
   else:
     fields.append("NULL AS source")
+  if "sourceServiceId" in message_columns:
+    fields.append("m.sourceServiceId AS sourceServiceId")
+  else:
+    fields.append("NULL AS sourceServiceId")
   if has_received_at:
     fields.append("m.received_at AS received_at")
   else:
@@ -230,13 +234,17 @@ def extract_from_connection(
     payload = _safe_loads(row["json"]) or {}
     body = (row["body"] or payload.get("body") or "").strip()
     attachments = _normalize_attachments(payload.get("attachments") or [])
-    reactions = _normalize_reactions(payload.get("reactions") or [])
+    reactions = _normalize_reactions(
+      payload.get("reactions") or [],
+      conv_lookup,
+      label_by_service_id,
+    )
     if not body and not attachments:
       continue
 
     is_outgoing = row["type"] == "outgoing"
     convo = conv_lookup.get(row["conversationId"], {})
-    sender = _resolve_sender(is_outgoing, row, payload, convo)
+    sender = _resolve_sender(is_outgoing, row, payload, convo, label_by_service_id)
     recipients = _resolve_recipients(is_outgoing, sender, convo)
     timestamp = _ms_to_datetime(int(row["sent_at"]))
 
@@ -362,15 +370,30 @@ def _normalize_attachments(raw: list) -> list[dict]:
   return out
 
 
-def _normalize_reactions(raw: list) -> list[dict]:
+def _normalize_reactions(
+  raw: list,
+  conv_lookup: dict[str, dict] | None = None,
+  label_by_service_id: dict[str, str] | None = None,
+) -> list[dict]:
+  conv_lookup = conv_lookup or {}
+  label_by_service_id = label_by_service_id or {}
   out: list[dict] = []
   for entry in raw:
     if not isinstance(entry, dict):
       continue
+    raw_id = entry.get("from") or entry.get("fromId")
+    label = entry.get("fromName")
+    if not label and raw_id:
+      convo = conv_lookup.get(str(raw_id))
+      if convo and convo.get("name"):
+        label = convo["name"]
+      else:
+        label = label_by_service_id.get(str(raw_id))
     out.append(
       {
         "emoji": entry.get("emoji"),
-        "from": entry.get("fromName") or entry.get("from") or entry.get("fromId"),
+        "from": label or raw_id,
+        "from_id": raw_id,
         "timestamp": entry.get("timestamp") or entry.get("targetTimestamp"),
       }
     )
@@ -382,21 +405,29 @@ def _resolve_sender(
   row: sqlite3.Row,
   payload: dict,
   convo: dict,
+  label_by_service_id: dict[str, str],
 ) -> str:
   if is_outgoing:
     return "me"
+  service_id = _row_get(row, row.keys(), "sourceServiceId") or payload.get("sourceServiceId")
+  if service_id:
+    label = label_by_service_id.get(service_id)
+    if label:
+      return label
   if convo.get("type") == "private":
     return convo.get("name") or convo.get("id") or "(unknown)"
-  for key in ("sourceServiceId", "sourceUuid", "source", "sourceE164"):
+  for key in ("sourceUuid", "source", "sourceE164"):
     value = payload.get(key)
     if value:
-      label = convo.get("members_by_id", {}).get(value)
+      label = label_by_service_id.get(str(value))
       if label:
         return label
       return str(value)
-  source_field = row["source"] if "source" in row.keys() else None
+  source_field = _row_get(row, row.keys(), "source")
   if source_field:
     return str(source_field)
+  if service_id:
+    return str(service_id)
   return "(unknown)"
 
 
@@ -416,16 +447,27 @@ def _resolve_recipients(
   return ["me"]
 
 
-def _build_conversation_lookup(conn: sqlite3.Connection) -> dict[str, dict]:
+def _build_conversation_lookup(
+  conn: sqlite3.Connection,
+) -> tuple[dict[str, dict], dict[str, str]]:
+  """Build (conversations_by_id, label_by_service_id).
+
+  Signal Desktop keys group membership in `conversations.json.membersV2` as a
+  list of `{aci, role, ...}` entries, where `aci` matches the `serviceId`
+  column on a private conversation row. The legacy `members` column is empty
+  in v8.x. We index private conversations by their `serviceId` so messages
+  arriving with a `sourceServiceId` can be resolved to a profile name.
+  """
   cols = _table_columns(conn, "conversations")
   if not cols:
-    return {}
+    return {}, {}
   selects = ["id"]
   for c in ("type", "name", "profileFullName", "profileName", "e164", "serviceId", "members", "json"):
     if c in cols:
       selects.append(c)
   rows = conn.execute(f"SELECT {', '.join(selects)} FROM conversations").fetchall()
   by_id: dict[str, dict] = {}
+  label_by_service_id: dict[str, str] = {}
   for row in rows:
     keys = row.keys()
     label = (
@@ -436,29 +478,33 @@ def _build_conversation_lookup(conn: sqlite3.Connection) -> dict[str, dict]:
       or _row_get(row, keys, "serviceId")
       or row["id"]
     )
+    payload = _safe_loads(_row_get(row, keys, "json")) or {}
     members_raw = _safe_loads(_row_get(row, keys, "members") or "[]") or []
+    member_service_ids: list[str] = []
+    members_v2 = payload.get("membersV2") or []
+    for entry in members_v2:
+      if isinstance(entry, dict) and entry.get("aci"):
+        member_service_ids.append(str(entry["aci"]))
     by_id[row["id"]] = {
       "id": row["id"],
       "type": _row_get(row, keys, "type"),
       "name": label,
       "members_raw": members_raw,
+      "member_service_ids": member_service_ids,
     }
+    service_id = _row_get(row, keys, "serviceId")
+    if service_id:
+      label_by_service_id[str(service_id)] = label
 
   for conv in by_id.values():
-    member_ids = conv.get("members_raw") or []
-    members_by_id: dict[str, str] = {}
     members_labels: list[str] = []
-    for mid in member_ids:
+    for sid in conv.get("member_service_ids") or []:
+      members_labels.append(label_by_service_id.get(sid) or sid)
+    for mid in conv.get("members_raw") or []:
       member = by_id.get(mid)
-      if member:
-        members_by_id[mid] = member["name"]
-        members_labels.append(member["name"])
-      else:
-        members_by_id[mid] = mid
-        members_labels.append(mid)
-    conv["members_by_id"] = members_by_id
+      members_labels.append(member["name"] if member else mid)
     conv["members_labels"] = members_labels
-  return by_id
+  return by_id, label_by_service_id
 
 
 def _row_get(row: sqlite3.Row, keys, name: str):

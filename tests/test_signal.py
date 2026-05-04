@@ -25,6 +25,7 @@ def _signal_schema(conn: sqlite3.Connection) -> None:
       sent_at INTEGER,
       received_at INTEGER,
       source TEXT,
+      sourceServiceId TEXT,
       body TEXT,
       json TEXT
     );
@@ -36,7 +37,8 @@ def _signal_schema(conn: sqlite3.Connection) -> None:
       profileName TEXT,
       e164 TEXT,
       serviceId TEXT,
-      members TEXT
+      members TEXT,
+      json TEXT
     );
     """
   )
@@ -134,18 +136,36 @@ def test_extract_outgoing_message_is_from_me():
 
 def test_extract_group_message_resolves_members_and_subject():
   conn = _open_db()
-  _insert_conversation(conn, id="alice", type="private", profileFullName="Alice")
-  _insert_conversation(conn, id="bob", type="private", profileFullName="Bob")
-  _insert_conversation(conn, id="me", type="private", profileFullName="Me")
+  _insert_conversation(
+    conn, id="alice", type="private", profileFullName="Alice",
+    serviceId="aci-alice",
+  )
+  _insert_conversation(
+    conn, id="bob", type="private", profileFullName="Bob",
+    serviceId="aci-bob",
+  )
+  _insert_conversation(
+    conn, id="me", type="private", profileFullName="Me",
+    serviceId="aci-me",
+  )
   _insert_conversation(
     conn, id="g1", type="group", name="Family",
-    members=json.dumps(["alice", "bob", "me"]),
+    json=json.dumps(
+      {
+        "membersV2": [
+          {"aci": "aci-alice", "role": 2},
+          {"aci": "aci-bob", "role": 2},
+          {"aci": "aci-me", "role": 2},
+        ]
+      }
+    ),
   )
   _insert_message(
     conn, id="g-m1", conversationId="g1", type="incoming",
     sent_at=_ms(2026, 4, 6),
     body="dinner saturday?",
-    json=json.dumps({"sourceServiceId": "alice"}),
+    sourceServiceId="aci-alice",
+    json="{}",
   )
 
   items = list(extract_from_connection(conn, datetime(2026, 1, 1, tzinfo=UTC)))

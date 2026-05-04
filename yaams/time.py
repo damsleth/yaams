@@ -19,3 +19,13 @@ def parse_iso_datetime(value: str) -> datetime:
 def utc_now() -> datetime:
   return datetime.now(UTC)
 
+
+def to_local(value: datetime) -> datetime:
+  if value.tzinfo is None:
+    value = value.replace(tzinfo=UTC)
+  return value.astimezone()
+
+
+def format_local(value: datetime, fmt: str = "%Y-%m-%d %H:%M %Z") -> str:
+  return to_local(value).strftime(fmt)
+

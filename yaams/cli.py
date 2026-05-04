@@ -42,7 +42,7 @@ from yaams.store import (
   store_consolidations,
   store_items,
 )
-from yaams.time import parse_iso_datetime
+from yaams.time import format_local, parse_iso_datetime, to_local
 from yaams.watermark import get_watermark, update_watermark
 
 
@@ -360,7 +360,7 @@ def _result_to_dict(r) -> dict:
     "id": r.id,
     "kind": r.kind,
     "source": r.source,
-    "timestamp": r.timestamp.isoformat() if hasattr(r.timestamp, "isoformat") else str(r.timestamp),
+    "timestamp": to_local(r.timestamp).isoformat() if hasattr(r.timestamp, "isoformat") else str(r.timestamp),
     "sender": r.sender,
     "subject": r.subject,
     "thread_id": r.thread_id,
@@ -372,7 +372,7 @@ def _result_to_dict(r) -> dict:
 
 
 def _render_result(rank: int, r) -> None:
-  ts = r.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(r.timestamp, "strftime") else str(r.timestamp)
+  ts = format_local(r.timestamp, "%Y-%m-%d %H:%M %Z") if hasattr(r.timestamp, "strftime") else str(r.timestamp)
   kind_tag = "C" if r.kind == "consolidation" else "i"
   click.echo(f"[{rank:>2}] [{kind_tag}] {r.source:<14} {ts}  score={r.score:.3f}")
   if r.kind == "consolidation":

@@ -30,6 +30,7 @@ from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
+from yaams.ingest.signal import SignalAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
 from yaams.schema import DEFAULT_EMBEDDING_DIM, init_schema
 from yaams.store import (
@@ -74,7 +75,7 @@ def init_db(config_path: str, require_vec: bool) -> None:
   default="all",
   show_default=True,
   help=(
-    "all, imessage, email, notes, tier2_ledger, github, "
+    "all, imessage, signal, email, notes, tier2_ledger, github, "
     "teams or teams_<profile>, calendar or calendar_<profile>"
   ),
 )
@@ -568,6 +569,11 @@ def process_batch(
 def get_adapter(source: str, cfg: dict) -> Adapter:
   if source == "imessage":
     return IMessageAdapter(Path(cfg["chat_db_path"]))
+  if source == "signal":
+    return SignalAdapter(
+      signal_dir=Path(cfg.get("signal_dir", "~/Library/Application Support/Signal")),
+      include_attachments=bool(cfg.get("include_attachments", True)),
+    )
   if source == "email":
     return EmailAdapter(
       sources=list(cfg.get("sources", [])),
@@ -670,7 +676,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
   cal_sources = [f"calendar_{p}" for p in cal_profiles]
   if source == "all":
-    return ["imessage", "email", "notes", "tier2_ledger", "github", *teams_sources, *cal_sources]
+    return ["imessage", "signal", "email", "notes", "tier2_ledger", "github", *teams_sources, *cal_sources]
   if source == "teams":
     return teams_sources
   if source == "calendar":
@@ -697,6 +703,9 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source == "imessage":
     path = source_cfg.get("chat_db_path")
     return [f"chat.db: {Path(path).expanduser()}" if path else "chat.db: n/a"]
+  if source == "signal":
+    path = source_cfg.get("signal_dir", "~/Library/Application Support/Signal")
+    return [f"signal: {Path(path).expanduser()}"]
   if source == "email":
     paths = []
     for entry in source_cfg.get("sources", []):

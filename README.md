@@ -6,7 +6,7 @@ Yet Another Agent Memory System. YAAMS is a local-first Tier 1 memory store for 
 
 Phases A, B, C, D, E, and F are implemented:
 
-- iMessage, email, Microsoft Teams, Obsidian vault, Outlook calendar, GitHub, and Tier 2 curated ledger notes ingest
+- iMessage, Signal, email, Microsoft Teams, Obsidian vault, Outlook calendar, GitHub, and Tier 2 curated ledger notes ingest
 - Idempotent `Item` records with deterministic IDs
 - SQLite storage with FTS5, entity tables, watermarks, and sqlite-vec when available
 - Dictionary entity tagging plus optional spaCy NER
@@ -86,6 +86,23 @@ This is the native macOS Mail.app location. Outlook for Mac uses a separate prof
 
 If you want Outlook mail included now, sync the same accounts into Mail.app and let YAAMS read the Apple Mail `.emlx` store, or export mail to `.mbox` and point `ingest.email.sources` at that file.
 
+### Signal Desktop
+
+The Signal adapter reads Signal Desktop's local SQLCipher database directly. It needs:
+
+- The `sqlcipher` CLI (`brew install sqlcipher`).
+- macOS Keychain access to "Signal Safe Storage" - the first run prompts; click "Always Allow" to make subsequent runs silent.
+
+```yaml
+ingest:
+  signal:
+    enabled: true
+    signal_dir: ~/Library/Application Support/Signal
+    include_attachments: true
+```
+
+Signal ingest covers 1:1 chats and groups. Reactions are folded into the parent message body so the index does not get noisy. Attachments are emitted as separate items linked to their parent via `thread_id`; YAAMS records attachment metadata (filename, mime, size) but does not decrypt the encrypted attachment payloads.
+
 Phase A writes only to the YAAMS SQLite database. It does not write to `cognitive-ledger` or `ledger-inbox`.
 
 ## Run
@@ -121,6 +138,7 @@ Run a single source:
 
 ```bash
 python -m yaams.cli ingest --source imessage
+python -m yaams.cli ingest --source signal             # local Signal Desktop (requires sqlcipher)
 python -m yaams.cli ingest --source email
 python -m yaams.cli ingest --source notes               # Obsidian vault
 python -m yaams.cli ingest --source tier2_ledger        # curated ledger notes (Tier 2)
@@ -136,6 +154,7 @@ python -m yaams.cli ingest --source teams               # all configured Teams p
 | Source | Config key | What it ingests |
 |--------|-----------|-----------------|
 | `imessage` | `ingest.imessage` | iMessage conversations from local `chat.db` |
+| `signal` | `ingest.signal` | Signal Desktop messages from the local SQLCipher store (1:1 + groups, attachment metadata) |
 | `email` | `ingest.email` | Email from `.emlx` files (Apple Mail) |
 | `notes` | `ingest.notes` | Obsidian vault markdown notes |
 | `tier2_ledger` | `ingest.tier2_ledger` | Curated atomic notes from cognitive-ledger (Tier 2) |

@@ -52,7 +52,7 @@ def cli() -> None:
 
 
 @cli.command("init-db")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--require-vec", is_flag=True)
 def init_db(config_path: str, require_vec: bool) -> None:
   cfg = load_config(config_path)
@@ -68,7 +68,7 @@ def init_db(config_path: str, require_vec: bool) -> None:
 
 
 @cli.command("ingest")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option(
   "--source",
   default="all",
@@ -132,7 +132,7 @@ def ingest(
 
 
 @cli.command("stats")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def stats(config_path: str) -> None:
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
@@ -144,7 +144,7 @@ def stats(config_path: str) -> None:
 
 
 @cli.command("reset-db")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--yes", is_flag=True)
 def reset_db(config_path: str, yes: bool) -> None:
   cfg = load_config(config_path)
@@ -158,7 +158,7 @@ def reset_db(config_path: str, yes: bool) -> None:
 
 @cli.command("query")
 @click.argument("text", nargs=-1, required=True)
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--top-k", default=10, show_default=True, type=int)
 @click.option(
   "--source",
@@ -305,7 +305,7 @@ def query_cmd(
 @click.argument("kind", type=click.Choice(["hit", "miss", "correction", "note"]))
 @click.option("--result", "result_id", default=None, help="Result id this feedback targets (omit for query-level)")
 @click.option("--message", "-m", default=None, help="Free-text payload (e.g. \"expected X\" or correction details)")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def feedback_cmd(
   query_id: str,
   kind: str,
@@ -331,7 +331,7 @@ def feedback_cmd(
 
 
 @cli.command("signals")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--limit", default=20, show_default=True, type=int)
 def signals_cmd(config_path: str, limit: int) -> None:
   cfg = load_config(config_path)
@@ -387,7 +387,7 @@ def _render_result(rank: int, r) -> None:
 
 
 @cli.command("consolidate")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option(
   "--source",
   default="all",
@@ -834,7 +834,7 @@ def promote_group() -> None:
 
 
 @promote_group.command("generate")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--days", default=None, type=int, help="Override window_days from config")
 @click.option("--min-cluster", default=None, type=int, help="Override min_cluster_items")
 @click.option("--entity", default=None, help="Generate for a single entity name only")
@@ -874,7 +874,7 @@ def promote_generate(
 
 
 @promote_group.command("list")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option(
   "--status",
   default="pending",
@@ -905,7 +905,7 @@ def promote_list(config_path: str, status: str) -> None:
 
 
 @promote_group.command("review")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--all", "review_all", is_flag=True, help="Review all statuses, not just pending")
 def promote_review(config_path: str, review_all: bool) -> None:
   from yaams.promote.candidates import (
@@ -992,7 +992,7 @@ def entities_group() -> None:
 
 
 @entities_group.command("list")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_list(config_path: str) -> None:
   """Show all dictionary entities with item hit counts."""
   cfg = load_config(config_path)
@@ -1024,7 +1024,7 @@ def entities_list(config_path: str) -> None:
 @click.argument("canonical")
 @click.option("--type", "etype", default="person", show_default=True)
 @click.option("--alias", "aliases", multiple=True, help="Repeatable: --alias JX --alias Jacob")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_path: str) -> None:
   """Add an entity to the dictionary and seed the DB immediately."""
   cfg = load_config(config_path)
@@ -1053,7 +1053,7 @@ def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_pa
 
 @entities_group.command("remove")
 @click.argument("canonical")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_remove(canonical: str, config_path: str) -> None:
   """Remove an entity from the dictionary (existing DB links are kept)."""
   cfg = load_config(config_path)
@@ -1070,7 +1070,7 @@ def entities_remove(canonical: str, config_path: str) -> None:
 
 
 @entities_group.command("discover")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--min-count", default=5, show_default=True, help="Minimum appearances to surface a candidate")
 @click.option("--limit", default=50, show_default=True, help="Max candidates to review")
 def entities_discover(config_path: str, min_count: int, limit: int) -> None:
@@ -1211,7 +1211,7 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
 
 
 @entities_group.command("denied")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_denied(config_path: str) -> None:
   """List previously denied NER candidates and optionally restore them."""
   cfg = load_config(config_path)
@@ -1249,7 +1249,7 @@ def entities_denied(config_path: str) -> None:
 
 
 @entities_group.command("manage")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_manage(config_path: str) -> None:
   """Interactive entity dictionary manager."""
 
@@ -1334,7 +1334,7 @@ def enrich_group() -> None:
 
 
 @enrich_group.command("retag")
-@click.option("--config", "config_path", default="config.yaml", show_default=True)
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--source", default=None, help="Limit to a specific source (e.g. imessage).")
 @click.option("--batch-size", default=500, show_default=True)
 def enrich_retag(config_path: str, source: str | None, batch_size: int) -> None:

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Iterable, Iterator, Sequence
 
 from yaams.ingest.base import Item
+from yaams.time import to_local
 
 
 CONSOLIDATOR_VERSION = "session-1"
@@ -131,16 +132,18 @@ def build_summary(session: Session, max_chars: int = DEFAULT_SUMMARY_MAX_CHARS) 
 
 
 def _format_item_line(item: Item) -> str:
-  ts = item.timestamp.strftime("%Y-%m-%d %H:%M")
+  ts = to_local(item.timestamp).strftime("%Y-%m-%d %H:%M")
   sender = item.sender or "unknown"
   content = (item.content or "").strip().replace("\n", " ")
   return f"[{ts}] {sender}: {content}"
 
 
 def _format_date_range(start: datetime, end: datetime) -> str:
-  if start.date() == end.date():
-    return start.strftime("%Y-%m-%d")
-  return f"{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}"
+  start_local = to_local(start)
+  end_local = to_local(end)
+  if start_local.date() == end_local.date():
+    return start_local.strftime("%Y-%m-%d")
+  return f"{start_local.strftime('%Y-%m-%d')} to {end_local.strftime('%Y-%m-%d')}"
 
 
 def build_consolidations(

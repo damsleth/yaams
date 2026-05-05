@@ -108,6 +108,54 @@ def test_log_feedback_serializes_dict_payload():
   assert "Alice" in row["payload"]
 
 
+def test_log_query_persists_structured_phase_h_fields():
+  conn = _open()
+  qid = "q_h"
+  log_query(
+    conn,
+    query_id=qid,
+    text="when did I first hear about ATLAS",
+    top_k=10,
+    source_filter=None,
+    since=None,
+    until=None,
+    results=[_result("ra")],
+    cited_result_ids=["ra"],
+    answer="full LLM text",
+    backend="dummy",
+    model="test",
+    parsed_query='{"shape":"first_occurrence"}',
+    shape="first_occurrence",
+    confidence="high",
+    confidence_reason="strong evidence",
+    gaps=["nothing about price"],
+    parser_fallback=False,
+  )
+  row = conn.execute("SELECT * FROM queries WHERE id = ?", (qid,)).fetchone()
+  assert row["shape"] == "first_occurrence"
+  assert row["confidence"] == "high"
+  assert row["confidence_reason"] == "strong evidence"
+  assert "nothing about price" in row["gaps"]
+  assert row["parser_fallback"] == 0
+  assert "first_occurrence" in row["parsed_query"]
+
+
+def test_log_query_default_parser_fallback_is_zero():
+  conn = _open()
+  log_query(
+    conn,
+    query_id="q_def",
+    text="x",
+    top_k=1,
+    source_filter=None,
+    since=None,
+    until=None,
+    results=[],
+  )
+  row = conn.execute("SELECT parser_fallback FROM queries WHERE id = ?", ("q_def",)).fetchone()
+  assert row["parser_fallback"] == 0
+
+
 def test_recent_queries_returns_most_recent_first():
   conn = _open()
   for i in range(5):

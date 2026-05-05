@@ -10,6 +10,7 @@ from yaams.synthesize.answer import (
   AnswerResult,
   build_synthesis_prompt,
   parse_citation_ids,
+  parse_structured_answer,
   synthesize_answer,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
   "build_synthesis_prompt",
   "llm_adapter_from_config",
   "parse_citation_ids",
+  "parse_structured_answer",
   "synthesize_answer",
 ]

@@ -10,6 +10,7 @@ from yaams.synthesize import (
   build_synthesis_prompt,
   llm_adapter_from_config,
   parse_citation_ids,
+  parse_structured_answer,
   synthesize_answer,
 )
 
@@ -141,3 +142,91 @@ def test_llm_adapter_from_config_subprocess_requires_command():
 
   with pytest.raises(ValueError):
     llm_adapter_from_config({"synth": {"backend": "subprocess"}})
+
+
+def test_parse_structured_answer_well_formed():
+  text = (
+    "ANSWER:\nThe cat is on the mat [1].\n\n"
+    "CONFIDENCE: high\nMultiple sources agree.\n\n"
+    "GAPS:\n- nothing about the dog"
+  )
+  body, conf, reason, gaps = parse_structured_answer(text)
+  assert "cat is on the mat" in body
+  assert "CONFIDENCE" not in body
+  assert conf == "high"
+  assert "Multiple sources" in reason
+  assert gaps == ["nothing about the dog"]
+
+
+def test_parse_structured_answer_missing_gaps_section():
+  text = "ANSWER:\nthe answer [1].\n\nCONFIDENCE: medium\nsome reason"
+  body, conf, reason, gaps = parse_structured_answer(text)
+  assert "the answer" in body
+  assert conf == "medium"
+  assert reason == "some reason"
+  assert gaps == []
+
+
+def test_parse_structured_answer_missing_confidence_section():
+  text = "ANSWER:\nbody only\n\nGAPS:\n- thing one\n- thing two"
+  body, conf, reason, gaps = parse_structured_answer(text)
+  assert body.strip() == "body only"
+  assert conf == "unknown"
+  assert reason == ""
+  assert gaps == ["thing one", "thing two"]
+
+
+def test_parse_structured_answer_no_markers_at_all():
+  text = "Just a flat answer with [1] citation, no sections."
+  body, conf, reason, gaps = parse_structured_answer(text)
+  assert "Just a flat answer" in body
+  assert conf == "unknown"
+  assert reason == ""
+  assert gaps == []
+
+
+def test_parse_structured_answer_gaps_says_none():
+  text = "ANSWER:\nbody\n\nCONFIDENCE: low\nweak\n\nGAPS:\nnone"
+  _, _, _, gaps = parse_structured_answer(text)
+  assert gaps == []
+
+
+def test_synthesize_answer_populates_structured_fields():
+  from yaams.synthesize.llm import LLMResponse
+  from yaams.retrieve import HybridResult, ScoreComponents
+  from datetime import UTC, datetime
+
+  result = HybridResult(
+    id="ra",
+    kind="item",
+    source="imessage",
+    timestamp=datetime(2026, 4, 1, tzinfo=UTC),
+    sender="alice",
+    subject="",
+    content="hi",
+    thread_id="t",
+    score=0.5,
+    components=ScoreComponents(),
+  )
+
+  class _Adapter:
+    backend_name = "fake"
+    model_name: str | None = "v1"
+
+    def complete(self, prompt, *, max_tokens=1024, temperature=0.0):
+      return LLMResponse(
+        text=(
+          "ANSWER:\nclear [1].\n\n"
+          "CONFIDENCE: high\nplenty of evidence\n\n"
+          "GAPS:\nnone"
+        ),
+        backend=self.backend_name,
+        model=self.model_name,
+      )
+
+  outcome = synthesize_answer("q", [result], _Adapter())
+  assert outcome.confidence == "high"
+  assert outcome.confidence_reason == "plenty of evidence"
+  assert outcome.gaps == []
+  assert "clear" in outcome.answer_body
+  assert outcome.cited_ranks == [1]

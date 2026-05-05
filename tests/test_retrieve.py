@@ -168,6 +168,39 @@ def test_tier2_boost_promotes_ledger_above_raw_for_equal_match():
   assert boosted_results[0].source == "tier2_ledger"
 
 
+def test_sort_asc_orders_results_by_timestamp():
+  conn = _open_db()
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = [
+    _make_item(content="alpha-token first", ts=base, msg_id="1"),
+    _make_item(content="alpha-token middle", ts=base + timedelta(hours=1), msg_id="2"),
+    _make_item(content="alpha-token last", ts=base + timedelta(hours=2), msg_id="3"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(sort="asc", include_consolidations=False)
+  results = query(conn, "alpha-token", config=cfg)
+  assert len(results) >= 2
+  for a, b in zip(results, results[1:]):
+    assert a.timestamp <= b.timestamp
+
+
+def test_sort_desc_orders_results_by_timestamp_desc():
+  conn = _open_db()
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = [
+    _make_item(content="beta-token first", ts=base, msg_id="1"),
+    _make_item(content="beta-token last", ts=base + timedelta(hours=2), msg_id="2"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(sort="desc", include_consolidations=False)
+  results = query(conn, "beta-token", config=cfg)
+  assert len(results) >= 2
+  for a, b in zip(results, results[1:]):
+    assert a.timestamp >= b.timestamp
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

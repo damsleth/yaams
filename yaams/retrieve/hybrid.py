@@ -40,6 +40,9 @@ class HybridQueryConfig:
   consolidation_boost: float = 1.1
   tier2_source: str = "tier2_ledger"
   tier2_boost: float = 1.2
+  sort: str = "relevance"
+  high_quality: bool = False
+  entity_filter: list[str] | None = None
 
 
 @dataclass
@@ -97,7 +100,12 @@ def query(
   )
   hydrated = _hydrate(conn, fused, cfg)
   hydrated.sort(key=lambda r: r.score, reverse=True)
-  return hydrated[: cfg.top_k]
+  truncated = hydrated[: cfg.top_k]
+  if cfg.sort == "asc":
+    truncated.sort(key=lambda r: r.timestamp)
+  elif cfg.sort == "desc":
+    truncated.sort(key=lambda r: r.timestamp, reverse=True)
+  return truncated
 
 
 def _fts_search_items(

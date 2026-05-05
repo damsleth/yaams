@@ -1,6 +1,6 @@
 # Schema Migration Policy
 
-YAAMS uses `PRAGMA user_version` as the schema version marker. The current schema version is `3`.
+YAAMS uses `PRAGMA user_version` as the schema version marker. The current schema version is `4`.
 
 ## Rules
 
@@ -16,7 +16,7 @@ YAAMS uses `PRAGMA user_version` as the schema version marker. The current schem
 - Source adapters must continue to produce stable `(source, source_id)` pairs.
 - When `SCHEMA_VERSION` is bumped, update this document in the same change.
 
-## Live Tables (schema version 3)
+## Live Tables (schema version 4)
 
 Phase A core:
 
@@ -34,9 +34,10 @@ Consolidation (Phase D):
 - `consolidations_fts`
 - `items.consolidated_into` column
 
-Signals / query logging (Phase B):
+Signals / query logging (Phase B / Phase H):
 
-- `queries`
+- `queries` (v4 adds `parsed_query`, `shape`, `confidence`, `confidence_reason`,
+  `gaps`, `parser_fallback`)
 - `query_results`
 - `query_feedback`
 
@@ -49,7 +50,7 @@ Promotion (Phase E):
 
 `init_schema` (in `yaams/schema.py`) idempotently:
 
-1. Sets `PRAGMA user_version = 3`.
+1. Sets `PRAGMA user_version = 4`.
 2. Creates Phase A tables and FTS index with `CREATE TABLE IF NOT EXISTS` /
    `CREATE VIRTUAL TABLE IF NOT EXISTS`.
 3. Creates consolidation, queries, query_results, and query_feedback tables.
@@ -58,7 +59,11 @@ Promotion (Phase E):
 5. Calls `_migrate_items_promoted_to` - same guard pattern.
 6. Calls `_migrate_promotion_candidates` - `CREATE TABLE IF NOT EXISTS` plus
    indexes.
-7. Initializes `items_vec` and `consolidations_vec`, falling back to a plain
+7. Calls `_migrate_query_structured_fields` - guards `PRAGMA table_info(queries)`
+   and adds the Phase H structured columns
+   (`parsed_query`, `shape`, `confidence`, `confidence_reason`, `gaps`,
+   `parser_fallback`).
+8. Initializes `items_vec` and `consolidations_vec`, falling back to a plain
    BLOB-backed table when `sqlite-vec` is unavailable.
 
 Any new migration helper added to `init_schema` must follow the same

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_EMBEDDING_DIM = 1024
 
 
@@ -161,8 +161,24 @@ def init_schema(
     _migrate_items_consolidated_into(conn)
     _migrate_items_promoted_to(conn)
     _migrate_promotion_candidates(conn)
+    _migrate_query_structured_fields(conn)
     _init_vector_table(conn, embedding_dim, vector_enabled)
     _init_consolidations_vec(conn, embedding_dim, vector_enabled)
+
+
+def _migrate_query_structured_fields(conn: sqlite3.Connection) -> None:
+  cols = {row[1] for row in conn.execute("PRAGMA table_info(queries)")}
+  additions = (
+    ("parsed_query", "TEXT"),
+    ("shape", "TEXT"),
+    ("confidence", "TEXT"),
+    ("confidence_reason", "TEXT"),
+    ("gaps", "TEXT"),
+    ("parser_fallback", "INTEGER NOT NULL DEFAULT 0"),
+  )
+  for name, decl in additions:
+    if name not in cols:
+      conn.execute(f"ALTER TABLE queries ADD COLUMN {name} {decl}")
 
 
 def _migrate_items_consolidated_into(conn: sqlite3.Connection) -> None:

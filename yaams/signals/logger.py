@@ -32,18 +32,29 @@ def log_query(
   latency_ms: float | None = None,
   retrieval_ms: float | None = None,
   synthesis_ms: float | None = None,
+  parsed_query: str | None = None,
+  shape: str | None = None,
+  confidence: str | None = None,
+  confidence_reason: str | None = None,
+  gaps: Sequence[str] | None = None,
+  parser_fallback: bool = False,
   ts: datetime | None = None,
 ) -> None:
   ts_iso = (ts or datetime.now(UTC)).isoformat()
   cited_set = set(cited_result_ids)
+  gaps_text = (
+    json.dumps(list(gaps), ensure_ascii=False) if gaps is not None else None
+  )
   with conn:
     conn.execute(
       """
       INSERT INTO queries (
         id, text, top_k, source_filter, since, until,
         backend, model, latency_ms, retrieval_ms, synthesis_ms,
-        results_returned, answer, ts
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        results_returned, answer, ts,
+        parsed_query, shape, confidence, confidence_reason, gaps,
+        parser_fallback
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       (
         query_id,
@@ -60,6 +71,12 @@ def log_query(
         len(results),
         answer,
         ts_iso,
+        parsed_query,
+        shape,
+        confidence,
+        confidence_reason,
+        gaps_text,
+        1 if parser_fallback else 0,
       ),
     )
     for rank, result in enumerate(results, 1):

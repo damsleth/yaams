@@ -121,11 +121,12 @@ def parse_query(
   if not raw:
     return _fallback(raw)
 
-  entity_resolver = _build_entity_resolver(conn, top_entities)
+  prompt_resolver = _build_entity_resolver(conn, top_entities)
+  validation_resolver = _build_full_entity_resolver(conn, prompt_resolver)
   prompt = PARSE_PROMPT_TEMPLATE.format(
     today=(now or utc_now()).strftime("%Y-%m-%d"),
     year=(now or utc_now()).strftime("%Y"),
-    entity_list=_render_entity_list(entity_resolver),
+    entity_list=_render_entity_list(prompt_resolver),
     query=raw,
   )
 
@@ -140,7 +141,7 @@ def parse_query(
   if payload is None:
     return _fallback(raw)
 
-  return _coerce(raw, payload, entity_resolver)
+  return _coerce(raw, payload, validation_resolver)
 
 
 def _fallback(raw: str) -> ParsedQuery:
@@ -312,6 +313,43 @@ def _build_entity_resolver(
   except sqlite3.DatabaseError:
     return EntityResolver(aliases, canonical)
 
+  for row in rows:
+    canon = row["canonical_name"] if hasattr(row, "keys") else row[0]
+    raw_aliases = row["aliases"] if hasattr(row, "keys") else row[1]
+    canonical.append(canon)
+    aliases[canon.lower()] = canon
+    if raw_aliases:
+      try:
+        alias_list = json.loads(raw_aliases)
+      except (TypeError, ValueError):
+        alias_list = []
+      for alias in alias_list:
+        if isinstance(alias, str) and alias.strip():
+          aliases[alias.strip().lower()] = canon
+  return EntityResolver(aliases, canonical)
+
+
+def _build_full_entity_resolver(
+  conn: sqlite3.Connection | None,
+  fallback: "EntityResolver",
+) -> EntityResolver:
+  """Resolver covering every canonical name and alias in the DB.
+
+  Used to validate parsed entities so long-tail names outside the prompt
+  top-N still resolve. Returns the prompt resolver if the DB read fails.
+  """
+  if conn is None:
+    return fallback
+
+  try:
+    rows = conn.execute(
+      "SELECT canonical_name, aliases FROM entities"
+    ).fetchall()
+  except sqlite3.DatabaseError:
+    return fallback
+
+  aliases: dict[str, str] = {}
+  canonical: list[str] = []
   for row in rows:
     canon = row["canonical_name"] if hasattr(row, "keys") else row[0]
     raw_aliases = row["aliases"] if hasattr(row, "keys") else row[1]

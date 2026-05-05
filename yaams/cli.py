@@ -232,7 +232,7 @@ def query_cmd(
     return
 
   parsed = None
-  parser_fallback_used = True
+  parser_fallback_used = False
   if not no_parse:
     try:
       adapter_for_parse = llm_adapter_from_config(cfg)
@@ -279,7 +279,10 @@ def query_cmd(
       qcfg = base_cfg
     if high_quality:
       qcfg.high_quality = True
-    results = run_query(conn_ro, query_text, embedding=embedding, config=qcfg)
+    fts_text = query_text
+    if parsed is not None and parsed.topic_terms:
+      fts_text = " ".join(parsed.topic_terms)
+    results = run_query(conn_ro, fts_text, embedding=embedding, config=qcfg)
     if parsed is not None and qcfg.entity_filter:
       results = filter_results_by_entities(results, conn_ro, qcfg.entity_filter)
   finally:

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Sequence
 
@@ -23,6 +23,9 @@ from yaams.time import ensure_utc
 DEFAULT_TOP_K = 20
 DEFAULT_PER_INDEX_K = 60
 RRF_K = 60
+HIGH_QUALITY_FETCH_MULTIPLIER = 2
+TIMESTAMP_SORT_FETCH_MULTIPLIER = 4
+ENTITY_FILTER_FETCH_MULTIPLIER = 4
 
 
 @dataclass
@@ -80,32 +83,100 @@ def query(
   if not text or not text.strip():
     return []
 
+  fetch_k = cfg.per_index_k
+  if cfg.high_quality:
+    fetch_k = max(fetch_k, cfg.per_index_k * HIGH_QUALITY_FETCH_MULTIPLIER)
+  if cfg.sort != "relevance":
+    fetch_k = max(fetch_k, cfg.per_index_k * TIMESTAMP_SORT_FETCH_MULTIPLIER)
+  if cfg.entity_filter:
+    fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
+  fetch_cfg = replace(cfg, per_index_k=fetch_k) if fetch_k != cfg.per_index_k else cfg
+
+  item_allow: set[str] | None = None
+  cons_allow: set[str] | None = None
+  if cfg.entity_filter:
+    item_allow, cons_allow = _resolve_entity_allowlist(conn, cfg.entity_filter)
+
   fts_items: list[tuple[str, str, int, float]] = []
   fts_cons: list[tuple[str, str, int, float]] = []
   vec_items: list[tuple[str, str, int, float]] = []
   vec_cons: list[tuple[str, str, int, float]] = []
 
   if cfg.include_items:
-    fts_items = _fts_search_items(conn, text, cfg)
+    fts_items = _fts_search_items(conn, text, fetch_cfg)
     if embedding is not None:
-      vec_items = _vec_search_items(conn, embedding, cfg)
+      vec_items = _vec_search_items(conn, embedding, fetch_cfg)
   if cfg.include_consolidations:
-    fts_cons = _fts_search_consolidations(conn, text, cfg)
+    fts_cons = _fts_search_consolidations(conn, text, fetch_cfg)
     if embedding is not None:
-      vec_cons = _vec_search_consolidations(conn, embedding, cfg)
+      vec_cons = _vec_search_consolidations(conn, embedding, fetch_cfg)
+
+  if item_allow is not None:
+    fts_items = [t for t in fts_items if t[1] in item_allow]
+    vec_items = [t for t in vec_items if t[1] in item_allow]
+  if cons_allow is not None:
+    fts_cons = [t for t in fts_cons if t[1] in cons_allow]
+    vec_cons = [t for t in vec_cons if t[1] in cons_allow]
 
   fused = _fuse(
     [fts_items, fts_cons, vec_items, vec_cons],
     cfg=cfg,
   )
-  hydrated = _hydrate(conn, fused, cfg)
-  hydrated.sort(key=lambda r: r.score, reverse=True)
-  truncated = hydrated[: cfg.top_k]
+  hydrate_cap = max(cfg.top_k * 2, fetch_k)
+  hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
   if cfg.sort == "asc":
-    truncated.sort(key=lambda r: r.timestamp)
+    hydrated.sort(key=lambda r: (r.timestamp, -r.score))
   elif cfg.sort == "desc":
-    truncated.sort(key=lambda r: r.timestamp, reverse=True)
-  return truncated
+    hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=True)
+  else:
+    hydrated.sort(key=lambda r: r.score, reverse=True)
+  return hydrated[: cfg.top_k]
+
+
+def _resolve_entity_allowlist(
+  conn: sqlite3.Connection,
+  entity_names: list[str],
+) -> tuple[set[str], set[str]]:
+  """Return (item_ids, consolidation_ids) that share at least one of the
+  named canonical entities. Consolidations match via raw_item_ids."""
+  if not entity_names:
+    return set(), set()
+  canonical_lower = [e.lower() for e in entity_names if e]
+  if not canonical_lower:
+    return set(), set()
+  ent_ph = ",".join("?" * len(canonical_lower))
+  ent_rows = conn.execute(
+    f"SELECT id FROM entities WHERE lower(canonical_name) IN ({ent_ph})",
+    tuple(canonical_lower),
+  ).fetchall()
+  entity_ids = [
+    r[0] if not hasattr(r, "keys") else r["id"] for r in ent_rows
+  ]
+  if not entity_ids:
+    return set(), set()
+  ent_id_ph = ",".join("?" * len(entity_ids))
+  item_rows = conn.execute(
+    f"SELECT DISTINCT item_id FROM item_entities WHERE entity_id IN ({ent_id_ph})",
+    tuple(entity_ids),
+  ).fetchall()
+  item_ids: set[str] = {
+    r[0] if not hasattr(r, "keys") else r["item_id"] for r in item_rows
+  }
+  cons_ids: set[str] = set()
+  if item_ids:
+    item_ph = ",".join("?" * len(item_ids))
+    cons_rows = conn.execute(
+      f"""
+      SELECT DISTINCT c.id
+      FROM consolidations c, json_each(c.raw_item_ids) j
+      WHERE j.value IN ({item_ph})
+      """,
+      tuple(item_ids),
+    ).fetchall()
+    cons_ids = {
+      r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
+    }
+  return item_ids, cons_ids
 
 
 def _fts_search_items(
@@ -302,12 +373,14 @@ def _hydrate(
   conn: sqlite3.Connection,
   fused: dict[tuple[str, str], ScoreComponents],
   cfg: HybridQueryConfig,
+  hydrate_cap: int | None = None,
 ) -> list[HybridResult]:
   if not fused:
     return []
+  cap = hydrate_cap if hydrate_cap is not None else cfg.top_k * 2
   ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
   results: list[HybridResult] = []
-  for (kind, identifier), components in ordered[: cfg.top_k * 2]:
+  for (kind, identifier), components in ordered[:cap]:
     if kind == "item":
       result = _hydrate_item(conn, identifier, components, cfg)
     else:

@@ -232,6 +232,37 @@ def test_build_entity_resolver_handles_empty_db():
   assert resolver.resolve("anything") is None
 
 
+def test_long_tail_entity_outside_prompt_top_n_still_resolves():
+  conn = sqlite3.connect(":memory:")
+  conn.row_factory = sqlite3.Row
+  init_schema(conn, embedding_dim=4, use_vec=False)
+  for i in range(5):
+    conn.execute(
+      "INSERT INTO entities (canonical_name, entity_type, aliases) VALUES (?, ?, ?)",
+      (f"Popular {i}", "person", json.dumps([])),
+    )
+  conn.execute(
+    "INSERT INTO entities (canonical_name, entity_type, aliases) VALUES (?, ?, ?)",
+    ("Long Tail Person", "person", json.dumps(["LT"])),
+  )
+  conn.commit()
+
+  adapter = _ScriptedAdapter([
+    json.dumps({
+      "shape": "factual",
+      "entities": ["LT"],
+      "date_range": [None, None],
+      "topic_terms": [],
+      "sort": "relevance",
+      "prefer_tier": None,
+      "high_quality": False,
+    })
+  ])
+  parsed = parse_query("hva sa LT", adapter, conn, top_entities=2)
+  assert parsed.entities == ["Long Tail Person"]
+  assert parsed.fallback_used is False
+
+
 def test_parsed_query_to_json_round_trips():
   q = ParsedQuery(
     raw="hi",

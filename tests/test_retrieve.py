@@ -201,6 +201,156 @@ def test_sort_desc_orders_results_by_timestamp_desc():
     assert a.timestamp >= b.timestamp
 
 
+def test_first_occurrence_picks_oldest_match_outside_relevance_window():
+  conn = _open_db()
+  base = datetime(2020, 1, 1, 12, 0, tzinfo=UTC)
+  items = []
+  # Many strong matches near the present (would dominate relevance top-k)
+  for i in range(15):
+    items.append(
+      _make_item(
+        thread_id="recent",
+        content="phoenix project meeting recurring",
+        ts=datetime(2026, 4, 1, tzinfo=UTC) + timedelta(minutes=i),
+        msg_id=f"recent-{i}",
+      )
+    )
+  # One older, weaker match - should win for first_occurrence
+  items.append(
+    _make_item(
+      thread_id="old",
+      content="phoenix project first mention only",
+      ts=base,
+      msg_id="old-1",
+    )
+  )
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(top_k=5, sort="asc", include_consolidations=False)
+  results = query(conn, "phoenix project", config=cfg)
+  assert results, "expected at least one result for first_occurrence"
+  assert results[0].timestamp == base, (
+    f"expected oldest match at top, got {results[0].timestamp}"
+  )
+
+
+def test_entity_filter_includes_match_below_relevance_top_k():
+  from yaams.retrieve import filter_results_by_entities
+
+  conn = _open_db()
+  conn.execute(
+    "INSERT INTO entities (canonical_name, entity_type) VALUES (?, ?)",
+    ("Bob Smith", "person"),
+  )
+  ent_id = conn.execute(
+    "SELECT id FROM entities WHERE canonical_name = ?", ("Bob Smith",)
+  ).fetchone()["id"]
+
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = []
+  # Many strong, recent ATLAS items NOT linked to Bob
+  for i in range(20):
+    items.append(
+      _make_item(
+        thread_id=f"unrelated-{i}",
+        content="ATLAS provisioning rollout chatter",
+        ts=base + timedelta(minutes=i),
+        msg_id=f"u-{i}",
+      )
+    )
+  # One weaker ATLAS item linked to Bob (the one we want)
+  target = _make_item(
+    thread_id="target",
+    content="ATLAS",
+    ts=base + timedelta(hours=1),
+    msg_id="target-1",
+  )
+  items.append(target)
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+  conn.execute(
+    "INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, ?)",
+    (target.id, ent_id, "test"),
+  )
+  conn.commit()
+
+  cfg = HybridQueryConfig(
+    top_k=5,
+    per_index_k=10,
+    include_consolidations=False,
+    entity_filter=["Bob Smith"],
+  )
+  results = query(conn, "ATLAS", config=cfg)
+  ids = {r.id for r in results}
+  assert target.id in ids, "entity-matched item must survive even outside top relevance"
+  # Belt-and-suspenders: post-filter agrees
+  filtered = filter_results_by_entities(results, conn, ["Bob Smith"])
+  assert all(r.id == target.id for r in filtered)
+
+
+def test_entity_filter_drops_unrelated_consolidation():
+  from yaams.retrieve import filter_results_by_entities
+
+  conn = _open_db()
+  conn.execute(
+    "INSERT INTO entities (canonical_name, entity_type) VALUES (?, ?)",
+    ("Bob Smith", "person"),
+  )
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = [
+    _make_item(
+      thread_id="unrelated",
+      content=f"ATLAS chatter {i}",
+      ts=base + timedelta(minutes=i),
+      msg_id=f"u-{i}",
+    )
+    for i in range(5)
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+  cons = build_consolidations(items)
+  store_consolidations(conn, cons, embeddings=[b"\x00" * 16])
+  conn.commit()
+
+  cfg = HybridQueryConfig(
+    top_k=5,
+    entity_filter=["Bob Smith"],
+  )
+  results = query(conn, "ATLAS", config=cfg)
+  assert all(r.kind != "consolidation" for r in results), (
+    "consolidation with no entity-linked raw items leaked through entity filter"
+  )
+  # Post-filter agrees
+  filtered = filter_results_by_entities(results, conn, ["Bob Smith"])
+  assert filtered == []
+
+
+def test_high_quality_increases_per_index_fetch():
+  conn = _open_db()
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = [
+    _make_item(
+      thread_id=f"t-{i}",
+      content=f"shared-token doc {i}",
+      ts=base + timedelta(minutes=i),
+      msg_id=f"m-{i}",
+    )
+    for i in range(80)
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  baseline = HybridQueryConfig(
+    top_k=20, per_index_k=30, include_consolidations=False
+  )
+  baseline_results = query(conn, "shared-token", config=baseline)
+  hq = HybridQueryConfig(
+    top_k=20, per_index_k=30, include_consolidations=False, high_quality=True
+  )
+  hq_results = query(conn, "shared-token", config=hq)
+  # high_quality should never return fewer candidates than baseline
+  assert len(hq_results) >= len(baseline_results)
+  # At top_k=20 with 80 candidates, high_quality fetch (>=60) should fill
+  assert len(hq_results) == 20
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

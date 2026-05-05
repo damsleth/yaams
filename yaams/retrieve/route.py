@@ -68,8 +68,12 @@ def filter_results_by_entities(
   entities: list[str] | None,
 ) -> list:
   """Drop hydrated results that share zero canonical entities with the
-  parsed entity list. Implemented post-hydration in v1; promote to a
-  SQL pre-filter once volume justifies the schema change.
+  parsed entity list. Items match via item_entities; consolidations
+  match when any of their raw_item_ids share an entity link.
+
+  Acts as a safety net behind the pre-retrieval entity filter in
+  hybrid.query() - both must agree to avoid mixing matched and unrelated
+  sources into synthesis.
   """
   results_list = list(results)
   if not entities:
@@ -85,22 +89,47 @@ def filter_results_by_entities(
   ).fetchall()
   entity_ids = [row[0] if not hasattr(row, "keys") else row["id"] for row in rows]
   if not entity_ids:
-    return results_list
+    return []
 
   item_ids = [r.id for r in results_list if r.kind == "item"]
-  if not item_ids:
-    return results_list
+  cons_ids = [r.id for r in results_list if r.kind == "consolidation"]
 
-  placeholders_items = ",".join("?" * len(item_ids))
-  placeholders_ents = ",".join("?" * len(entity_ids))
-  matched = conn.execute(
-    f"""
-    SELECT DISTINCT item_id FROM item_entities
-    WHERE item_id IN ({placeholders_items})
-      AND entity_id IN ({placeholders_ents})
-    """,
-    (*item_ids, *entity_ids),
-  ).fetchall()
-  matched_ids = {row[0] if not hasattr(row, "keys") else row["item_id"] for row in matched}
+  matched_items: set = set()
+  if item_ids:
+    placeholders_items = ",".join("?" * len(item_ids))
+    placeholders_ents = ",".join("?" * len(entity_ids))
+    matched = conn.execute(
+      f"""
+      SELECT DISTINCT item_id FROM item_entities
+      WHERE item_id IN ({placeholders_items})
+        AND entity_id IN ({placeholders_ents})
+      """,
+      (*item_ids, *entity_ids),
+    ).fetchall()
+    matched_items = {
+      row[0] if not hasattr(row, "keys") else row["item_id"] for row in matched
+    }
 
-  return [r for r in results_list if r.kind != "item" or r.id in matched_ids]
+  matched_cons: set = set()
+  if cons_ids:
+    placeholders_cons = ",".join("?" * len(cons_ids))
+    placeholders_ents = ",".join("?" * len(entity_ids))
+    matched = conn.execute(
+      f"""
+      SELECT DISTINCT c.id
+      FROM consolidations c, json_each(c.raw_item_ids) j
+      JOIN item_entities ie ON ie.item_id = j.value
+      WHERE c.id IN ({placeholders_cons})
+        AND ie.entity_id IN ({placeholders_ents})
+      """,
+      (*cons_ids, *entity_ids),
+    ).fetchall()
+    matched_cons = {
+      row[0] if not hasattr(row, "keys") else row["id"] for row in matched
+    }
+
+  return [
+    r for r in results_list
+    if (r.kind == "item" and r.id in matched_items)
+    or (r.kind == "consolidation" and r.id in matched_cons)
+  ]

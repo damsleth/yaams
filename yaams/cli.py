@@ -103,16 +103,22 @@ def ingest(
     for src in _sources_to_run(source, cfg):
       if not _source_enabled(cfg, src):
         continue
-      adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
-      source_stats = ingest_source(
-        conn,
-        src,
-        adapter,
-        cfg,
-        batch_size=batch_size,
-        dry_run=dry_run,
-        processors=processors,
-      )
+      try:
+        adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
+        source_stats = ingest_source(
+          conn,
+          src,
+          adapter,
+          cfg,
+          batch_size=batch_size,
+          dry_run=dry_run,
+          processors=processors,
+        )
+      except Exception as exc:
+        click.echo(f"  {src}: failed - {type(exc).__name__}: {exc}", err=True)
+        run_stats[src]["failed"] = f"{type(exc).__name__}: {exc}"
+        run_stats[src]["paths"] = _source_paths(src, cfg)
+        continue
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]
@@ -637,7 +643,13 @@ def print_stats(
     prefix = "Database stats."
   click.echo(prefix)
   _print_sources(run_stats)
+  failed_sources = []
   for source in _ordered_sources(run_stats):
+    failure = run_stats[source].get("failed")
+    if failure:
+      click.echo(f"  {source}: FAILED - {failure}")
+      failed_sources.append(source)
+      continue
     seen = run_stats[source]["seen"]
     new = run_stats[source]["new"]
     skipped = run_stats[source].get("skipped", 0)

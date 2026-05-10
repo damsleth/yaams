@@ -1,287 +1,236 @@
 # YAAMS
 
-Yet Another Agent Memory System. YAAMS is a local-first Tier 1 memory store for high-volume raw personal data. Phase A ingests iMessage and email data, normalizes records into a common SQLite schema, entity-tags them, embeds them, and stores them for later query work.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)
+![python](https://img.shields.io/badge/python-3.11+-blue)
 
-## Current Status
+**Yet Another Agent Memory System.** A local-first, high-recall memory store
+for your personal digital exhaust - messages, email, calendar, GitHub
+activity, notes - searchable in seconds and synthesizable into grounded,
+cited answers by the LLM of your choice.
 
-Phases A, B, C, D, E, and F are implemented:
+YAAMS is Tier 1 of a two-tier memory architecture: the firehose. Tier 2 is
+the [cognitive-ledger](https://github.com/damsleth/cognitive-ledger): curated
+atomic notes you keep forever. YAAMS ingests everything, lets you query
+across the lot, and promotes the gems upstream when you're ready.
 
-- iMessage, Signal, email, Microsoft Teams, Obsidian vault, Outlook calendar, GitHub, and Tier 2 curated ledger notes ingest
-- Idempotent `Item` records with deterministic IDs
-- SQLite storage with FTS5, entity tables, watermarks, and sqlite-vec when available
-- Dictionary entity tagging plus optional spaCy NER
-- Local embeddings through `sentence-transformers`
-- Hybrid retrieval (dense + sparse) with reciprocal rank fusion
-- Cross-tier query fusion: Tier 2 (curated ledger notes) surface with a configurable boost alongside Tier 1 raw items
-- Session consolidation (LightMem-style grouping of conversational items)
-- LLM synthesis with grounded, cited answers via a pluggable backend adapter
-- Per-query and per-feedback signal logging for an offline improvement loop
-- CLI commands for all of the above
+## What
 
-## Install
-
-Use Python 3.11 or newer.
-
-To run setup, database initialization, and dry-run ingest in one step:
-
-```bash
-scripts/install_phase_a.sh
+```
+                                 query
+                                   |
+                                   v
+   ingest -> normalize -> embed -> retrieve -> fuse -> answer (cited)
+      |          |          |                            |
+  iMessage    SQLite    BGE-M3                      Tier 2 boost
+  Signal     + FTS5    + spaCy                   (cognitive-ledger)
+  Email      + vec
+  Teams
+  Calendar
+  GitHub
+  Obsidian
 ```
 
-The script creates `.venv`, installs requirements, walks you through Phase A settings with sane defaults, downloads the spaCy model, runs `init_db`, runs `ingest --dry-run`, and prints the remaining real-ingest commands.
+- **Local-only by default.** Embeddings, NER, and LLM synthesis run on your
+  machine. Nothing leaves the host unless you point an adapter at a hosted
+  backend.
+- **Append-only.** Raw items are immutable. Re-ingest is idempotent.
+- **Cited answers.** Every synthesized claim points back to the source items.
+- **Pluggable LLM.** `claude`, `codex`, `ollama`, any subprocess, or `dummy`.
+- **Single SQLite file.** No daemons, no servers, no cloud bill.
 
-Manual setup:
+## Why
+
+Language models forget everything between sessions, and the answer is not
+"shove more raw chat logs into the context window." The answer is a memory
+system you can grep, query, and audit, that lives on your machine and that
+you fully control.
+
+YAAMS gives you that for the high-volume side of your life: every iMessage,
+every email, every calendar event, every GitHub issue you have touched. It
+normalizes them into a common schema, embeds them, and lets you ask
+questions like *"what did we decide about the deploy in May?"* and get back
+a grounded answer with citations - in seconds, offline.
+
+## Quickstart
+
+Requires Python 3.11+ and macOS (Linux works for everything except the
+iMessage adapter).
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp config.yaml.example config.yaml      # then edit to fit your setup
+git clone https://github.com/damsleth/YAAMS.git
+cd YAAMS
+./scripts/install_phase_a.sh
+```
+
+The installer creates `.venv`, installs dependencies, walks you through
+configuration with sensible defaults, downloads the spaCy NER model, runs
+`init-db`, runs a dry-run ingest, and prints the commands to do a real
+ingest.
+
+If you prefer pipx for global install:
+
+```bash
+pipx install yaams
+yaams --version
+```
+
+Verify the setup:
+
+```bash
+yaams --version          # 0.1.0
+yaams stats              # zero items - that is expected before first ingest
+yaams ingest --dry-run   # see what each adapter would pick up
+```
+
+Then do a real ingest:
+
+```bash
+yaams ingest
+```
+
+The first run downloads the embedding model (`BAAI/bge-m3`, ~2GB). YAAMS
+will prompt before downloading; after the cache is populated, subsequent
+runs are fully offline.
+
+Ask a question:
+
+```bash
+yaams query "what did we decide about the deploy in May"
+yaams query --answer "open items from the kickoff meeting"
+```
+
+## CLI
+
+```
+yaams <command> [options]
+```
+
+Bare `yaams` lists commands. Global flags: `--version`, `--help`.
+Per-command help: `yaams <command> --help`.
+
+| command | what it does |
+| --- | --- |
+| `init-db` | create the SQLite schema (idempotent) |
+| `ingest` | run ingest for all enabled sources (or `--source <name>`) |
+| `stats` | print item counts per source, plus last ingest run timing |
+| `query` | full-text + vector search; `--answer` for synthesized response |
+| `feedback` | log relevance signals against a prior query result |
+| `signals` | inspect recent query history |
+| `consolidate` | group conversational items into sessions |
+| `promote` | review and accept atomic-note candidates into the Tier 2 ledger |
+| `reset-db` | drop and recreate the database (asks first) |
+| `version` | print version (`--json` for machine-readable) |
+
+### Ingest sources
+
+| source | config key | what it ingests |
+| --- | --- | --- |
+| `imessage` | `ingest.imessage` | iMessage conversations from local `chat.db` |
+| `signal` | `ingest.signal` | Signal Desktop messages (1:1 + groups, attachment metadata) |
+| `email` | `ingest.email` | `.emlx` (Apple Mail) or `.mbox` |
+| `notes` | `ingest.notes` | Obsidian vault markdown |
+| `tier2_ledger` | `ingest.tier2_ledger` | curated atomic notes from cognitive-ledger |
+| `github` | `ingest.github` | GitHub issues and PRs across your repos |
+| `calendar` / `calendar_<profile>` | `ingest.calendar` | Outlook calendar via `owa-cal` |
+| `teams` / `teams_<profile>` | `ingest.teams` | Microsoft Teams via Graph API |
+
+Run one source: `yaams ingest --source imessage`.
+
+### Query
+
+```bash
+yaams query "budget discussion"
+yaams query --top-k 20 "deploy"
+yaams query --no-vector "fast FTS-only path"           # skips embedder load
+yaams query --source imessage "holiday plans"
+yaams query --since 2025-06-01 --until 2025-09-01 "summer"
+yaams query --no-consolidations "raw items only"
+yaams query --format json "search term"
+yaams query --answer "what are the open items from the kickoff"
+```
+
+### Promote
+
+Surface candidate atomic notes from recent items, review them interactively,
+and write accepted ones into your ledger inbox:
+
+```bash
+yaams promote generate            # scan last 30 days
+yaams promote generate --days 60
+yaams promote review              # interactive: a/e/r/s/q
+```
+
+Nothing is promoted without your explicit acceptance. Accepted notes land in
+`promote.inbox_path` (default `~/yaams/ledger-inbox/00_inbox/`).
+
+## Configure
+
+`config.yaml` lives in the repo root (or `~/.config/yaams/config.yaml`, or
+wherever `$YAAMS_CONFIG` points). It is gitignored: it carries your
+personal entity dictionary, source paths, and addresses. Edit
+`config.yaml.example` instead when contributing structural changes.
+
+Rerun the wizard at any time:
+
+```bash
 python scripts/configure_phase_a.py --config config.yaml
-python -m spacy download xx_ent_wiki_sm
 ```
 
-`config.yaml` is gitignored - it carries your personal addresses, paths, and entity dictionary. Track changes by editing `config.yaml.example` instead when contributing structural changes upstream.
+Key blocks:
 
-On Apple Silicon, use the Homebrew arm64 Python explicitly - PyTorch 2.4+ has no x86_64 macOS wheels, so a Rosetta Python will be stuck on torch 2.2 and fail at embedding time:
+```yaml
+db_path: ~/yaams/data.db
+
+ingest:
+  since: '2025-01-01T00:00:00Z'
+  imessage:
+    chat_db_path: ~/Library/Messages/chat.db
+  email:
+    sources:
+      - type: emlx
+        path: ~/Library/Mail/V10
+
+embed:
+  model: BAAI/bge-m3
+  device: mps                # or cpu
+
+synth:
+  backend: claude            # claude | codex | ollama | subprocess | dummy
+  model: claude-sonnet-4-6
+```
+
+On Apple Silicon, use the Homebrew arm64 Python explicitly - PyTorch 2.4+
+has no x86_64 macOS wheels:
 
 ```bash
 /opt/homebrew/bin/python3.12 -m venv .venv
 ```
 
-On Apple Silicon, `config.yaml` defaults embeddings to `mps`. Change `embed.device` to `cpu` if MPS is not available.
+## Scheduling
 
-iMessage rows with plain `text` ingest normally. Rows that only contain Apple's binary `attributedBody` are decoded through PyObjC/Foundation on macOS; dry-run stats report how many binary bodies were decoded or skipped.
+YAAMS is meant to run unattended. See [docs/scheduling.md](docs/scheduling.md)
+for a `launchd` agent that runs a single nightly `yaams ingest` across all
+enabled sources, plus the macOS Full Disk Access setup required for the
+`imessage` adapter to work under `launchd`.
 
-## Configure
+## Privacy and security
 
-The installer runs an onboarding wizard for [config.yaml](config.yaml). To rerun it:
+YAAMS reads and stores sensitive personal data. The defaults keep
+everything local, but **you are responsible for protecting the database
+file at rest** - enable full-disk encryption (FileVault / LUKS / BitLocker)
+on the host machine.
 
-```bash
-python scripts/configure_phase_a.py --config config.yaml
-```
+See [SECURITY.md](SECURITY.md) for the full threat model, data
+classification, and vulnerability disclosure flow. See
+[docs/privacy-security.md](docs/privacy-security.md) for the operational
+detail on what is written, what is not, and how to scrub.
 
-Press Enter through the prompts to accept the batteries-included defaults:
+## Contributing
 
-- `db_path`: destination SQLite database
-- `ingest.since`: earliest item timestamp to ingest
-- `ingest.imessage.chat_db_path`: Messages database path
-- `ingest.email.sources`: `.emlx` tree or `.mbox` inputs
-- `entities.dictionary`: known people, places, projects, and aliases
-- `embed.device`: `mps` on Apple Silicon, otherwise `cpu`
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the test
+suite, schema-migration rules, and commit conventions.
 
-### Email Sources
+## License
 
-The default email source is Apple Mail's local store. The wizard uses the newest `~/Library/Mail/V*` directory it finds:
-
-```yaml
-ingest:
-  email:
-    sources:
-      - type: emlx
-        path: ~/Library/Mail/V10
-```
-
-This is the native macOS Mail.app location. Outlook for Mac uses a separate profile/cache location under `~/Library/Group Containers/UBF8T346G9.Office/...`; YAAMS does not read that directly in Phase A.
-
-If you want Outlook mail included now, sync the same accounts into Mail.app and let YAAMS read the Apple Mail `.emlx` store, or export mail to `.mbox` and point `ingest.email.sources` at that file.
-
-### Signal Desktop
-
-The Signal adapter reads Signal Desktop's local SQLCipher database directly. It needs:
-
-- The `sqlcipher` CLI (`brew install sqlcipher`).
-- macOS Keychain access to "Signal Safe Storage" - the first run prompts; click "Always Allow" to make subsequent runs silent.
-
-```yaml
-ingest:
-  signal:
-    enabled: true
-    signal_dir: ~/Library/Application Support/Signal
-    include_attachments: true
-```
-
-Signal ingest covers 1:1 chats and groups. Reactions are folded into the parent message body so the index does not get noisy. Attachments are emitted as separate items linked to their parent via `thread_id`; YAAMS records attachment metadata (filename, mime, size) but does not decrypt the encrypted attachment payloads.
-
-Phase A writes only to the YAAMS SQLite database. It does not write to `cognitive-ledger` or `ledger-inbox`.
-
-## Run
-
-All commands go through the CLI entry point:
-
-```bash
-python -m yaams.cli <command> [options]
-```
-
-### Database setup
-
-```bash
-python -m yaams.cli init-db
-python -m yaams.cli init-db --require-vec   # abort if sqlite-vec is not loaded
-```
-
-### Ingest
-
-Dry-run first to verify source access and item counts without writing:
-
-```bash
-python -m yaams.cli ingest --dry-run
-```
-
-Run ingest (all sources):
-
-```bash
-python -m yaams.cli ingest
-```
-
-Run a single source:
-
-```bash
-python -m yaams.cli ingest --source imessage
-python -m yaams.cli ingest --source signal             # local Signal Desktop (requires sqlcipher)
-python -m yaams.cli ingest --source email
-python -m yaams.cli ingest --source notes               # Obsidian vault
-python -m yaams.cli ingest --source tier2_ledger        # curated ledger notes (Tier 2)
-python -m yaams.cli ingest --source github              # GitHub issues + PRs
-python -m yaams.cli ingest --source calendar            # all configured Outlook calendar profiles
-python -m yaams.cli ingest --source calendar_swon       # single calendar profile
-python -m yaams.cli ingest --source teams_swon
-python -m yaams.cli ingest --source teams               # all configured Teams profiles
-```
-
-## Ingest sources
-
-| Source | Config key | What it ingests |
-|--------|-----------|-----------------|
-| `imessage` | `ingest.imessage` | iMessage conversations from local `chat.db` |
-| `signal` | `ingest.signal` | Signal Desktop messages from the local SQLCipher store (1:1 + groups, attachment metadata) |
-| `email` | `ingest.email` | Email from `.emlx` files (Apple Mail) |
-| `notes` | `ingest.notes` | Obsidian vault markdown notes |
-| `tier2_ledger` | `ingest.tier2_ledger` | Curated atomic notes from cognitive-ledger (Tier 2) |
-| `github` | `ingest.github` | GitHub issues and PRs from all your repos (public + private) |
-| `calendar` / `calendar_<profile>` | `ingest.calendar` | Outlook calendar events via owa-cal |
-| `teams` / `teams_<profile>` | `ingest.teams` | Microsoft Teams messages via Graph API |
-
-### Stats
-
-```bash
-python -m yaams.cli stats
-```
-
-### Session consolidation
-
-Groups conversational items (iMessage, Teams) into sessions before querying:
-
-```bash
-python -m yaams.cli consolidate
-python -m yaams.cli consolidate --source imessage
-python -m yaams.cli consolidate --dry-run
-python -m yaams.cli consolidate --rebuild   # clear and redo all consolidations
-```
-
-### Query
-
-Full-text and vector search across all ingested items:
-
-```bash
-python -m yaams.cli query "what did Alice say about the project"
-python -m yaams.cli query --top-k 20 "budget discussion"
-python -m yaams.cli query --no-vector "ATLAS"          # FTS only, no embedder load
-python -m yaams.cli query --source imessage "holiday plans"
-python -m yaams.cli query --source teams_swon --since 2026-01-01 "onboarding"
-python -m yaams.cli query --since 2025-06-01 --until 2025-09-01 "summer"
-python -m yaams.cli query --no-consolidations "raw items only"
-python -m yaams.cli query --format json "search term"
-```
-
-Add `--answer` to synthesize a grounded answer with inline citations using the configured LLM backend:
-
-```bash
-python -m yaams.cli query --answer "what are the open items from the ATLAS kickoff"
-```
-
-Add `--no-log` to skip writing the query to the signals table.
-
-### Feedback
-
-Log relevance signals against a previous query result (use `query_id` from output):
-
-```bash
-python -m yaams.cli feedback <query_id> hit
-python -m yaams.cli feedback <query_id> miss -m "expected the June thread"
-python -m yaams.cli feedback <query_id> correction --result <item_id> -m "wrong sender"
-python -m yaams.cli feedback <query_id> note -m "follow up on this"
-```
-
-Feedback kinds: `hit`, `miss`, `correction`, `note`.
-
-### Signals
-
-Inspect recent query history:
-
-```bash
-python -m yaams.cli signals
-python -m yaams.cli signals --limit 50
-```
-
-### Promote
-
-Generate candidate atomic notes from recent items and review them for promotion to the Tier 2 ledger:
-
-```bash
-python -m yaams.cli promote generate            # scan last 30 days
-python -m yaams.cli promote generate --days 60  # wider window
-python -m yaams.cli promote generate --entity "ATLAS"  # single entity
-python -m yaams.cli promote list                # show pending candidates
-python -m yaams.cli promote list --status accepted
-python -m yaams.cli promote review              # interactive review queue
-```
-
-In the review loop: `a` accept (writes to ledger inbox), `e` edit in `$EDITOR`, `r` reject, `s` skip, `q` quit.
-
-Accepted candidates are written to `promote.inbox_path` (default `~/yaams/ledger-inbox/00_inbox/`) in the standard ledger note format. Nothing is promoted without your explicit acceptance.
-
-### Reset
-
-```bash
-python -m yaams.cli reset-db        # prompts for confirmation
-python -m yaams.cli reset-db --yes  # skip prompt
-```
-
-## LLM backend
-
-The `--answer` flag in `query` and the future `parse` step use a pluggable LLM adapter configured in `config.yaml`:
-
-```yaml
-synth:
-  backend: claude          # claude | codex | ollama | subprocess | dummy
-  model: claude-sonnet-4-6 # omit to use the CLI or server default
-  timeout: 120
-```
-
-Available backends:
-
-| backend | how it works | notes |
-|---|---|---|
-| `claude` | `claude -p --input-format text` via stdin | requires Claude Code CLI |
-| `codex` | `codex exec -` via stdin | requires Codex CLI |
-| `ollama` | HTTP to `localhost:11434` | set `model` and optionally `host` |
-| `subprocess` | pipes to `synth.command` list via stdin | any CLI that reads stdin |
-| `dummy` | returns a placeholder, no LLM call | default when `synth:` is absent |
-
-## Validate
-
-```bash
-pytest -q
-```
-
-Spot-check the database with SQLite:
-
-```bash
-sqlite3 ~/yaams/data.db "SELECT source, count(*) FROM items GROUP BY source;"
-sqlite3 ~/yaams/data.db "SELECT timestamp, sender, substr(content, 1, 80) FROM items ORDER BY timestamp DESC LIMIT 10;"
-```
-
-## Privacy
-
-YAAMS is designed for local-only compute. The default stack runs extraction, entity tagging, embeddings, and storage locally. See [docs/privacy-security.md](docs/privacy-security.md) before running against personal data.
+[MIT](LICENSE). Copyright 2026 Carl Joakim Damsleth.

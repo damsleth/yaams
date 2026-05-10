@@ -10,6 +10,7 @@ from typing import Iterable
 
 import click
 
+from yaams import __version__
 from yaams.config import get_db_path, load_config, expand_path
 from yaams.consolidate import (
   Consolidation,
@@ -56,8 +57,20 @@ from yaams.watermark import get_watermark, update_watermark
 
 
 @click.group()
+@click.version_option(__version__, prog_name="yaams")
 def cli() -> None:
   pass
+
+
+@cli.command("version")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def version_cmd(as_json: bool) -> None:
+  """Print yaams version."""
+  if as_json:
+    import json
+    click.echo(json.dumps({"tool": "yaams", "version": __version__}))
+  else:
+    click.echo(f"yaams {__version__}")
 
 
 @cli.command("init-db")

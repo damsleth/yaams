@@ -85,6 +85,25 @@ def init_schema(
         last_run_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS ingest_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        duration_ms REAL NOT NULL,
+        items_seen INTEGER NOT NULL DEFAULT 0,
+        items_new INTEGER NOT NULL DEFAULT 0,
+        items_skipped INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ingest_runs_run_id
+        ON ingest_runs(run_id);
+      CREATE INDEX IF NOT EXISTS idx_ingest_runs_source_time
+        ON ingest_runs(source, started_at);
+
       CREATE TABLE IF NOT EXISTS consolidations (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL,

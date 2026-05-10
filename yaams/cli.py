@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -101,6 +103,8 @@ def ingest(
   run_stats: dict[str, dict[str, object]] = defaultdict(
     lambda: {"seen": 0, "new": 0, "skipped": 0}
   )
+  run_id = uuid.uuid4().hex
+  total_start = time.perf_counter()
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))
@@ -109,6 +113,8 @@ def ingest(
     for src in _sources_to_run(source, cfg):
       if not _source_enabled(cfg, src):
         continue
+      src_started_at = datetime.now(UTC)
+      src_perf_start = time.perf_counter()
       try:
         adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
         source_stats = ingest_source(
@@ -121,9 +127,27 @@ def ingest(
           processors=processors,
         )
       except Exception as exc:
-        click.echo(f"  {src}: failed - {type(exc).__name__}: {exc}", err=True)
-        run_stats[src]["failed"] = f"{type(exc).__name__}: {exc}"
+        duration_ms = (time.perf_counter() - src_perf_start) * 1000
+        error_text = f"{type(exc).__name__}: {exc}"
+        click.echo(f"  {src}: failed - {error_text}", err=True)
+        run_stats[src]["failed"] = error_text
         run_stats[src]["paths"] = _source_paths(src, cfg)
+        run_stats[src]["duration_ms"] = duration_ms
+        if not dry_run:
+          _record_ingest_run(
+            conn,
+            run_id=run_id,
+            source=src,
+            started_at=src_started_at,
+            ended_at=datetime.now(UTC),
+            duration_ms=duration_ms,
+            seen=0,
+            new=0,
+            skipped=0,
+            status="failed",
+            error=error_text,
+          )
+          conn.commit()
         continue
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
@@ -142,7 +166,30 @@ def ingest(
       ]
       run_stats[src]["since"] = source_stats["since"]
       run_stats[src]["paths"] = _source_paths(src, cfg)
-    print_stats(conn, db_path, run_stats, dry_run=dry_run)
+      run_stats[src]["duration_ms"] = source_stats["duration_ms"]
+      if not dry_run:
+        _record_ingest_run(
+          conn,
+          run_id=run_id,
+          source=src,
+          started_at=parse_iso_datetime(str(source_stats["started_at"])),
+          ended_at=parse_iso_datetime(str(source_stats["ended_at"])),
+          duration_ms=float(source_stats["duration_ms"]),  # type: ignore[arg-type]
+          seen=int(source_stats["seen"]),  # type: ignore[arg-type]
+          new=int(source_stats["new"]),  # type: ignore[arg-type]
+          skipped=int(source_stats["skipped"]),  # type: ignore[arg-type]
+          status="success",
+          error=None,
+        )
+        conn.commit()
+    total_duration_ms = (time.perf_counter() - total_start) * 1000
+    print_stats(
+      conn,
+      db_path,
+      run_stats,
+      dry_run=dry_run,
+      total_duration_ms=total_duration_ms,
+    )
   finally:
     conn.close()
 
@@ -587,6 +634,8 @@ def ingest_source(
   dry_run: bool,
   processors,
 ) -> dict[str, object]:
+  started_at = datetime.now(UTC)
+  perf_start = time.perf_counter()
   since = _effective_since(conn, source, cfg)
   batch: list[Item] = []
   latest_ts = since
@@ -606,6 +655,7 @@ def ingest_source(
   if not dry_run:
     update_watermark(conn, source, latest_ts)
     conn.commit()
+  duration_ms = (time.perf_counter() - perf_start) * 1000
   return {
     "seen": seen,
     "new": inserted,
@@ -624,6 +674,9 @@ def ingest_source(
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
+    "started_at": started_at.isoformat(),
+    "ended_at": datetime.now(UTC).isoformat(),
+    "duration_ms": duration_ms,
   }
 
 
@@ -700,12 +753,66 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
   raise ValueError(f"Unknown source: {source}")
 
 
+def _record_ingest_run(
+  conn,
+  *,
+  run_id: str,
+  source: str,
+  started_at: datetime,
+  ended_at: datetime,
+  duration_ms: float,
+  seen: int,
+  new: int,
+  skipped: int,
+  status: str,
+  error: str | None,
+) -> None:
+  conn.execute(
+    """
+    INSERT INTO ingest_runs (
+      run_id, source, started_at, ended_at, duration_ms,
+      items_seen, items_new, items_skipped, status, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+      run_id,
+      source,
+      started_at.isoformat(),
+      ended_at.isoformat(),
+      duration_ms,
+      seen,
+      new,
+      skipped,
+      status,
+      error,
+    ),
+  )
+
+
+def _format_duration(ms: float) -> str:
+  if ms < 1000:
+    return f"{ms:.0f}ms"
+  seconds = ms / 1000
+  if seconds < 60:
+    return f"{seconds:.1f}s"
+  minutes, seconds = divmod(seconds, 60)
+  return f"{int(minutes)}m{seconds:04.1f}s"
+
+
+def _format_throughput(seen: int, ms: float) -> str:
+  if ms <= 0 or seen <= 0:
+    return ""
+  rate = seen / (ms / 1000)
+  return f", {rate:,.1f} items/s"
+
+
 def print_stats(
   conn,
   db_path: Path,
   run_stats: dict[str, dict[str, object]],
   *,
   dry_run: bool,
+  total_duration_ms: float | None = None,
 ) -> None:
   stats = database_stats(conn)
   if dry_run:
@@ -719,23 +826,30 @@ def print_stats(
   failed_sources = []
   for source in _ordered_sources(run_stats):
     failure = run_stats[source].get("failed")
+    duration_ms = run_stats[source].get("duration_ms")
+    timing = ""
+    if isinstance(duration_ms, (int, float)):
+      timing = f" [{_format_duration(float(duration_ms))}]"
     if failure:
-      click.echo(f"  {source}: FAILED - {failure}")
+      click.echo(f"  {source}: FAILED{timing} - {failure}")
       failed_sources.append(source)
       continue
     seen = run_stats[source]["seen"]
     new = run_stats[source]["new"]
     skipped = run_stats[source].get("skipped", 0)
+    throughput = ""
+    if isinstance(duration_ms, (int, float)):
+      throughput = _format_throughput(int(seen), float(duration_ms))
     if dry_run:
       suffix = "would process, 0 written"
       if skipped:
         suffix = f"{suffix}, {skipped:,} skipped"
-      click.echo(f"  {source}: {seen:,} items ({suffix})")
+      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
     else:
       suffix = f"{new:,} new"
       if skipped:
         suffix = f"{suffix}, {skipped:,} skipped"
-      click.echo(f"  {source}: {seen:,} items ({suffix})")
+      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
     _print_source_diagnostics(source, run_stats[source])
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
@@ -745,6 +859,8 @@ def print_stats(
   )
   if db_path.exists():
     click.echo(f"  Storage: {_size_mb(db_path):.1f} MB")
+  if total_duration_ms is not None:
+    click.echo(f"  Total elapsed: {_format_duration(total_duration_ms)}")
 
 
 def _effective_since(conn, source: str, cfg: dict) -> datetime:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from typing import Sequence
 
 
@@ -14,8 +15,8 @@ class Embedder:
     offline: bool = True,
   ):
     if offline:
-      os.environ.setdefault("HF_HUB_OFFLINE", "1")
-      os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+      os.environ["HF_HUB_OFFLINE"] = "1"
+      os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     try:
       from sentence_transformers import SentenceTransformer
@@ -27,7 +28,16 @@ class Embedder:
     kwargs = {}
     if device:
       kwargs["device"] = device
-    self.model = SentenceTransformer(model, **kwargs)
+    try:
+      self.model = SentenceTransformer(model, **kwargs)
+    except OSError as exc:
+      if not offline or not _confirm_download(model):
+        raise
+      os.environ["HF_HUB_OFFLINE"] = "0"
+      os.environ["TRANSFORMERS_OFFLINE"] = "0"
+      self.model = SentenceTransformer(model, **kwargs)
+      os.environ["HF_HUB_OFFLINE"] = "1"
+      os.environ["TRANSFORMERS_OFFLINE"] = "1"
     self.model.max_seq_length = 512
     self.batch_size = batch_size
     self.dim = self.model.get_embedding_dimension()
@@ -44,4 +54,15 @@ class Embedder:
       convert_to_numpy=True,
       normalize_embeddings=True,
     )
+
+
+def _confirm_download(model: str) -> bool:
+  if not sys.stdin.isatty():
+    return False
+  prompt = f"Model '{model}' not found in local HF cache. Download from huggingface.co? [y/N] "
+  try:
+    answer = input(prompt).strip().lower()
+  except EOFError:
+    return False
+  return answer in ("y", "yes")
 

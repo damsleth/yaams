@@ -20,7 +20,6 @@ def _candidate_config_paths() -> list[Path]:
   xdg_root = expand_path(xdg) if xdg else expand_path("~/.config")
   candidates.append(xdg_root / "yaams" / "config.yaml")
 
-  candidates.append(expand_path("~/yaams-repo/config.yaml"))
   candidates.append(expand_path("config.yaml"))
 
   return candidates

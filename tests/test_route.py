@@ -112,7 +112,7 @@ def test_filter_results_by_entities_drops_unmatched_items():
     timestamp=datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
     sender="alice",
     recipients=[],
-    content="theodor said hi",
+    content="bob said hi",
     subject="",
     thread_id="thread",
   )

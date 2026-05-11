@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template LaunchAgent for nightly YAAMS ingest.
+
+  1. Copy this file to ~/Library/LaunchAgents/local.yaams.ingest.plist
+  2. Replace every "__USER__" with your macOS username (`whoami`).
+  3. Replace "__REPO__" with the absolute path to your YAAMS checkout.
+  4. Verify `yaams` resolves at the path under ProgramArguments
+     (`readlink -f $(which yaams)`).
+  5. launchctl load ~/Library/LaunchAgents/local.yaams.ingest.plist
+
+  See docs/scheduling.md for the full setup, including macOS Full Disk
+  Access requirements for the imessage adapter.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.yaams.ingest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/__USER__/.local/bin/yaams</string>
+    <string>ingest</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <!-- Run nightly at 02:00 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/__USER__/Library/Logs/yaams/ingest.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/__USER__/Library/Logs/yaams/ingest.err</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/__USER__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/__USER__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

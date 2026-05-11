@@ -39,25 +39,17 @@ DEFAULT_CONFIG = {
   "entities": {
     "spacy_model": "xx_ent_wiki_sm",
     "dictionary": [
+      # Example entries - replace with the names, places, and projects you
+      # actually want to track. The wizard will prompt you to edit this.
       {
-        "canonical": "Alice",
+        "canonical": "Example Person",
         "type": "person",
-        "aliases": ["Marie", "Alice Marie"],
+        "aliases": ["EP", "Ex Person"],
       },
       {
-        "canonical": "Diana",
-        "type": "person",
-        "aliases": ["Em"],
-      },
-      {
-        "canonical": "Jacob",
-        "type": "person",
-        "aliases": ["JX"],
-      },
-      {
-        "canonical": "Local Aid Society",
+        "canonical": "Example Org",
         "type": "org",
-        "aliases": ["LAS", "Local Aid", "OPS"],
+        "aliases": ["EO"],
       },
     ],
   },

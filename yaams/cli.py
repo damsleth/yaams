@@ -733,8 +733,14 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       skip_dirs=skip_dirs,
     )
   if source == "tier2_ledger":
-    notes_path = cfg.get("notes_path", "~/yaams/ledger-inbox")
-    index_path = cfg.get("index_path", "~/yaams/ledger-inbox/08_indices/note_index.json")
+    notes_path = cfg.get("notes_path")
+    if not notes_path:
+      raise ValueError(
+        "tier2_ledger source requires ingest.tier2_ledger.notes_path in config.yaml"
+      )
+    index_path = cfg.get(
+      "index_path", str(Path(notes_path) / "08_indices" / "note_index.json")
+    )
     return LedgerNotesAdapter(
       notes_path=Path(notes_path),
       index_path=Path(index_path),
@@ -1143,7 +1149,7 @@ def promote_review(config_path: str, review_all: bool) -> None:
   db_path = get_db_path(cfg)
   promote_cfg_raw = cfg.get("promote", {}) or {}
   inbox_path = expand_path(
-    promote_cfg_raw.get("inbox_path", "~/yaams/ledger-inbox/00_inbox")
+    promote_cfg_raw.get("inbox_path", "~/yaams/ledger-inbox")
   )
 
   conn = open_db(db_path)
@@ -1250,7 +1256,7 @@ def entities_list(config_path: str) -> None:
 @entities_group.command("add")
 @click.argument("canonical")
 @click.option("--type", "etype", default="person", show_default=True)
-@click.option("--alias", "aliases", multiple=True, help="Repeatable: --alias JX --alias Jacob")
+@click.option("--alias", "aliases", multiple=True, help="Repeatable: --alias EP --alias Ex.Person")
 @click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_path: str) -> None:
   """Add an entity to the dictionary and seed the DB immediately."""

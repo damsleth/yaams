@@ -25,7 +25,7 @@ Phase A writes:
 - embeddings
 - watermarks
 
-Phase A does not write to `cognitive-ledger` or `ledger-inbox`.
+Phase A does not write to the cognitive-ledger repo or its ledger store.
 
 ## Data Not Written
 

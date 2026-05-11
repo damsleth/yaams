@@ -26,7 +26,7 @@ def test_dictionary_entities_match_aliases_and_prefer_longest():
 
 def test_ner_person_names_are_case_normalized():
   assert normalize_ner_canonical("ALICE", "person") == "Alice"
-  assert normalize_ner_canonical("  alice   cathrine ", "person") == "Alice Marie"
+  assert normalize_ner_canonical("  alice   marie ", "person") == "Alice Marie"
 
 
 def test_ner_org_names_preserve_acronyms():

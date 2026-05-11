@@ -49,14 +49,12 @@ documentation, and establishes a versioning baseline.
 
 ### Changed
 
-- Default `db_path` moved from `~/yaams/data.db` to `~/yaams/data.db`
-  to align with the broader personal-data tree. Existing users with the
-  old default should either set `db_path` explicitly or migrate the file.
-- Default ledger inbox path moved from `~/yaams/ledger-inbox/00_inbox/` to
-  `~/yaams/ledger-inbox/00_inbox/` for the same reason.
-- Config search no longer falls back to a hardcoded developer path; the
-  search order is now `$YAAMS_CONFIG`, `$XDG_CONFIG_HOME/yaams/config.yaml`
-  (or `~/.config/yaams/config.yaml`), then `./config.yaml`.
+- Config search order is now `$YAAMS_CONFIG`,
+  `$XDG_CONFIG_HOME/yaams/config.yaml` (or `~/.config/yaams/config.yaml`),
+  then `./config.yaml`. Hardcoded developer-path fallbacks were removed.
+- Default `db_path` is `~/yaams/data.db`. Default `promote.inbox_path` is
+  `~/yaams/ledger-inbox/`. Both are neutral starting points; configure them
+  explicitly in `config.yaml` to match your own layout.
 
 ### Security
 

@@ -132,11 +132,11 @@ def test_message_to_item_falls_back_to_display_name_when_no_member_email():
 
 
 def test_message_to_item_uses_topic_for_group_chat_subject():
-  chat = _make_chat(chat_type="group", topic="OPS operativt")
+  chat = _make_chat(chat_type="group", topic="Ops Group")
   msg = _make_user_message()
   item = message_to_item("volunteer", chat, msg, _make_members())
   assert item is not None
-  assert item.subject == "OPS operativt"
+  assert item.subject == "Ops Group"
 
 
 def test_message_to_item_skips_deleted_messages():

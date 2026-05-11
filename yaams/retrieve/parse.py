@@ -93,11 +93,11 @@ Known entities (resolve aliases to canonical names; do NOT invent):
 {entity_list}
 
 Examples:
-Q: "When did I first hear about ATLAS?"
-A: {{"shape":"first_occurrence","entities":["ATLAS"],"date_range":[null,null],"topic_terms":[],"sort":"asc","prefer_tier":null,"high_quality":false}}
+Q: "When did I first hear about Project Atlas?"
+A: {{"shape":"first_occurrence","entities":["Project Atlas"],"date_range":[null,null],"topic_terms":[],"sort":"asc","prefer_tier":null,"high_quality":false}}
 
-Q: "Hva sa Alice om SPEC proposal i april?"
-A: {{"shape":"temporal_range","entities":["Alice Tveit"],"date_range":["{year}-04-01T00:00:00+00:00","{year}-04-30T23:59:59+00:00"],"topic_terms":["SPEC","proposal"],"sort":"relevance","prefer_tier":null,"high_quality":false}}
+Q: "What did Alice say about the spec review in April?"
+A: {{"shape":"temporal_range","entities":["Alice"],"date_range":["{year}-04-01T00:00:00+00:00","{year}-04-30T23:59:59+00:00"],"topic_terms":["spec review"],"sort":"relevance","prefer_tier":null,"high_quality":false}}
 
 Q: "What's my position on YAAMS Tier 2 promotion?"
 A: {{"shape":"synthesis","entities":[],"date_range":[null,null],"topic_terms":["YAAMS","Tier 2","promotion"],"sort":"relevance","prefer_tier":"tier2_ledger","high_quality":false}}

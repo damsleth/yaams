@@ -18,22 +18,36 @@ YAAMS is not a chat agent, not a continuous screen recorder, not a productivity 
 
 ## Two-tier memory: where YAAMS sits
 
+Each tier has an **engine** (public code, this repo or a sibling) and a
+**store** (private, lives outside the repo, contains your data).
+
 ```
-Tier 1 (this repo)          Tier 2 (sibling repos)
-┌──────────────────┐        ┌─────────────────────────────────┐
-│ YAAMS            │        │ cognitive-ledger (engine, OSS)  │
-│ - high volume    │ ─────► │ (cognitive-ledger sibling repo)         │
-│ - high recall    │ promote│                                 │
-│ - append-only    │        │ ledger-inbox (curated atomic, priv)│
-│ - SQLite + vec   │        │ ~/yaams/ledger-inbox                │
-└──────────────────┘        └─────────────────────────────────┘
+Tier 1 (raw, high-volume)          Tier 2 (curated, atomic)
+┌──────────────────────────┐       ┌──────────────────────────┐
+│ engine: YAAMS            │       │ engine: cognitive-ledger │
+│         (this repo)      │       │         (sibling repo)   │
+│                          │       │                          │
+│ store:  YAAMS SQLite db  │ ────► │ store:  ledger notes     │
+│         (private,        │promote│         (private,        │
+│          db_path)        │       │          markdown tree)  │
+└──────────────────────────┘       └──────────────────────────┘
 ```
 
-- `(cognitive-ledger sibling repo)` - the harness/engine for the cognitive ledger. Public.
-- `~/yaams/ledger-inbox` - the curated, extracted atomic notes/facts/concepts plus embeddings. Private. **YAAMS reads this as a Tier 2 source via a SQLite adapter** (Phase F).
-- YAAMS is high-volume Tier 1; the ledger is high-precision Tier 2. They get fused at query time with a small ledger boost.
+- **YAAMS (engine, public).** This repo. Ingests, normalizes, embeds,
+  retrieves, synthesizes. Ships no personal data.
+- **YAAMS store (private).** A single SQLite file at `db_path`. Holds the
+  ingested items, embeddings, signals. Never committed.
+- **cognitive-ledger (engine, public).** Sibling repo. Provides the schema,
+  CLIs, and consolidation rules for atomic notes.
+- **Ledger store (private).** A markdown tree of curated atomic notes
+  produced by cognitive-ledger. **YAAMS reads this as a Tier 2 source via
+  a SQLite adapter** (Phase F).
 
-Do not write into `cognitive-ledger` or `ledger-inbox` from this repo. Cross-repo writes are out of scope. Reads happen through adapters.
+YAAMS is high-volume Tier 1; the ledger is high-precision Tier 2. They
+fuse at query time with a small ledger boost.
+
+Do not write into the cognitive-ledger repo or its ledger store from this
+repo. Cross-repo writes are out of scope. Reads happen through adapters.
 
 ## Engine
 
@@ -97,7 +111,7 @@ YAAMS/
 - **Phase C** - additional sources (notes, transcripts, browsing, documents).
 - **Phase D** - LightMem-style sleep-time consolidation.
 - **Phase E** - promotion pipeline into Tier 2 (human-gated).
-- **Phase F** - cross-tier query fusion (read `ledger-inbox` as a Tier 2 SQLite source).
+- **Phase F** - cross-tier query fusion (read the ledger store as a Tier 2 SQLite source).
 - **Phase G** - optimization loop (A/B framework, signal-driven config tuning).
 
 Don't skip ahead. Phase A produces the data Phase D needs to consolidate against. Phase B produces the signals Phase G needs to optimize on.

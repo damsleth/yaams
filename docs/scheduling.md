@@ -7,8 +7,18 @@ matter of multiple jobs but of one job that runs every adapter sequentially.
 
 ## launchd plist
 
-The plist lives at `~/Library/LaunchAgents/local.yaams.ingest.plist` and
-runs `yaams ingest` at 02:00 daily. Logs:
+A template plist ships at `scripts/local.yaams.ingest.plist.example`. Copy
+it into `~/Library/LaunchAgents/`, fill in your username and the absolute
+path to your YAAMS checkout, then load it:
+
+```bash
+cp scripts/local.yaams.ingest.plist.example \
+   ~/Library/LaunchAgents/local.yaams.ingest.plist
+# Edit the file: replace __USER__ with $(whoami) and __REPO__ with $(pwd).
+launchctl load ~/Library/LaunchAgents/local.yaams.ingest.plist
+```
+
+The agent runs `yaams ingest` at 02:00 daily. Logs:
 
 - stdout: `~/Library/Logs/yaams/ingest.log`
 - stderr: `~/Library/Logs/yaams/ingest.err`

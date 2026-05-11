@@ -14,6 +14,16 @@ the [cognitive-ledger](https://github.com/damsleth/cognitive-ledger): curated
 atomic notes you keep forever. YAAMS ingests everything, lets you query
 across the lot, and promotes the gems upstream when you're ready.
 
+Each tier is split between a public **engine** and a private **store**:
+
+| Tier | Engine (public) | Store (private, your data) |
+| --- | --- | --- |
+| Tier 1 | **YAAMS** - this repo | a single SQLite file at `db_path` |
+| Tier 2 | **cognitive-ledger** - sibling repo | a markdown tree of curated atomic notes |
+
+Engines ship code, no data. Stores live outside the repo, are gitignored
+by default, and never get pushed.
+
 ## What
 
 ```
@@ -162,7 +172,7 @@ yaams promote review              # interactive: a/e/r/s/q
 ```
 
 Nothing is promoted without your explicit acceptance. Accepted notes land in
-`promote.inbox_path` (default `~/yaams/ledger-inbox/00_inbox/`).
+`promote.inbox_path` (default `~/yaams/ledger-inbox/`).
 
 ## Configure
 

@@ -16,6 +16,10 @@ from yaams.time import ensure_utc
 logger = logging.getLogger(__name__)
 
 
+MAX_EVENT_PAGES = 3
+PAGE_SIZE = 100
+
+
 class GitHubAPIError(RuntimeError):
   """Raised for GitHub HTTP failures that should abort or surface, not silently skip."""
 
@@ -28,54 +32,36 @@ class GitHubAPIError(RuntimeError):
 @dataclass
 class GitHubAdapter:
   username: str
-  include_private: bool = True
-  include_forks: bool = False
-  fetch_issues: bool = True
-  fetch_prs: bool = True
   _token: str = field(default="", init=False, repr=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self._token = _get_token()
     cutoff = ensure_utc(since)
-    repos = self._fetch_repos()
-    for repo in repos:
-      full_name = repo["full_name"]
-      if self.fetch_issues:
-        yield from self._fetch_issues(full_name, cutoff)
-      if self.fetch_prs:
-        yield from self._fetch_prs(full_name, cutoff)
+    for event in self._iter_events(cutoff):
+      item = _event_item(event, self.username)
+      if item is not None:
+        yield item
 
-  def _fetch_repos(self) -> list[dict]:
-    visibility = "all" if self.include_private else "public"
-    repos = self._paginate(f"/user/repos?visibility={visibility}&per_page=100&sort=pushed")
-    return [r for r in repos if self.include_forks or not r.get("fork")]
-
-  def _fetch_issues(self, full_name: str, since: datetime) -> Iterator[Item]:
-    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
-    path = f"/repos/{full_name}/issues?state=all&since={since_str}&per_page=100"
-    for issue in self._paginate(path):
-      if "pull_request" in issue:
-        continue
-      yield _issue_item(issue, full_name, self.username)
-
-  def _fetch_prs(self, full_name: str, since: datetime) -> Iterator[Item]:
-    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
-    path = f"/repos/{full_name}/pulls?state=all&sort=updated&direction=desc&per_page=100"
-    for pr in self._paginate(path):
-      updated = datetime.fromisoformat(pr["updated_at"].rstrip("Z")).replace(tzinfo=UTC)
-      if updated < since:
-        break
-      yield _pr_item(pr, full_name, self.username)
-
-  def _paginate(self, path: str) -> list[dict]:
-    results: list[dict] = []
-    url = f"https://api.github.com{path}"
-    while url:
+  def _iter_events(self, since: datetime) -> Iterator[dict]:
+    url = f"https://api.github.com/users/{self.username}/events?per_page={PAGE_SIZE}"
+    pages = 0
+    while url and pages < MAX_EVENT_PAGES:
       data, next_url = self._get(url)
-      if isinstance(data, list):
-        results.extend(data)
+      pages += 1
+      if not isinstance(data, list) or not data:
+        return
+      stop = False
+      for event in data:
+        created = _parse_ts(event.get("created_at"))
+        if created is None:
+          continue
+        if created < since:
+          stop = True
+          break
+        yield event
+      if stop:
+        return
       url = next_url
-    return results
 
   def _get(self, url: str) -> tuple[list[dict], str | None]:
     req = urllib.request.Request(
@@ -111,46 +97,194 @@ def _get_token() -> str:
   return result.stdout.strip()
 
 
-def _issue_item(issue: dict, repo: str, username: str) -> Item:
-  number = issue["number"]
-  author = (issue.get("user") or {}).get("login", "unknown")
-  body = (issue.get("body") or "").strip()
-  content = issue["title"]
-  if body:
-    content += f"\n\n{body}"
+def _parse_ts(value: str | None) -> datetime | None:
+  if not value:
+    return None
+  return datetime.fromisoformat(value.rstrip("Z")).replace(tzinfo=UTC)
+
+
+def _event_item(event: dict, username: str) -> Item | None:
+  event_id = event.get("id")
+  event_type = event.get("type") or "UnknownEvent"
+  repo = (event.get("repo") or {}).get("name") or ""
+  ts = _parse_ts(event.get("created_at"))
+  if not event_id or ts is None:
+    return None
+  payload = event.get("payload") or {}
+  subject, content, url = _render(event_type, payload, repo)
+  source_id = f"event:{event_id}"
   return Item(
-    id=hash_id("github", f"{repo}#issues/{number}"),
+    id=hash_id("github", source_id),
     source="github",
-    source_id=f"{repo}#issues/{number}",
-    timestamp=datetime.fromisoformat(issue["updated_at"].rstrip("Z")).replace(tzinfo=UTC),
-    sender="me" if author == username else author,
+    source_id=source_id,
+    timestamp=ts,
+    sender="me",
     recipients=[],
     content=content,
-    subject=issue["title"],
-    thread_id=repo,
-    raw_metadata={"repo": repo, "number": number, "type": "issue", "state": issue["state"], "url": issue["html_url"]},
+    subject=subject,
+    thread_id=repo or None,
+    raw_metadata={
+      "repo": repo,
+      "type": event_type,
+      "event_id": event_id,
+      "url": url,
+      "public": event.get("public", True),
+    },
   )
 
 
-def _pr_item(pr: dict, repo: str, username: str) -> Item:
-  number = pr["number"]
-  author = (pr.get("user") or {}).get("login", "unknown")
+def _render(event_type: str, payload: dict, repo: str) -> tuple[str, str, str | None]:
+  renderer = _RENDERERS.get(event_type, _render_unknown)
+  return renderer(payload, repo, event_type)
+
+
+def _render_push(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  commits = payload.get("commits") or []
+  ref = (payload.get("ref") or "").replace("refs/heads/", "")
+  subject = f"Pushed {len(commits)} commit(s) to {repo}" + (f" ({ref})" if ref else "")
+  lines = [f"- {(c.get('message') or '').strip().splitlines()[0][:200]}" for c in commits if c.get("message")]
+  content = subject + ("\n\n" + "\n".join(lines) if lines else "")
+  return subject, content, None
+
+
+def _render_pr(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  pr = payload.get("pull_request") or {}
+  action = payload.get("action") or "updated"
+  title = pr.get("title") or ""
   body = (pr.get("body") or "").strip()
-  content = pr["title"]
-  if body:
-    content += f"\n\n{body}"
-  return Item(
-    id=hash_id("github", f"{repo}#pulls/{number}"),
-    source="github",
-    source_id=f"{repo}#pulls/{number}",
-    timestamp=datetime.fromisoformat(pr["updated_at"].rstrip("Z")).replace(tzinfo=UTC),
-    sender="me" if author == username else author,
-    recipients=[],
-    content=content,
-    subject=pr["title"],
-    thread_id=repo,
-    raw_metadata={"repo": repo, "number": number, "type": "pr", "state": pr["state"], "url": pr["html_url"]},
-  )
+  subject = f"PR {action}: {title}" if title else f"PR {action} in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, pr.get("html_url")
+
+
+def _render_pr_review(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  pr = payload.get("pull_request") or {}
+  review = payload.get("review") or {}
+  title = pr.get("title") or ""
+  state = review.get("state") or ""
+  body = (review.get("body") or "").strip()
+  subject = f"Reviewed PR ({state}): {title}" if title else f"Reviewed PR in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, review.get("html_url") or pr.get("html_url")
+
+
+def _render_pr_review_comment(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  pr = payload.get("pull_request") or {}
+  comment = payload.get("comment") or {}
+  title = pr.get("title") or ""
+  body = (comment.get("body") or "").strip()
+  subject = f"Commented on PR: {title}" if title else f"PR review comment in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, comment.get("html_url")
+
+
+def _render_issue(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  issue = payload.get("issue") or {}
+  action = payload.get("action") or "updated"
+  title = issue.get("title") or ""
+  body = (issue.get("body") or "").strip()
+  subject = f"Issue {action}: {title}" if title else f"Issue {action} in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, issue.get("html_url")
+
+
+def _render_issue_comment(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  issue = payload.get("issue") or {}
+  comment = payload.get("comment") or {}
+  title = issue.get("title") or ""
+  body = (comment.get("body") or "").strip()
+  subject = f"Commented on issue: {title}" if title else f"Issue comment in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, comment.get("html_url")
+
+
+def _render_create(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  ref_type = payload.get("ref_type") or "ref"
+  ref = payload.get("ref") or repo
+  subject = f"Created {ref_type} {ref} in {repo}" if ref_type != "repository" else f"Created repository {repo}"
+  return subject, subject, None
+
+
+def _render_delete(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  ref_type = payload.get("ref_type") or "ref"
+  ref = payload.get("ref") or ""
+  subject = f"Deleted {ref_type} {ref} in {repo}"
+  return subject, subject, None
+
+
+def _render_fork(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  forkee = payload.get("forkee") or {}
+  full = forkee.get("full_name") or "?"
+  subject = f"Forked {repo} -> {full}"
+  return subject, subject, forkee.get("html_url")
+
+
+def _render_release(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  release = payload.get("release") or {}
+  action = payload.get("action") or "published"
+  name = release.get("name") or release.get("tag_name") or ""
+  body = (release.get("body") or "").strip()
+  subject = f"Release {action} in {repo}: {name}" if name else f"Release {action} in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, release.get("html_url")
+
+
+def _render_watch(_payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  subject = f"Starred {repo}"
+  return subject, subject, None
+
+
+def _render_public(_payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  subject = f"Made {repo} public"
+  return subject, subject, None
+
+
+def _render_commit_comment(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  comment = payload.get("comment") or {}
+  sha = (comment.get("commit_id") or "")[:7]
+  body = (comment.get("body") or "").strip()
+  subject = f"Commented on commit {sha} in {repo}" if sha else f"Commit comment in {repo}"
+  content = subject + (f"\n\n{body}" if body else "")
+  return subject, content, comment.get("html_url")
+
+
+def _render_member(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  action = payload.get("action") or "changed"
+  member = (payload.get("member") or {}).get("login") or "?"
+  subject = f"{action.title()} {member} on {repo}"
+  return subject, subject, None
+
+
+def _render_gollum(payload: dict, repo: str, _type: str) -> tuple[str, str, str | None]:
+  pages = payload.get("pages") or []
+  titles = [p.get("title", "") for p in pages if p.get("title")]
+  subject = f"Wiki edits on {repo}: {len(pages)} page(s)"
+  content = subject + ("\n\n" + "\n".join(f"- {t}" for t in titles) if titles else "")
+  return subject, content, None
+
+
+def _render_unknown(_payload: dict, repo: str, event_type: str) -> tuple[str, str, str | None]:
+  subject = f"{event_type} on {repo}" if repo else event_type
+  return subject, subject, None
+
+
+_RENDERERS = {
+  "PushEvent": _render_push,
+  "PullRequestEvent": _render_pr,
+  "PullRequestReviewEvent": _render_pr_review,
+  "PullRequestReviewCommentEvent": _render_pr_review_comment,
+  "IssuesEvent": _render_issue,
+  "IssueCommentEvent": _render_issue_comment,
+  "CreateEvent": _render_create,
+  "DeleteEvent": _render_delete,
+  "ForkEvent": _render_fork,
+  "ReleaseEvent": _render_release,
+  "WatchEvent": _render_watch,
+  "PublicEvent": _render_public,
+  "CommitCommentEvent": _render_commit_comment,
+  "MemberEvent": _render_member,
+  "GollumEvent": _render_gollum,
+}
 
 
 def _parse_next_link(link_header: str) -> str | None:

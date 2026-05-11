@@ -67,23 +67,38 @@ a grounded answer with citations - in seconds, offline.
 Requires Python 3.11+ and macOS (Linux works for everything except the
 iMessage adapter).
 
+Homebrew (recommended):
+
 ```bash
-git clone https://github.com/damsleth/YAAMS.git
-cd YAAMS
-./scripts/install_phase_a.sh
+brew install damsleth/tap/yaams
 ```
 
-The installer creates `.venv`, installs dependencies, walks you through
-configuration with sensible defaults, downloads the spaCy NER model, runs
-`init-db`, runs a dry-run ingest, and prints the commands to do a real
-ingest.
-
-If you prefer pipx for global install:
+PyPI via pipx:
 
 ```bash
 pipx install yaams
-yaams --version
 ```
+
+Bleeding-edge from main:
+
+```bash
+brew install --HEAD damsleth/tap/yaams
+```
+
+Then bootstrap a config and run the dry-run ingest:
+
+```bash
+mkdir -p ~/.config/yaams
+cp "$(brew --prefix)/share/yaams/config.yaml.example" ~/.config/yaams/config.yaml
+$EDITOR ~/.config/yaams/config.yaml
+yaams init-db
+yaams ingest --dry-run
+```
+
+If you cloned the repo instead of installing the package, run the
+all-in-one bootstrap script (`scripts/install_phase_a.sh`) - it creates
+`.venv`, runs the config wizard, downloads the spaCy NER model, and runs
+`init-db` + `ingest --dry-run` in sequence.
 
 Verify the setup:
 

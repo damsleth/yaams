@@ -135,7 +135,7 @@ class EntityTagger:
       return spacy.load(model)
     except OSError as exc:
       raise RuntimeError(
-        f"spaCy model '{model}' is not installed. Run: python -m spacy download {model}"
+        f"spaCy model '{model}' is not installed. Run: yaams setup"
       ) from exc
 
 

@@ -73,6 +73,42 @@ def version_cmd(as_json: bool) -> None:
     click.echo(f"yaams {__version__}")
 
 
+@cli.command("setup")
+@click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
+def setup_cmd(config_path: str) -> None:
+  """Install runtime assets (spaCy NER models) into the active Python env."""
+  import subprocess
+  import sys
+
+  cfg = load_config(config_path)
+  ent_cfg = cfg.get("entities") or {}
+  models = [m for m in (ent_cfg.get("spacy_model"), ent_cfg.get("spacy_model_nb")) if m]
+  if not models:
+    click.echo("No spaCy models configured under entities.spacy_model[_nb]; nothing to do.")
+    return
+
+  import importlib.util
+  failed: list[str] = []
+  for model in models:
+    if importlib.util.find_spec(model) is not None:
+      click.echo(f"  {model}: already installed")
+      continue
+    click.echo(f"  {model}: downloading...")
+    result = subprocess.run(
+      [sys.executable, "-m", "spacy", "download", model],
+      check=False,
+    )
+    if result.returncode != 0:
+      failed.append(model)
+      click.echo(f"  {model}: FAILED (exit {result.returncode})", err=True)
+    else:
+      click.echo(f"  {model}: ok")
+
+  if failed:
+    raise click.ClickException(f"Failed to install: {', '.join(failed)}")
+  click.echo("Setup complete.")
+
+
 @cli.command("init-db")
 @click.option("--config", "config_path", default=None, help="Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, ~/.config/yaams/config.yaml, or repo root if omitted.")
 @click.option("--require-vec", is_flag=True)

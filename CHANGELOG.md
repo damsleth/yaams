@@ -10,6 +10,25 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-11
+
+### Added
+
+- `yaams setup` subcommand that installs the spaCy NER models configured
+  under `entities.spacy_model` and `entities.spacy_model_nb` into the active
+  Python environment. Skips models that are already importable, so reruns
+  are cheap. Useful when the Homebrew install-time download is skipped or
+  when adding additional language models post-install.
+
+### Changed
+
+- The error raised when a configured spaCy model is missing now points at
+  `yaams setup` instead of a raw `python -m spacy download <model>` command.
+  The previous suggestion was easy to run against the wrong interpreter
+  when YAAMS was installed via Homebrew.
+- README leads with `brew install` for the supported install path; the
+  source-clone instructions are moved further down.
+
 ## [0.1.0] - 2026-05-10
 
 First tagged release. The project has been usable in-tree for several months;
@@ -61,5 +80,6 @@ documentation, and establishes a versioning baseline.
 - Added `SECURITY.md` documenting the threat model, data classification,
   and disclosure flow (GitHub Security Advisories).
 
-[Unreleased]: https://github.com/damsleth/YAAMS/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/damsleth/YAAMS/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/damsleth/YAAMS/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/damsleth/YAAMS/releases/tag/v0.1.0

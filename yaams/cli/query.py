@@ -21,6 +21,39 @@ from yaams.cli._root import cli
 from yaams.cli._shared import _embed_config, _embedding_dim, config_option
 
 
+_LEDGER_SOURCE_ID = "tier2_ledger"
+
+
+def _resolve_source_filter(
+  source_filter: tuple[str, ...],
+  tier: str | None,
+) -> list[str] | None:
+  """Translate --tier and --source aliases to canonical source ids.
+
+  - `--source ledger` -> `tier2_ledger` (CLI alias from the spec)
+  - `--tier raw` -> exclude `tier2_ledger` (every other configured source)
+  - `--tier ledger` -> only `tier2_ledger`
+  - `--tier both` (default) -> no tier filter
+  - Explicit `--source` wins over `--tier` (caller asked specifically)
+  """
+  # Step 1: canonicalize any 'ledger' alias in --source.
+  resolved = [
+    _LEDGER_SOURCE_ID if s == "ledger" else s for s in source_filter
+  ]
+  if resolved:
+    return resolved
+  if not tier or tier == "both":
+    return None
+  if tier == "ledger":
+    return [_LEDGER_SOURCE_ID]
+  # tier == "raw": negative filter is expressed downstream; we cannot
+  # cleanly express "everything except tier2_ledger" via the existing
+  # source_filter list (which is a positive include list). For now,
+  # return None and let route_parsed apply the exclusion. We mark the
+  # config below so the route step can act on it.
+  return None
+
+
 @cli.command("query")
 @click.argument("text", nargs=-1, required=True)
 @config_option
@@ -29,7 +62,21 @@ from yaams.cli._shared import _embed_config, _embedding_dim, config_option
   "--source",
   "source_filter",
   multiple=True,
-  help="Filter to specific source(s); repeat for multiple (e.g. --source imessage --source teams_swon)",
+  help=(
+    "Filter to specific source(s); repeat for multiple (e.g. --source "
+    "imessage --source teams_swon). `--source ledger` is a CLI alias for "
+    "the internal `tier2_ledger` source id."
+  ),
+)
+@click.option(
+  "--tier",
+  type=click.Choice(["raw", "ledger", "both"]),
+  default=None,
+  help=(
+    "Restrict the result tier: raw (everything except curated ledger "
+    "notes), ledger (only tier2_ledger), or both. Default: both. "
+    "Explicit --source wins over --tier."
+  ),
 )
 @click.option("--since", default=None, help="ISO timestamp lower bound, e.g. 2026-01-01")
 @click.option("--until", default=None, help="ISO timestamp upper bound")
@@ -50,6 +97,18 @@ from yaams.cli._shared import _embed_config, _embedding_dim, config_option
   default="text",
   show_default=True,
 )
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="Machine mode (alias for --format json). Reserved-key contract: success "
+       "documents have no top-level `ok` field.",
+)
+@click.option(
+  "--pretty",
+  is_flag=True,
+  help="Human-readable rendering (alias for --format text).",
+)
 @click.option("--answer/--no-answer", default=False, help="Synthesize a grounded answer with citations using the configured LLM backend")
 @click.option("--no-log", is_flag=True, help="Skip signal logging for this query (default is to log)")
 @click.option("--no-parse", is_flag=True, help="Skip the LLM query parser (raw text -> hybrid retrieve)")
@@ -60,17 +119,32 @@ def query_cmd(
   config_path: str,
   top_k: int,
   source_filter: tuple[str, ...],
+  tier: str | None,
   since: str | None,
   until: str | None,
   no_vector: bool,
   no_consolidations: bool,
   output_format: str,
+  as_json: bool,
+  pretty: bool,
   answer: bool,
   no_log: bool,
   no_parse: bool,
   explain: bool,
   high_quality: bool,
 ) -> None:
+  # --json and --pretty are aliases for --format. Last-one-wins by
+  # presence; if both are set we honor --json (machine mode is the
+  # safer default when there's ambiguity).
+  if as_json:
+    output_format = "json"
+  elif pretty:
+    output_format = "text"
+
+  resolved_sources = _resolve_source_filter(source_filter, tier)
+  # `--tier raw` means "exclude tier2_ledger". We translate by mutating
+  # the resolved list later if route_parsed didn't set it.
+  tier_raw_exclude = (tier == "raw" and not source_filter)
   import time as _time
 
   cfg = load_config(config_path)
@@ -112,7 +186,7 @@ def query_cmd(
 
     base_cfg = HybridQueryConfig(
       top_k=top_k,
-      source_filter=list(source_filter) or None,
+      source_filter=list(resolved_sources) if resolved_sources else None,
       since=parse_iso_datetime(since) if since else None,
       until=parse_iso_datetime(until) if until else None,
       include_consolidations=not no_consolidations,
@@ -134,6 +208,8 @@ def query_cmd(
     results = run_query(conn_ro, fts_text, embedding=embedding, config=qcfg)
     if parsed is not None and qcfg.entity_filter:
       results = filter_results_by_entities(results, conn_ro, qcfg.entity_filter)
+    if tier_raw_exclude:
+      results = [r for r in results if r.source != _LEDGER_SOURCE_ID]
   finally:
     conn_ro.close()
   retrieval_ms = (_time.perf_counter() - retrieve_start) * 1000
@@ -160,7 +236,7 @@ def query_cmd(
         query_id=query_id,
         text=query_text,
         top_k=top_k,
-        source_filter=list(source_filter) or None,
+        source_filter=list(resolved_sources) if resolved_sources else None,
         since=since,
         until=until,
         results=results,

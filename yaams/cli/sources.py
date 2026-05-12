@@ -2,17 +2,24 @@
 
 Reads the active config.yaml, lists every `ingest.<source>` block that has an
 `enabled:` key, lets the user toggle them with arrow keys + space, apply with
-enter. For path-list sources (folders, email) the user can also add and
-remove paths inline with `a` and `d`. On apply, the YAML file is rewritten
-in place so comments, indentation, and unrelated keys survive untouched.
+enter. For path-list sources (folders, email) and profile-aware sources
+(calendar, teams) the TUI also shows individual sub-entries that can be
+toggled and (for path sources) added/removed inline.
 
-The `folders` row is always shown, even if the user has no `ingest.folders`
-block in config — pressing `a` creates the block on first add.
+Calendar/teams discover their available profiles by shelling out to
+`owa-cal profiles` and `owa-piggy profiles --json`; result is cached for the
+TUI session. If a CLI is missing the discovery returns an empty list so the
+TUI still works.
+
+On apply, the YAML file is rewritten in place so comments, indentation, and
+unrelated keys survive untouched.
 """
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import sys
 import termios
 import tty
@@ -39,12 +46,7 @@ ARROW = "▸"
 BULLET = "·"
 
 
-# `ingest.<key>` blocks that are containers for sub-sources (per-profile teams,
-# calendars). The top-level `enabled:` flag still gates them, but the meaning
-# is "process the listed profiles" rather than "process this single source".
 PROFILE_AWARE = {"teams", "calendar"}
-
-# Sources whose entries are a list of paths the user can manage from the TUI.
 PATH_LIST_SOURCES = {"email", "folders"}
 
 
@@ -54,28 +56,117 @@ class SourceRow:
   name: str
   enabled: bool
   summary: str
-  synthetic: bool = False  # True when no config block exists yet
+  synthetic: bool = False
 
 
 @dataclass
 class SubPathRow:
   kind: Literal["subpath"]
   parent: str
+  subkind: Literal["path", "profile"]
   index: int
   label: str
+  enabled: bool
+  tag: str = ""  # e.g. "default" or "webcal" for profile rows
 
 
 Row = SourceRow | SubPathRow
 
 
-def _build_rows(cfg: dict) -> list[Row]:
-  """Enumerate every toggleable source plus its sub-paths.
+# ---------------------------------------------------------------------------
+# External profile discovery (cached per process).
+# ---------------------------------------------------------------------------
 
-  `email.sources` and `folders.paths` entries appear as indented child rows
-  under their parent so the cursor can land on them for removal. `folders`
-  is always emitted even when missing from config so the user can add the
-  first path interactively.
-  """
+
+_profile_cache: dict[str, list[dict]] = {}
+
+
+def _run_json(cmd: list[str], timeout: float = 3.0) -> object | None:
+  try:
+    proc = subprocess.run(
+      cmd, capture_output=True, text=True, timeout=timeout, check=False,
+    )
+  except (FileNotFoundError, subprocess.TimeoutExpired):
+    return None
+  if proc.returncode != 0:
+    return None
+  out = proc.stdout.strip()
+  if not out:
+    return None
+  try:
+    return json.loads(out)
+  except json.JSONDecodeError:
+    return None
+
+
+def discover_calendar_profiles() -> list[dict]:
+  """Return [{alias, kind, default}] from `owa-cal profiles`."""
+  if "calendar" in _profile_cache:
+    return _profile_cache["calendar"]
+  data = _run_json(["owa-cal", "profiles"])
+  result: list[dict] = []
+  if isinstance(data, list):
+    for entry in data:
+      if not isinstance(entry, dict):
+        continue
+      alias = entry.get("alias")
+      if not alias:
+        continue
+      result.append({
+        "alias": alias,
+        "kind": entry.get("kind", ""),
+        "default": bool(entry.get("default", False)),
+      })
+  _profile_cache["calendar"] = result
+  return result
+
+
+def discover_teams_profiles() -> list[dict]:
+  """Return [{alias, default}] from `owa-piggy profiles --json`."""
+  if "teams" in _profile_cache:
+    return _profile_cache["teams"]
+  data = _run_json(["owa-piggy", "profiles", "--json"])
+  result: list[dict] = []
+  if isinstance(data, dict):
+    profiles = data.get("profiles") or []
+    if isinstance(profiles, list):
+      for entry in profiles:
+        if not isinstance(entry, dict):
+          continue
+        alias = entry.get("alias")
+        if not alias:
+          continue
+        result.append({
+          "alias": alias,
+          "default": bool(entry.get("default", False)),
+        })
+  _profile_cache["teams"] = result
+  return result
+
+
+def _clear_profile_cache() -> None:
+  _profile_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Row enumeration.
+# ---------------------------------------------------------------------------
+
+
+def _entry_path_and_enabled(entry: object) -> tuple[str | None, bool]:
+  """Normalize a folders.paths entry. Returns (path, enabled)."""
+  if isinstance(entry, str):
+    return entry, True
+  if isinstance(entry, dict):
+    path = entry.get("path")
+    if not isinstance(path, str):
+      return None, True
+    enabled = entry.get("enabled", True)
+    return path, bool(enabled)
+  return None, True
+
+
+def _build_rows(cfg: dict) -> list[Row]:
   ingest = cfg.get("ingest") or {}
   rows: list[Row] = []
   for key, block in sorted(ingest.items()):
@@ -95,14 +186,61 @@ def _build_rows(cfg: dict) -> list[Row]:
           continue
         t = entry.get("type", "?")
         p = entry.get("path", "")
+        enabled = bool(entry.get("enabled", True))
         rows.append(SubPathRow(
-          kind="subpath", parent=key, index=i, label=f"{t}: {p}",
+          kind="subpath", parent=key, subkind="path", index=i,
+          label=f"{t}: {p}", enabled=enabled,
         ))
     elif key == "folders":
-      for i, path in enumerate(block.get("paths") or []):
+      for i, entry in enumerate(block.get("paths") or []):
+        path, enabled = _entry_path_and_enabled(entry)
+        if path is None:
+          continue
         rows.append(SubPathRow(
-          kind="subpath", parent=key, index=i, label=str(path),
+          kind="subpath", parent=key, subkind="path", index=i,
+          label=path, enabled=enabled,
         ))
+    elif key == "calendar":
+      configured = list(block.get("profiles") or [])
+      available = discover_calendar_profiles()
+      seen: set[str] = set()
+      for prof in available:
+        alias = prof["alias"]
+        seen.add(alias)
+        tag_parts = []
+        if prof.get("kind"):
+          tag_parts.append(str(prof["kind"]))
+        if prof.get("default"):
+          tag_parts.append("default")
+        rows.append(SubPathRow(
+          kind="subpath", parent=key, subkind="profile", index=0,
+          label=alias, enabled=alias in configured,
+          tag=" / ".join(tag_parts),
+        ))
+      for alias in configured:
+        if alias not in seen:
+          rows.append(SubPathRow(
+            kind="subpath", parent=key, subkind="profile", index=0,
+            label=alias, enabled=True, tag="not discovered",
+          ))
+    elif key == "teams":
+      configured = list(block.get("profiles") or [])
+      available = discover_teams_profiles()
+      seen = set()
+      for prof in available:
+        alias = prof["alias"]
+        seen.add(alias)
+        tag = "default" if prof.get("default") else ""
+        rows.append(SubPathRow(
+          kind="subpath", parent=key, subkind="profile", index=0,
+          label=alias, enabled=alias in configured, tag=tag,
+        ))
+      for alias in configured:
+        if alias not in seen:
+          rows.append(SubPathRow(
+            kind="subpath", parent=key, subkind="profile", index=0,
+            label=alias, enabled=True, tag="not discovered",
+          ))
 
   if not any(isinstance(r, SourceRow) and r.name == "folders" for r in rows):
     rows.append(SourceRow(
@@ -121,11 +259,17 @@ def _summary_for(key: str, block: dict) -> str:
   if key == "signal":
     return str(block.get("signal_dir", ""))
   if key == "email":
-    count = len(block.get("sources") or [])
-    return f"{count} source(s)"
+    sources = block.get("sources") or []
+    active = sum(1 for s in sources if isinstance(s, dict) and s.get("enabled", True))
+    return f"{active}/{len(sources)} active"
   if key == "folders":
-    count = len(block.get("paths") or [])
-    return f"{count} source(s)"
+    paths = block.get("paths") or []
+    active = 0
+    for entry in paths:
+      _, en = _entry_path_and_enabled(entry)
+      if en:
+        active += 1
+    return f"{active}/{len(paths)} active"
   if key == "notes":
     return str(block.get("vault_path", ""))
   if key == "tier2_ledger":
@@ -133,10 +277,18 @@ def _summary_for(key: str, block: dict) -> str:
   if key == "github":
     user = block.get("username", "?")
     return f"user={user}"
-  if key in PROFILE_AWARE:
-    profiles = block.get("profiles") or []
-    return f"profiles={','.join(profiles) or '(none)'}"
+  if key == "calendar":
+    configured = block.get("profiles") or []
+    return f"{len(configured)} profile(s) active"
+  if key == "teams":
+    configured = block.get("profiles") or []
+    return f"{len(configured)} profile(s) active"
   return ""
+
+
+# ---------------------------------------------------------------------------
+# TUI plumbing.
+# ---------------------------------------------------------------------------
 
 
 def _read_key() -> str:
@@ -179,7 +331,12 @@ def _render(
       summary_text = f"  {DIM}{row.summary}{RESET}" if row.summary else ""
       sys.stdout.write(f"{cursor_mark}{box}  {BOLD}{row.name}{RESET}{indicator}{summary_text}\n")
     else:
-      sys.stdout.write(f"{cursor_mark}     {DIM}{BULLET}{RESET}  {DIM}{row.label}{RESET}\n")
+      box = f"{GREEN}{CHECK}{RESET}" if row.enabled else f"{DIM}{EMPTY}{RESET}"
+      label_color = "" if row.enabled else DIM
+      tag_text = f"  {DIM}({row.tag}){RESET}" if row.tag else ""
+      sys.stdout.write(
+        f"{cursor_mark}     {box}  {label_color}{row.label}{RESET}{tag_text}\n"
+      )
 
   pending_on = 0
   pending_off = 0
@@ -199,14 +356,13 @@ def _render(
       parts.append(f"{RED}{pending_off} to disable{RESET}")
     sys.stdout.write(f"  {', '.join(parts)}  {DIM}— press enter to apply{RESET}\n")
   else:
-    sys.stdout.write(f"  {DIM}No pending toggles{RESET}\n")
+    sys.stdout.write(f"  {DIM}No pending parent toggles{RESET}\n")
   if message:
     sys.stdout.write(f"\n  {YELLOW}{message}{RESET}\n")
   sys.stdout.flush()
 
 
 def _prompt(question: str, default: str = "") -> str | None:
-  """Restore cooked mode, prompt with click, return None on KeyboardInterrupt."""
   sys.stdout.write("\033[?25h")
   sys.stdout.flush()
   try:
@@ -219,11 +375,6 @@ def _prompt(question: str, default: str = "") -> str | None:
 
 
 def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
-  """Returns the final desired-state dict for source enables, or None to quit.
-
-  Path adds/removes happen immediately (write through to disk + reload rows).
-  This function does not return them; only the toggle state is returned.
-  """
   selected: dict[str, bool] = {}
   cursor = 0
   message: str | None = None
@@ -251,7 +402,10 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
           current = selected.get(row.name, row.enabled)
           selected[row.name] = not current
         else:
-          message = "Toggle only applies to source rows."
+          new_rows, message = _toggle_subpath(row, config_path)
+          if new_rows is not None:
+            rows[:] = new_rows
+            cursor = min(cursor, len(rows) - 1)
         continue
       if key == "a":
         new_rows, message = _add_path(row, config_path)
@@ -276,8 +430,26 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
     sys.stdout.flush()
 
 
+def _toggle_subpath(row: SubPathRow, config_path: Path) -> tuple[list[Row] | None, str | None]:
+  """Flip the enabled state of a child row (path or profile)."""
+  desired = not row.enabled
+  if row.subkind == "path":
+    if row.parent == "email":
+      _yaml_set_email_entry_enabled(config_path, row.index, desired)
+    elif row.parent == "folders":
+      _yaml_set_folder_entry_enabled(config_path, row.index, desired)
+    else:
+      return None, f"Toggle unsupported for {row.parent} paths."
+  elif row.subkind == "profile":
+    _yaml_set_profile_enabled(config_path, row.parent, row.label, desired)
+  else:
+    return None, "Unknown sub-row kind."
+  cfg = load_config(config_path)
+  state = "enabled" if desired else "disabled"
+  return _build_rows(cfg), f"{row.parent}: {row.label} {state}."
+
+
 def _add_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None]:
-  """Prompt + write a new path for the cursor row. Returns (new_rows, message)."""
   parent = row.name if isinstance(row, SourceRow) else row.parent
   if parent == "email":
     src_type = _prompt("Type [emlx/mbox]", default="emlx")
@@ -303,8 +475,7 @@ def _add_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None
 
 
 def _remove_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None]:
-  """Remove the path at the cursor. Returns (new_rows, message)."""
-  if isinstance(row, SubPathRow):
+  if isinstance(row, SubPathRow) and row.subkind == "path":
     if row.parent == "email":
       _yaml_remove_email_source(config_path, row.index)
       cfg = load_config(config_path)
@@ -317,7 +488,7 @@ def _remove_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | N
 
 
 # ---------------------------------------------------------------------------
-# YAML in-place editors. Line-based so comments and unrelated keys survive.
+# YAML in-place editors.
 # ---------------------------------------------------------------------------
 
 
@@ -358,7 +529,6 @@ def _rewrite_enabled_flags(config_path: Path, target_state: dict[str, bool]) -> 
 
 
 def _yaml_append_folder_path(config_path: Path, value: str) -> None:
-  """Append a path under ingest.folders.paths. Creates the block if missing."""
   lines = config_path.read_text().splitlines(keepends=True)
   lines = _ensure_folders_block(lines)
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
@@ -376,7 +546,6 @@ def _yaml_append_folder_path(config_path: Path, value: str) -> None:
     lines.insert(insert_at, f"    paths:\n{insertion}")
     config_path.write_text("".join(lines))
     return
-  # If `paths: []` inline, convert to block style first.
   if re.match(r"\s+paths\s*:\s*\[\s*\]\s*$", lines[paths_idx].rstrip("\n")):
     indent = re.match(r"^(\s+)", lines[paths_idx]).group(1)  # type: ignore[union-attr]
     lines[paths_idx] = f"{indent}paths:\n"
@@ -391,28 +560,91 @@ def _yaml_append_folder_path(config_path: Path, value: str) -> None:
 
 def _yaml_remove_folder_path(config_path: Path, index: int) -> None:
   lines = config_path.read_text().splitlines(keepends=True)
+  spans = _folders_entry_spans(lines)
+  if spans is None or not (0 <= index < len(spans)):
+    return
+  start, end = spans[index]
+  del lines[start:end]
+  config_path.write_text("".join(lines))
+
+
+def _yaml_set_folder_entry_enabled(config_path: Path, index: int, enabled: bool) -> None:
+  """Toggle a folder entry's enabled state.
+
+  Handles both forms:
+    - ~/path                  (bare string, implicit enabled=true)
+    - path: ~/path            (dict form)
+      enabled: false
+  When disabling a bare string, rewrites it to dict form. When re-enabling,
+  collapses the dict back to a bare string if it has no other keys.
+  """
+  lines = config_path.read_text().splitlines(keepends=True)
+  spans = _folders_entry_spans(lines)
+  if spans is None or not (0 <= index < len(spans)):
+    return
+  start, end = spans[index]
+  entry_lines = lines[start:end]
+  first = entry_lines[0]
+  bare_match = re.match(r"^(\s+)-\s+(?!path\s*:)(.+?)\s*$", first.rstrip("\n"))
+  dict_match = re.match(r"^(\s+)-\s+path\s*:\s*(.+?)\s*$", first.rstrip("\n"))
+
+  if bare_match and not dict_match:
+    indent = bare_match.group(1)
+    value = bare_match.group(2)
+    if enabled:
+      return
+    new_block = [
+      f"{indent}- path: {value}\n",
+      f"{indent}  enabled: false\n",
+    ]
+    lines[start:end] = new_block + entry_lines[1:]
+    config_path.write_text("".join(lines))
+    return
+
+  if not dict_match:
+    return
+
+  indent = dict_match.group(1)
+  enabled_line_idx: int | None = None
+  for j in range(start + 1, end):
+    if re.match(r"\s+enabled\s*:\s*(true|false|True|False|yes|no)\b", lines[j]):
+      enabled_line_idx = j
+      break
+
+  if enabled_line_idx is None:
+    if enabled:
+      return
+    insert_at = start + 1
+    lines.insert(insert_at, f"{indent}  enabled: false\n")
+    config_path.write_text("".join(lines))
+    return
+
+  lines[enabled_line_idx] = re.sub(
+    r"(enabled\s*:\s*)(true|false|True|False|yes|no)\b",
+    lambda m: m.group(1) + ("true" if enabled else "false"),
+    lines[enabled_line_idx],
+    count=1,
+  )
+  config_path.write_text("".join(lines))
+
+
+def _folders_entry_spans(lines: list[str]) -> list[tuple[int, int]] | None:
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
-    return
+    return None
   folders_start, folders_end = _find_block_span(
     lines, top_level_key="folders", parent_indent=2,
     search_from=ingest_start, search_to=ingest_end,
   )
   if folders_start is None or folders_end is None:
-    return
+    return None
   paths_idx = _find_key_line(lines, folders_start, folders_end, "paths")
   if paths_idx is None:
-    return
-  entries = _list_entry_spans(lines, paths_idx, folders_end)
-  if not (0 <= index < len(entries)):
-    return
-  start, end = entries[index]
-  del lines[start:end]
-  config_path.write_text("".join(lines))
+    return []
+  return _list_entry_spans(lines, paths_idx, folders_end)
 
 
 def _ensure_folders_block(lines: list[str]) -> list[str]:
-  """Insert `folders: enabled: false / paths: []` block if missing."""
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
     raise click.ClickException("No `ingest:` block in config.")
@@ -457,32 +689,117 @@ def _yaml_append_email_source(config_path: Path, src_type: str, path: str) -> No
 
 
 def _yaml_remove_email_source(config_path: Path, index: int) -> None:
-  text = config_path.read_text()
-  lines = text.splitlines(keepends=True)
+  lines = config_path.read_text().splitlines(keepends=True)
+  spans = _email_entry_spans(lines)
+  if spans is None or not (0 <= index < len(spans)):
+    return
+  start, end = spans[index]
+  del lines[start:end]
+  config_path.write_text("".join(lines))
+
+
+def _yaml_set_email_entry_enabled(config_path: Path, index: int, enabled: bool) -> None:
+  lines = config_path.read_text().splitlines(keepends=True)
+  spans = _email_entry_spans(lines)
+  if spans is None or not (0 <= index < len(spans)):
+    return
+  start, end = spans[index]
+  indent_match = re.match(r"^(\s+)-\s", lines[start])
+  if indent_match is None:
+    return
+  child_indent = indent_match.group(1) + "  "
+  enabled_idx: int | None = None
+  for j in range(start, end):
+    if re.match(r"\s+enabled\s*:\s*(true|false|True|False|yes|no)\b", lines[j]):
+      enabled_idx = j
+      break
+  if enabled_idx is None:
+    lines.insert(end, f"{child_indent}enabled: {'true' if enabled else 'false'}\n")
+  else:
+    lines[enabled_idx] = re.sub(
+      r"(enabled\s*:\s*)(true|false|True|False|yes|no)\b",
+      lambda m: m.group(1) + ("true" if enabled else "false"),
+      lines[enabled_idx],
+      count=1,
+    )
+  config_path.write_text("".join(lines))
+
+
+def _email_entry_spans(lines: list[str]) -> list[tuple[int, int]] | None:
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
-    return
+    return None
   email_start, email_end = _find_block_span(
     lines, top_level_key="email", parent_indent=2,
     search_from=ingest_start, search_to=ingest_end,
   )
   if email_start is None or email_end is None:
-    return
+    return None
   sources_idx = _find_key_line(lines, email_start, email_end, "sources")
   if sources_idx is None:
+    return []
+  return _list_entry_spans(lines, sources_idx, email_end)
+
+
+def _yaml_set_profile_enabled(
+  config_path: Path, source: str, profile: str, enabled: bool,
+) -> None:
+  """Add or remove `profile` from `ingest.<source>.profiles`."""
+  if source not in PROFILE_AWARE:
     return
-  entries = _list_entry_spans(lines, sources_idx, email_end)
-  if not (0 <= index < len(entries)):
+  lines = config_path.read_text().splitlines(keepends=True)
+  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+  if ingest_start is None:
+    raise click.ClickException("No `ingest:` block in config.")
+  block_start, block_end = _find_block_span(
+    lines, top_level_key=source, parent_indent=2,
+    search_from=ingest_start, search_to=ingest_end,
+  )
+  if block_start is None or block_end is None:
+    raise click.ClickException(f"No `ingest.{source}:` block in config.")
+  profiles_idx = _find_key_line(lines, block_start, block_end, "profiles")
+  if profiles_idx is None:
+    if not enabled:
+      return
+    enabled_idx = _find_enabled_line(lines, block_start, block_end)
+    insert_at = (enabled_idx + 1) if enabled_idx is not None else (block_start + 1)
+    lines[insert_at:insert_at] = [
+      "    profiles:\n",
+      f"      - {profile}\n",
+    ]
+    config_path.write_text("".join(lines))
     return
-  start, end = entries[index]
-  del lines[start:end]
+  if re.match(r"\s+profiles\s*:\s*\[\s*\]\s*$", lines[profiles_idx].rstrip("\n")):
+    if not enabled:
+      return
+    indent = re.match(r"^(\s+)", lines[profiles_idx]).group(1)  # type: ignore[union-attr]
+    lines[profiles_idx] = f"{indent}profiles:\n"
+    lines.insert(profiles_idx + 1, f"      - {profile}\n")
+    config_path.write_text("".join(lines))
+    return
+  entries = _list_entry_spans(lines, profiles_idx, block_end)
+  existing_idx: int | None = None
+  for i, (s, _e) in enumerate(entries):
+    match = re.match(r"^\s+-\s+(.+?)\s*$", lines[s].rstrip("\n"))
+    if match and match.group(1) == profile:
+      existing_idx = i
+      break
+  if enabled:
+    if existing_idx is not None:
+      return
+    insert_at = entries[-1][1] if entries else profiles_idx + 1
+    lines.insert(insert_at, f"      - {profile}\n")
+  else:
+    if existing_idx is None:
+      return
+    s, e = entries[existing_idx]
+    del lines[s:e]
   config_path.write_text("".join(lines))
 
 
 def _list_entry_spans(
   lines: list[str], list_key_idx: int, block_end: int,
 ) -> list[tuple[int, int]]:
-  """Return [(start, end_exclusive)] line ranges for each `- ` item under a key."""
   entries: list[tuple[int, int]] = []
   current_start: int | None = None
   for i in range(list_key_idx + 1, block_end):
@@ -565,6 +882,7 @@ def _find_key_line(
 @config_option
 def sources_cmd(config_path: str) -> None:
   """Toggle which ingest sources are enabled. Interactive TUI."""
+  _clear_profile_cache()
   resolved = resolve_config_path(config_path)
   cfg = load_config(resolved)
   rows = _build_rows(cfg)
@@ -580,7 +898,8 @@ def sources_cmd(config_path: str) -> None:
         tail = f"  {row.summary}" if row.summary else ""
         click.echo(f"  [{mark}] {row.name}{tail}")
       else:
-        click.echo(f"           - {row.label}")
+        mark = "on " if row.enabled else "off"
+        click.echo(f"           [{mark}] {row.label}")
     return
 
   result = _interactive(rows, resolved)

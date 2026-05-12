@@ -399,8 +399,13 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       include_attachments=bool(cfg.get("include_attachments", True)),
     )
   if source == "email":
+    raw_sources = list(cfg.get("sources", []))
+    active = [
+      s for s in raw_sources
+      if isinstance(s, dict) and s.get("enabled", True)
+    ]
     return EmailAdapter(
-      sources=list(cfg.get("sources", [])),
+      sources=active,
       user_addresses=list(cfg.get("user_addresses", [])),
       skip_newsletters=bool(cfg.get("skip_newsletters", True)),
     )
@@ -412,12 +417,20 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       skip_dirs=skip_dirs,
     )
   if source == "folders":
-    paths = cfg.get("paths") or []
-    if not paths:
+    raw_paths = cfg.get("paths") or []
+    active_paths: list[str] = []
+    for entry in raw_paths:
+      if isinstance(entry, str):
+        active_paths.append(entry)
+      elif isinstance(entry, dict):
+        path = entry.get("path")
+        if isinstance(path, str) and entry.get("enabled", True):
+          active_paths.append(path)
+    if not active_paths:
       raise ValueError(
-        "folders source requires at least one path under ingest.folders.paths"
+        "folders source requires at least one enabled path under ingest.folders.paths"
       )
-    kwargs: dict = {"folder_paths": [Path(p) for p in paths]}
+    kwargs: dict = {"folder_paths": [Path(p) for p in active_paths]}
     extensions = cfg.get("extensions")
     if extensions:
       kwargs["extensions"] = tuple(extensions)
@@ -512,34 +525,11 @@ def print_stats(
     prefix = "Database stats."
   click.echo(prefix)
   _print_sources(run_stats)
-  failed_sources = []
-  for source in _ordered_sources(run_stats):
-    failure = run_stats[source].get("failed")
-    duration_ms = run_stats[source].get("duration_ms")
-    timing = ""
-    if isinstance(duration_ms, (int, float)):
-      timing = f" [{_format_duration(float(duration_ms))}]"
-    if failure:
-      click.echo(f"  {source}: FAILED{timing} - {failure}")
-      failed_sources.append(source)
-      continue
-    seen = run_stats[source]["seen"]
-    new = run_stats[source]["new"]
-    skipped = run_stats[source].get("skipped", 0)
-    throughput = ""
-    if isinstance(duration_ms, (int, float)):
-      throughput = _format_throughput(int(seen), float(duration_ms))
-    if dry_run:
-      suffix = "would process, 0 written"
-      if skipped:
-        suffix = f"{suffix}, {skipped:,} skipped"
-      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
-    else:
-      suffix = f"{new:,} new"
-      if skipped:
-        suffix = f"{suffix}, {skipped:,} skipped"
-      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
-    _print_source_diagnostics(source, run_stats[source])
+  totals = _print_run_table(run_stats, dry_run=dry_run)
+
+  click.echo(f"  Total new items ingested: {totals['new']:,}")
+  if totals["skipped"]:
+    click.echo(f"  Total skipped: {totals['skipped']:,}")
   click.echo(f"  Total in DB: {stats['total']:,} items")
   click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
   click.echo(
@@ -550,6 +540,99 @@ def print_stats(
     click.echo(f"  Storage: {_size_mb(db_path):.1f} MB")
   if total_duration_ms is not None:
     click.echo(f"  Total elapsed: {_format_duration(total_duration_ms)}")
+
+
+def _print_run_table(
+  run_stats: dict[str, dict[str, object]],
+  *,
+  dry_run: bool,
+) -> dict[str, int]:
+  """Print the per-source table and return totals across non-failed rows."""
+  if not run_stats:
+    return {"seen": 0, "new": 0, "skipped": 0}
+
+  ordered = _ordered_sources(run_stats)
+  rows: list[dict[str, str]] = []
+  diagnostics: list[tuple[str, dict]] = []
+  totals = {"seen": 0, "new": 0, "skipped": 0}
+
+  for source in ordered:
+    s = run_stats[source]
+    failure = s.get("failed")
+    duration_ms = s.get("duration_ms")
+    time_str = _format_duration(float(duration_ms)) if isinstance(duration_ms, (int, float)) else ""
+    if failure:
+      rows.append({
+        "source": source, "items": "-", "new": "-", "skipped": "-",
+        "time": time_str, "rate": f"FAILED: {failure}",
+      })
+      continue
+    seen = int(s.get("seen", 0) or 0)
+    new = int(s.get("new", 0) or 0)
+    skipped = int(s.get("skipped", 0) or 0)
+    totals["seen"] += seen
+    totals["new"] += new
+    totals["skipped"] += skipped
+    rate_str = ""
+    if isinstance(duration_ms, (int, float)) and duration_ms > 0 and seen > 0:
+      rate_str = f"{seen / (duration_ms / 1000):,.1f}/s"
+    rows.append({
+      "source": source,
+      "items": f"{seen:,}",
+      "new": "-" if dry_run else f"{new:,}",
+      "skipped": f"{skipped:,}" if skipped else "",
+      "time": time_str,
+      "rate": rate_str,
+    })
+    diagnostics.append((source, s))
+
+  totals_row = {
+    "source": "TOTAL",
+    "items": f"{totals['seen']:,}",
+    "new": "-" if dry_run else f"{totals['new']:,}",
+    "skipped": f"{totals['skipped']:,}" if totals["skipped"] else "",
+    "time": "",
+    "rate": "",
+  }
+
+  columns = [
+    ("source", "Source", "left"),
+    ("items", "Items", "right"),
+    ("new", "New", "right"),
+    ("skipped", "Skipped", "right"),
+    ("time", "Time", "right"),
+    ("rate", "Rate", "right"),
+  ]
+  widths = {}
+  for key, header, _ in columns:
+    widths[key] = max(
+      len(header),
+      max((len(r.get(key, "")) for r in rows + [totals_row]), default=0),
+    )
+
+  def fmt_row(r: dict[str, str]) -> str:
+    parts = []
+    for key, _, align in columns:
+      val = r.get(key, "")
+      if align == "right":
+        parts.append(val.rjust(widths[key]))
+      else:
+        parts.append(val.ljust(widths[key]))
+    return "  " + "  ".join(parts).rstrip()
+
+  click.echo("")
+  click.echo(fmt_row({k: h for k, h, _ in columns}))
+  separator = "  " + "  ".join("-" * widths[k] for k, _, _ in columns)
+  click.echo(separator)
+  for r in rows:
+    click.echo(fmt_row(r))
+  click.echo(separator)
+  click.echo(fmt_row(totals_row))
+  click.echo("")
+
+  for source, s in diagnostics:
+    _print_source_diagnostics(source, s)
+  return totals
 
 
 def _effective_since(conn, source: str, cfg: dict) -> datetime:

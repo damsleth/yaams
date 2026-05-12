@@ -10,6 +10,24 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-12
+
+### Added
+
+- `yaams sources` TUI now discovers all available calendar and teams
+  profiles by shelling out to `owa-cal profiles` and
+  `owa-piggy profiles --json`. Each profile shows as a child row and can
+  be toggled in or out of `ingest.<source>.profiles` with space — no need
+  to pre-list profile names in config. Discovered profiles are tagged
+  (`default`, `webcal`); profiles in config but not discovered are
+  marked `not discovered`. Discovery fails soft if the CLIs are missing.
+- Per-entry `enabled: true/false` for `folders.paths` and `email.sources`.
+  Toggling a child row in the TUI flips just that entry's flag without
+  removing it. Bare-string folder entries get rewritten to dict form on
+  first disable; defaults remain enabled. Ingest skips disabled entries.
+- `yaams ingest` now prints a column-aligned per-source table with a
+  TOTAL row, plus a separate `Total new items ingested` summary line.
+
 ## [0.1.4] - 2026-05-12
 
 ### Added

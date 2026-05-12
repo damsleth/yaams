@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 import uuid
 from collections import defaultdict
@@ -9,7 +10,17 @@ from pathlib import Path
 import click
 
 from yaams.config import get_db_path, load_config
+from yaams.conventions import (
+  EXIT_OK,
+  EXIT_PARTIAL,
+  EXIT_USER_ERROR,
+  action_envelope,
+  emit_action,
+  stream_progress,
+  stream_result,
+)
 from yaams.db import open_db
+from yaams.logsetup import setup_logging
 from yaams.ingest import Adapter, Item
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.email_mbox import EmailAdapter
@@ -57,19 +68,39 @@ from yaams.cli._shared import (
 @click.option("--dry-run", is_flag=True)
 @click.option("--batch-size", default=64, show_default=True)
 @click.option("--require-vec", is_flag=True)
+@click.option("-v", "--verbose", is_flag=True, help="Stream DEBUG logs to stderr in addition to the log file.")
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="NDJSON progress on stdout + final action envelope on stdout.",
+)
+@click.option(
+  "--strict",
+  is_flag=True,
+  help="Treat any source failure as fatal (exit 1 instead of partial-success exit 5).",
+)
 def ingest(
   config_path: str,
   source: str,
   dry_run: bool,
   batch_size: int,
   require_vec: bool,
+  verbose: bool,
+  as_json: bool,
+  strict: bool,
 ) -> None:
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
+  log_file = setup_logging(db_path, verbose=verbose)
+  if log_file and not as_json:
+    click.echo(f"Logging to {log_file}", err=True)
   conn = open_db(db_path, require_vec=require_vec)
   run_stats: dict[str, dict[str, object]] = defaultdict(
     lambda: {"seen": 0, "new": 0, "skipped": 0}
   )
+  succeeded: list[str] = []
+  failed_sources: list[str] = []
   run_id = uuid.uuid4().hex
   total_start = time.perf_counter()
   try:
@@ -77,9 +108,12 @@ def ingest(
     seed_entities(conn, _entity_dictionary(cfg))
     backfill_entity_sources(conn, _entity_dictionary(cfg))
     processors = None if dry_run else ProcessingContext(cfg)
-    for src in _sources_to_run(source, cfg):
-      if not _source_enabled(cfg, src):
-        continue
+    sources_planned = [s for s in _sources_to_run(source, cfg) if _source_enabled(cfg, s)]
+    if as_json:
+      stream_progress(stage="plan", total=len(sources_planned))
+    for src in sources_planned:
+      if as_json:
+        stream_progress(source=src, stage="start")
       src_started_at = datetime.now(UTC)
       src_perf_start = time.perf_counter()
       try:
@@ -96,10 +130,14 @@ def ingest(
       except Exception as exc:
         duration_ms = (time.perf_counter() - src_perf_start) * 1000
         error_text = f"{type(exc).__name__}: {exc}"
-        click.echo(f"  {src}: failed - {error_text}", err=True)
+        if not as_json:
+          click.echo(f"  {src}: failed - {error_text}", err=True)
+        else:
+          stream_progress(source=src, stage="failed", done=0)
         run_stats[src]["failed"] = error_text
         run_stats[src]["paths"] = _source_paths(src, cfg)
         run_stats[src]["duration_ms"] = duration_ms
+        failed_sources.append(src)
         if not dry_run:
           _record_ingest_run(
             conn,
@@ -134,6 +172,13 @@ def ingest(
       run_stats[src]["since"] = source_stats["since"]
       run_stats[src]["paths"] = _source_paths(src, cfg)
       run_stats[src]["duration_ms"] = source_stats["duration_ms"]
+      succeeded.append(src)
+      if as_json:
+        stream_progress(
+          source=src,
+          stage="done",
+          done=int(source_stats["seen"]),
+        )
       if not dry_run:
         _record_ingest_run(
           conn,
@@ -150,6 +195,19 @@ def ingest(
         )
         conn.commit()
     total_duration_ms = (time.perf_counter() - total_start) * 1000
+    if as_json:
+      envelope, exit_code = _build_ingest_envelope(
+        run_stats=run_stats,
+        succeeded=succeeded,
+        failed_sources=failed_sources,
+        sources_planned=sources_planned,
+        dry_run=dry_run,
+        total_duration_ms=total_duration_ms,
+        strict=strict,
+      )
+      stream_result(envelope)
+      conn.close()
+      sys.exit(exit_code)
     print_stats(
       conn,
       db_path,
@@ -158,7 +216,94 @@ def ingest(
       total_duration_ms=total_duration_ms,
     )
   finally:
-    conn.close()
+    if conn is not None:
+      try:
+        conn.close()
+      except Exception:
+        pass
+
+
+def _build_ingest_envelope(
+  *,
+  run_stats: dict[str, dict[str, object]],
+  succeeded: list[str],
+  failed_sources: list[str],
+  sources_planned: list[str],
+  dry_run: bool,
+  total_duration_ms: float,
+  strict: bool,
+) -> tuple[dict, int]:
+  """Return (envelope, exit_code) following the partial-success rules.
+
+  - All sources succeeded -> exit 0, ok=true.
+  - All sources failed -> exit 1, ok=false.
+  - Mixed -> exit 5 (partial), collapsed to exit 1 under --strict.
+  - No sources planned (nothing enabled) -> exit 0, ok=true with a warning.
+  """
+  per_source = {src: dict(stats) for src, stats in run_stats.items()}
+  totals = {
+    "seen": sum(int(s.get("seen", 0) or 0) for s in run_stats.values()),
+    "new": sum(int(s.get("new", 0) or 0) for s in run_stats.values()),
+    "skipped": sum(int(s.get("skipped", 0) or 0) for s in run_stats.values()),
+  }
+  stats = {
+    "dry_run": dry_run,
+    "sources_planned": sources_planned,
+    "sources": per_source,
+    "totals": totals,
+  }
+  warnings: list[str] = []
+  if not sources_planned:
+    warnings.append("No sources enabled in config.yaml")
+    envelope = action_envelope(
+      command="ingest", ok=True, stats=stats, warnings=warnings,
+      duration_ms=total_duration_ms,
+    )
+    return envelope, EXIT_OK
+
+  if not failed_sources:
+    envelope = action_envelope(
+      command="ingest", ok=True, stats=stats, warnings=warnings,
+      duration_ms=total_duration_ms,
+    )
+    return envelope, EXIT_OK
+
+  if not succeeded:
+    # All failed.
+    error = {
+      "code": "all_sources_failed",
+      "message": f"All {len(failed_sources)} planned source(s) failed",
+      "failed_sources": failed_sources,
+    }
+    envelope = action_envelope(
+      command="ingest", ok=False, stats=stats, warnings=warnings,
+      error=error, duration_ms=total_duration_ms,
+    )
+    return envelope, EXIT_USER_ERROR
+
+  # Partial success.
+  if strict:
+    error = {
+      "code": "partial_failure_strict",
+      "message": f"{len(failed_sources)} source(s) failed under --strict",
+      "failed_sources": failed_sources,
+    }
+    envelope = action_envelope(
+      command="ingest", ok=False, stats=stats, warnings=warnings,
+      error=error, duration_ms=total_duration_ms,
+    )
+    return envelope, EXIT_USER_ERROR
+
+  error = {
+    "code": "partial_failure",
+    "message": f"{len(failed_sources)} source(s) failed; {len(succeeded)} succeeded",
+    "failed_sources": failed_sources,
+  }
+  envelope = action_envelope(
+    command="ingest", ok=False, stats=stats, warnings=warnings,
+    error=error, duration_ms=total_duration_ms,
+  )
+  return envelope, EXIT_PARTIAL
 
 
 def ingest_source(

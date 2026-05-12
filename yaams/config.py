@@ -50,7 +50,29 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
   data = yaml.safe_load(config_path.read_text()) or {}
   if not isinstance(data, dict):
     raise ValueError(f"Config file must contain a mapping: {config_path}")
+  _apply_aliases(data)
   return data
+
+
+def _apply_aliases(data: dict[str, Any]) -> None:
+  """Rewrite suite-wide config aliases in place.
+
+  Per mnem CONVENTIONS.md, `ingest.ledger:` is a user-facing alias
+  for the internal `ingest.tier2_ledger:` block. The internal source
+  id stays `tier2_ledger`; we accept the friendlier name on input.
+
+  If both keys are present, the explicit `tier2_ledger` block wins
+  (canonical key takes priority over its alias).
+  """
+  ingest = data.get("ingest")
+  if not isinstance(ingest, dict):
+    return
+  if "ledger" in ingest and "tier2_ledger" not in ingest:
+    ingest["tier2_ledger"] = ingest.pop("ledger")
+  elif "ledger" in ingest and "tier2_ledger" in ingest:
+    # Both forms present - canonical wins. Drop the alias quietly to
+    # avoid two parallel sub-trees being kept around.
+    ingest.pop("ledger")
 
 
 def get_db_path(config: dict[str, Any]) -> Path:

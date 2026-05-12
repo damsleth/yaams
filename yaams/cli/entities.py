@@ -289,8 +289,23 @@ def entities_denied(config_path: str) -> None:
 
 @entities_group.command("manage")
 @config_option
-def entities_manage(config_path: str) -> None:
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="(Rejected - entities manage is interactive; use 'entities list --json' for machine output.)",
+)
+def entities_manage(config_path: str, as_json: bool) -> None:
   """Interactive entity dictionary manager."""
+  if as_json:
+    import sys
+    click.echo(
+      "entities manage is an interactive command; --json is rejected. "
+      "Use `yaams entities list --json` for machine-readable entity data.",
+      err=True,
+    )
+    sys.exit(1)
+
 
   def _show(cfg: dict, conn) -> None:
     dictionary = (cfg.get("entities") or {}).get("dictionary") or []

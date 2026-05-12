@@ -92,7 +92,22 @@ def promote_list(config_path: str, status: str) -> None:
 @promote_group.command("review")
 @config_option
 @click.option("--all", "review_all", is_flag=True, help="Review all statuses, not just pending")
-def promote_review(config_path: str, review_all: bool) -> None:
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="(Rejected - promote review is interactive; use 'promote list --json' for machine output.)",
+)
+def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
+  if as_json:
+    import sys
+    click.echo(
+      "promote review is an interactive command; --json is rejected. "
+      "Use `yaams promote list --json` for machine-readable candidate data.",
+      err=True,
+    )
+    sys.exit(1)
+
   from yaams.promote.candidates import (
     fetch_pending, mark_items_promoted, update_status,
   )

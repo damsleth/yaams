@@ -102,8 +102,9 @@ def action_envelope(
   }
 
 
-def emit_action(envelope: Mapping[str, Any], stream=sys.stdout) -> None:
+def emit_action(envelope: Mapping[str, Any], stream=None) -> None:
   """Print an action envelope as a single line of JSON on stdout."""
+  stream = stream if stream is not None else sys.stdout
   stream.write(json.dumps(envelope, ensure_ascii=False) + "\n")
   stream.flush()
 
@@ -130,15 +131,17 @@ def data_error(
   }
 
 
-def emit_data_error(envelope: Mapping[str, Any], stream=sys.stdout) -> None:
+def emit_data_error(envelope: Mapping[str, Any], stream=None) -> None:
   """Print a data-class failure envelope on stdout."""
+  stream = stream if stream is not None else sys.stdout
   stream.write(json.dumps(envelope, ensure_ascii=False) + "\n")
   stream.flush()
 
 
 # Streaming schema (action commands with --json) ------------------------------
 
-def _emit_stream(obj: Mapping[str, Any], stream=sys.stdout) -> None:
+def _emit_stream(obj: Mapping[str, Any], stream=None) -> None:
+  stream = stream if stream is not None else sys.stdout
   stream.write(json.dumps(obj, ensure_ascii=False) + "\n")
   stream.flush()
 
@@ -149,7 +152,7 @@ def stream_progress(
   stage: str | None = None,
   done: int | None = None,
   total: int | None = None,
-  stream=sys.stdout,
+  stream=None,
 ) -> None:
   payload: dict[str, Any] = {"type": "progress", "ts": _now_iso()}
   if source is not None:
@@ -163,14 +166,14 @@ def stream_progress(
   _emit_stream(payload, stream)
 
 
-def stream_warning(message: str, *, source: str | None = None, stream=sys.stdout) -> None:
+def stream_warning(message: str, *, source: str | None = None, stream=None) -> None:
   payload: dict[str, Any] = {"type": "warning", "message": redact(message), "ts": _now_iso()}
   if source is not None:
     payload["source"] = source
   _emit_stream(payload, stream)
 
 
-def stream_result(envelope: Mapping[str, Any], stream=sys.stdout) -> None:
+def stream_result(envelope: Mapping[str, Any], stream=None) -> None:
   payload = {"type": "result", **dict(envelope)}
   _emit_stream(payload, stream)
 

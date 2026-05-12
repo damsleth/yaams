@@ -35,6 +35,7 @@ from yaams.db import open_db
 from yaams.ingest import Adapter, Item
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.email_mbox import EmailAdapter
+from yaams.ingest.folder import FolderAdapter
 from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
@@ -60,7 +61,7 @@ from yaams.watermark import get_watermark, update_watermark
   default="all",
   show_default=True,
   help=(
-    "all, imessage, signal, email, notes, tier2_ledger, github, "
+    "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
     "teams or teams_<profile>, calendar or calendar_<profile>"
   ),
 )
@@ -410,6 +411,20 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       vault_path=Path(cfg["vault_path"]),
       skip_dirs=skip_dirs,
     )
+  if source == "folders":
+    paths = cfg.get("paths") or []
+    if not paths:
+      raise ValueError(
+        "folders source requires at least one path under ingest.folders.paths"
+      )
+    kwargs: dict = {"folder_paths": [Path(p) for p in paths]}
+    extensions = cfg.get("extensions")
+    if extensions:
+      kwargs["extensions"] = tuple(extensions)
+    skip_dirs = cfg.get("skip_dirs")
+    if skip_dirs:
+      kwargs["skip_dirs"] = set(skip_dirs)
+    return FolderAdapter(**kwargs)
   if source == "tier2_ledger":
     notes_path = cfg.get("notes_path")
     if not notes_path:
@@ -551,7 +566,10 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
   cal_sources = [f"calendar_{p}" for p in cal_profiles]
   if source == "all":
-    return ["imessage", "signal", "email", "notes", "tier2_ledger", "github", *teams_sources, *cal_sources]
+    return [
+      "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
+      "github", *teams_sources, *cal_sources,
+    ]
   if source == "teams":
     return teams_sources
   if source == "calendar":
@@ -591,6 +609,9 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source == "notes":
     path = source_cfg.get("vault_path")
     return [f"vault: {Path(path).expanduser()}" if path else "vault: n/a"]
+  if source == "folders":
+    paths = source_cfg.get("paths") or []
+    return [f"folder: {Path(p).expanduser()}" for p in paths] or ["folders: n/a"]
   if source == "tier2_ledger":
     path = source_cfg.get("notes_path")
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]

@@ -25,6 +25,20 @@ ingest:
     user_addresses:
       - you@example.com
 
+  # Generic recursive folder ingestion. Reads .txt and .md natively;
+  # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
+  # Files of unsupported types (or types with the dep missing) are skipped.
+  # Paths can be added/removed from the `yaams sources` TUI.
+  folders:
+    enabled: false
+    paths: []
+      # - ~/Documents/notes
+      # - ~/work/specs
+    # Optional. Defaults to .txt, .md, .markdown, .pdf, .docx
+    # extensions: [.txt, .md, .pdf]
+    # Optional. Directory names to skip anywhere in the tree.
+    # skip_dirs: [.git, .obsidian, node_modules]
+
   teams:
     enabled: false
     # owa-piggy profile names (configure with `owa-piggy setup --profile <name>`)

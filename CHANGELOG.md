@@ -10,6 +10,22 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-12
+
+### Added
+
+- New `folders` ingest adapter for generic recursive folder ingestion.
+  Reads `.txt` and `.md` natively; `.pdf` requires `pypdf`, `.docx`
+  requires `python-docx`. Unsupported types are skipped. Configurable
+  `extensions` and `skip_dirs`. Wired through `yaams ingest --source folders`
+  and included in `--source all`.
+- `yaams sources` TUI now manages path-list sources inline: press `a` to
+  add a path and `d` to remove one for `folders` and `email`. The
+  `folders` row is always shown, so the first path can be added before
+  any `ingest.folders` block exists in config; the block is created on
+  first add.
+- `config.yaml.example` documents the new `ingest.folders` block.
+
 ## [0.1.3] - 2026-05-12
 
 ### Fixed

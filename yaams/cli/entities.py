@@ -1,14 +1,32 @@
 from __future__ import annotations
 
+import sys
+import time
+
 import click
 
 from yaams.config import get_db_path, load_config
+from yaams.conventions import (
+  EXIT_USER_ERROR,
+  action_envelope,
+  data_error,
+  emit_action,
+  emit_data_error,
+)
 from yaams.db import open_db
 from yaams.schema import init_schema
 from yaams.store import backfill_entity_sources, seed_entities
 
 from yaams.cli._root import cli
 from yaams.cli._shared import _embedding_dim, config_option
+
+
+def _reject_interactive_json(command: str, alt_hint: str) -> None:
+  click.echo(
+    f"{command} is an interactive command; --json is rejected. {alt_hint}",
+    err=True,
+  )
+  sys.exit(EXIT_USER_ERROR)
 
 
 def _save_entities(config_path: str | None, entities_cfg: dict) -> None:
@@ -32,15 +50,31 @@ def entities_group() -> None:
 
 @entities_group.command("list")
 @config_option
-def entities_list(config_path: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Raw entities document on stdout.")
+def entities_list(config_path: str, as_json: bool) -> None:
   """Show all dictionary entities with item hit counts."""
   cfg = load_config(config_path)
   dictionary = (cfg.get("entities") or {}).get("dictionary") or []
   if not dictionary:
+    if as_json:
+      import json as _json
+      # Data-class success: no top-level `ok`.
+      click.echo(_json.dumps({"entities": []}, ensure_ascii=False))
+      return
     click.echo("No entities in dictionary. Add some with: entities add <name>")
     return
   db_path = get_db_path(cfg)
-  conn = open_db(db_path, readonly=True)
+  try:
+    conn = open_db(db_path, readonly=True)
+  except Exception as exc:
+    if as_json:
+      emit_data_error(data_error(
+        command="entities list", code="db_open_failed", message=str(exc),
+        hint="Run: yaams init-db",
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
+  out: list[dict] = []
   try:
     for entry in dictionary:
       canonical = entry["canonical"]
@@ -53,23 +87,50 @@ def entities_list(config_path: str) -> None:
         (canonical,),
       ).fetchone()
       count = row[0] if row else 0
-      alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
-      click.echo(f"  {canonical:<22} {etype:<12} {count:>5} items{alias_str}")
+      if as_json:
+        out.append({
+          "canonical": canonical,
+          "type": etype,
+          "aliases": list(aliases),
+          "items": int(count),
+        })
+      else:
+        alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
+        click.echo(f"  {canonical:<22} {etype:<12} {count:>5} items{alias_str}")
   finally:
     conn.close()
+  if as_json:
+    import json as _json
+    click.echo(_json.dumps({"entities": out}, ensure_ascii=False))
 
 
 @entities_group.command("add")
 @click.argument("canonical")
 @click.option("--type", "etype", default="person", show_default=True)
 @click.option("--alias", "aliases", multiple=True, help="Repeatable: --alias EP --alias Ex.Person")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 @config_option
-def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_path: str) -> None:
+def entities_add(
+  canonical: str,
+  etype: str,
+  aliases: tuple[str, ...],
+  as_json: bool,
+  config_path: str,
+) -> None:
   """Add an entity to the dictionary and seed the DB immediately."""
+  t0 = time.monotonic()
   cfg = load_config(config_path)
   entities_cfg = dict(cfg.get("entities") or {})
   dictionary = list(entities_cfg.get("dictionary") or [])
   if any(e["canonical"].lower() == canonical.lower() for e in dictionary):
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities add", ok=True,
+        stats={"canonical": canonical, "added": False, "reason": "already_present"},
+        duration_ms=duration_ms,
+      ))
+      return
     click.echo(f"'{canonical}' is already in the dictionary.")
     return
   entry: dict = {"canonical": canonical, "type": etype}
@@ -87,24 +148,51 @@ def entities_add(canonical: str, etype: str, aliases: tuple[str, ...], config_pa
     backfill_entity_sources(conn, dictionary)
   finally:
     conn.close()
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="entities add", ok=True,
+      stats={"canonical": canonical, "type": etype, "aliases": list(aliases), "added": True},
+      duration_ms=duration_ms,
+    ))
+    return
   click.echo(f"Added '{canonical}' ({etype}).")
 
 
 @entities_group.command("remove")
 @click.argument("canonical")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 @config_option
-def entities_remove(canonical: str, config_path: str) -> None:
+def entities_remove(canonical: str, as_json: bool, config_path: str) -> None:
   """Remove an entity from the dictionary (existing DB links are kept)."""
+  t0 = time.monotonic()
   cfg = load_config(config_path)
   entities_cfg = dict(cfg.get("entities") or {})
   dictionary = list(entities_cfg.get("dictionary") or [])
   before = len(dictionary)
   dictionary = [e for e in dictionary if e["canonical"].lower() != canonical.lower()]
   if len(dictionary) == before:
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities remove", ok=True,
+        stats={"canonical": canonical, "removed": False, "reason": "not_found"},
+        duration_ms=duration_ms,
+      ))
+      return
     click.echo(f"'{canonical}' not found in dictionary.")
     return
   entities_cfg["dictionary"] = dictionary
   _save_entities(config_path, entities_cfg)
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="entities remove", ok=True,
+      stats={"canonical": canonical, "removed": True, "remaining": len(dictionary)},
+      warnings=["Existing DB links to this entity are kept; entity-source rows survive."],
+      duration_ms=duration_ms,
+    ))
+    return
   click.echo(f"Removed '{canonical}'. Existing item links in the DB are untouched.")
 
 
@@ -112,8 +200,19 @@ def entities_remove(canonical: str, config_path: str) -> None:
 @config_option
 @click.option("--min-count", default=5, show_default=True, help="Minimum appearances to surface a candidate")
 @click.option("--limit", default=50, show_default=True, help="Max candidates to review")
-def entities_discover(config_path: str, min_count: int, limit: int) -> None:
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="(Rejected - discover is interactive; use 'entities list --json' for current entities.)",
+)
+def entities_discover(config_path: str, min_count: int, limit: int, as_json: bool) -> None:
   """Scan NER-tagged items and suggest new dictionary entries interactively."""
+  if as_json:
+    _reject_interactive_json(
+      "entities discover",
+      "Use `yaams entities list --json` for current dictionary state.",
+    )
   cfg = load_config(config_path)
   known = {e["canonical"].lower() for e in (cfg.get("entities") or {}).get("dictionary") or []}
 
@@ -251,8 +350,19 @@ def entities_discover(config_path: str, min_count: int, limit: int) -> None:
 
 @entities_group.command("denied")
 @config_option
-def entities_denied(config_path: str) -> None:
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="(Rejected - denied is interactive; use 'entities list --json' for current entities.)",
+)
+def entities_denied(config_path: str, as_json: bool) -> None:
   """List previously denied NER candidates and optionally restore them."""
+  if as_json:
+    _reject_interactive_json(
+      "entities denied",
+      "Use `yaams entities list --json` for current dictionary state.",
+    )
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
   conn = open_db(db_path)

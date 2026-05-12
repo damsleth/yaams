@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import sys
+import time
 from pathlib import Path
 
 import click
 
 from yaams.config import expand_path, get_db_path, load_config
+from yaams.conventions import (
+  EXIT_USER_ERROR,
+  action_envelope,
+  data_error,
+  emit_action,
+  emit_data_error,
+)
 from yaams.db import open_db
 from yaams.schema import init_schema
 
@@ -23,17 +32,30 @@ def promote_group() -> None:
 @click.option("--days", default=None, type=int, help="Override window_days from config")
 @click.option("--min-cluster", default=None, type=int, help="Override min_cluster_items")
 @click.option("--entity", default=None, help="Generate for a single entity name only")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 def promote_generate(
   config_path: str,
   days: int | None,
   min_cluster: int | None,
   entity: str | None,
+  as_json: bool,
 ) -> None:
   from yaams.promote.candidates import PromoteConfig, generate_candidates, store_candidates
   from yaams.synthesize import llm_adapter_from_config
 
-  cfg = load_config(config_path)
-  db_path = get_db_path(cfg)
+  t0 = time.monotonic()
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="promote generate", ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
   promote_cfg_raw = cfg.get("promote", {}) or {}
   raw_index_path = (
     cfg.get("ingest", {}).get("tier2_ledger", {}).get("index_path")
@@ -50,12 +72,28 @@ def promote_generate(
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     adapter = llm_adapter_from_config(cfg)
-    click.echo(f"Generating candidates (window={pcfg.window_days}d, min_cluster={pcfg.min_cluster_items}) ...")
-    candidates = generate_candidates(conn, adapter, pcfg, entity_filter=entity, on_progress=click.echo)
+    if not as_json:
+      click.echo(f"Generating candidates (window={pcfg.window_days}d, min_cluster={pcfg.min_cluster_items}) ...")
+    progress_sink = (lambda *_args, **_kwargs: None) if as_json else click.echo
+    candidates = generate_candidates(conn, adapter, pcfg, entity_filter=entity, on_progress=progress_sink)
     stored = store_candidates(conn, candidates)
-    click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored.")
   finally:
     conn.close()
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="promote generate", ok=True,
+      stats={
+        "candidates_generated": len(candidates),
+        "candidates_stored": stored,
+        "window_days": pcfg.window_days,
+        "min_cluster_items": pcfg.min_cluster_items,
+        "entity_filter": entity,
+      },
+      duration_ms=duration_ms,
+    ))
+    return
+  click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored.")
 
 
 @promote_group.command("list")
@@ -66,16 +104,36 @@ def promote_generate(
   type=click.Choice(["pending", "accepted", "rejected", "all"]),
   show_default=True,
 )
-def promote_list(config_path: str, status: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Raw candidates document on stdout.")
+def promote_list(config_path: str, status: str, as_json: bool) -> None:
   from yaams.promote.candidates import fetch_pending
 
-  cfg = load_config(config_path)
-  db_path = get_db_path(cfg)
-  conn = open_db(db_path, readonly=True)
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+    conn = open_db(db_path, readonly=True)
+  except Exception as exc:
+    if as_json:
+      emit_data_error(data_error(
+        command="promote list", code="db_open_failed", message=str(exc),
+        hint="Run: yaams init-db",
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
   try:
     rows = fetch_pending(conn, status)
   finally:
     conn.close()
+
+  if as_json:
+    import json as _json
+    # Reserved-key contract: no top-level `ok` on data success.
+    click.echo(_json.dumps(
+      {"status_filter": status, "candidates": [dict(r) for r in rows]},
+      ensure_ascii=False,
+      default=str,
+    ))
+    return
 
   if not rows:
     click.echo(f"No candidates with status={status!r}.")

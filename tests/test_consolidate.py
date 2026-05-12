@@ -6,7 +6,6 @@ from yaams.consolidate import (
   CONSOLIDATOR_VERSION,
   SessionConfig,
   build_consolidations,
-  build_summary,
   iter_sessions,
 )
 from yaams.ingest.base import Item, hash_id

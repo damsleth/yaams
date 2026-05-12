@@ -9,37 +9,6 @@ from pathlib import Path
 
 import click
 
-from yaams.config import get_db_path, load_config
-from yaams.conventions import (
-  EXIT_OK,
-  EXIT_PARTIAL,
-  EXIT_USER_ERROR,
-  action_envelope,
-  emit_action,
-  stream_progress,
-  stream_result,
-)
-from yaams.db import open_db
-from yaams.logsetup import setup_logging
-from yaams.ingest import Adapter, Item
-from yaams.ingest.calendar import CalendarAdapter
-from yaams.ingest.email_mbox import EmailAdapter
-from yaams.ingest.github import GitHubAdapter
-from yaams.ingest.imessage import IMessageAdapter
-from yaams.ingest.ledger_notes import LedgerNotesAdapter
-from yaams.ingest.obsidian import ObsidianAdapter
-from yaams.ingest.signal import SignalAdapter
-from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
-from yaams.schema import init_schema
-from yaams.store import (
-  backfill_entity_sources,
-  database_stats,
-  seed_entities,
-  store_items,
-)
-from yaams.time import parse_iso_datetime
-from yaams.watermark import get_watermark, update_watermark
-
 from yaams.cli._root import cli
 from yaams.cli._shared import (
   ProcessingContext,
@@ -52,6 +21,35 @@ from yaams.cli._shared import (
   _size_mb,
   config_option,
 )
+from yaams.config import get_db_path, load_config
+from yaams.conventions import (
+  EXIT_OK,
+  EXIT_PARTIAL,
+  EXIT_USER_ERROR,
+  action_envelope,
+  stream_progress,
+  stream_result,
+)
+from yaams.db import open_db
+from yaams.ingest import Adapter, Item
+from yaams.ingest.calendar import CalendarAdapter
+from yaams.ingest.email_mbox import EmailAdapter
+from yaams.ingest.github import GitHubAdapter
+from yaams.ingest.imessage import IMessageAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.obsidian import ObsidianAdapter
+from yaams.ingest.signal import SignalAdapter
+from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
+from yaams.logsetup import setup_logging
+from yaams.schema import init_schema
+from yaams.store import (
+  backfill_entity_sources,
+  database_stats,
+  seed_entities,
+  store_items,
+)
+from yaams.time import parse_iso_datetime
+from yaams.watermark import get_watermark, update_watermark
 
 
 @cli.command("ingest")

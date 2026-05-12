@@ -12,7 +12,6 @@ from click.testing import CliRunner
 
 from yaams.cli import cli
 
-
 _MIN = """
 db_path: {db_path}
 ingest:

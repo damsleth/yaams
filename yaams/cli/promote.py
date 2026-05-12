@@ -6,6 +6,8 @@ from pathlib import Path
 
 import click
 
+from yaams.cli._root import cli
+from yaams.cli._shared import _embedding_dim, config_option
 from yaams.config import expand_path, get_db_path, load_config
 from yaams.conventions import (
   EXIT_USER_ERROR,
@@ -16,9 +18,6 @@ from yaams.conventions import (
 )
 from yaams.db import open_db
 from yaams.schema import init_schema
-
-from yaams.cli._root import cli
-from yaams.cli._shared import _embedding_dim, config_option
 
 
 @cli.group("promote")
@@ -167,7 +166,9 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
     sys.exit(1)
 
   from yaams.promote.candidates import (
-    fetch_pending, mark_items_promoted, update_status,
+    fetch_pending,
+    mark_items_promoted,
+    update_status,
   )
   from yaams.promote.review import format_note, render_candidate, write_to_inbox
 

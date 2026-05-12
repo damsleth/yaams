@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 import email
-from email import policy
-from email.message import EmailMessage, Message
 import email.utils
-from html.parser import HTMLParser
-from pathlib import Path
 import hashlib
 import mailbox
 import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email import policy
+from email.message import EmailMessage, Message
+from html.parser import HTMLParser
+from pathlib import Path
 from typing import Callable, Iterator
 
 from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
-
 
 MAX_EMAIL_CHARS = 20_000
 

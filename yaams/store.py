@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from array import array
-from dataclasses import dataclass
 import json
 import sqlite3
+from array import array
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from yaams.consolidate.session import Consolidation

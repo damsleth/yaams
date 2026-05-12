@@ -9,7 +9,6 @@ from typing import Iterable, Iterator, Sequence
 from yaams.ingest.base import Item
 from yaams.time import to_local
 
-
 CONSOLIDATOR_VERSION = "session-1"
 DEFAULT_GAP_MINUTES = 240
 DEFAULT_MAX_SESSION_ITEMS = 50

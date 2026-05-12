@@ -21,7 +21,6 @@ from typing import Any
 from yaams.synthesize.llm import LLMAdapter
 from yaams.time import ensure_utc, parse_iso_datetime, utc_now
 
-
 SHAPES = (
   "factual",
   "first_occurrence",

@@ -30,7 +30,7 @@ class Embedder:
       kwargs["device"] = device
     try:
       self.model = SentenceTransformer(model, **kwargs)
-    except OSError as exc:
+    except OSError:
       if not offline or not _confirm_download(model):
         raise
       os.environ["HF_HUB_OFFLINE"] = "0"

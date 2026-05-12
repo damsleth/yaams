@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import sqlite3
+from datetime import UTC, datetime
 
 import yaams.ingest.imessage as imessage
 from yaams.ingest.imessage import (

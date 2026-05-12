@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from yaams.synthesize.llm import LLMAdapter
 
-
 GENERATE_PROMPT = """\
 You are drafting an atomic note for a personal knowledge base.
 
@@ -83,7 +82,7 @@ def generate_candidates(
       on_progress(f"[{i}/{total}] {entity_name} ...")
     if _is_covered(entity_name, existing_tier2, index_texts):
       if on_progress:
-        on_progress(f"  skipped (already in Tier 2)")
+        on_progress("  skipped (already in Tier 2)")
       continue
     cluster = _fetch_cluster(conn, entity_id, config, window_days)
     if len(cluster) < config.min_cluster_items:
@@ -96,7 +95,7 @@ def generate_candidates(
       if on_progress:
         on_progress(f"  drafted: {candidate.draft_title}")
     elif on_progress:
-      on_progress(f"  LLM draft failed")
+      on_progress("  LLM draft failed")
 
   return candidates
 

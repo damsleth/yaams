@@ -5,7 +5,6 @@ from typing import Iterable
 
 from yaams.store import EntityTag
 
-
 LABEL_TYPES = {
   "PERSON": "person",
   "ORG": "org",

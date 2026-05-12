@@ -192,9 +192,10 @@ def test_parse_structured_answer_gaps_says_none():
 
 
 def test_synthesize_answer_populates_structured_fields():
-  from yaams.synthesize.llm import LLMResponse
-  from yaams.retrieve import HybridResult, ScoreComponents
   from datetime import UTC, datetime
+
+  from yaams.retrieve import HybridResult, ScoreComponents
+  from yaams.synthesize.llm import LLMResponse
 
   result = HybridResult(
     id="ra",

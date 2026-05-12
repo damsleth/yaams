@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 
-
 SCHEMA_VERSION = 4
 DEFAULT_EMBEDDING_DIM = 1024
 

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Iterator
 
 from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
-
 
 APPLE_EPOCH_UNIX_SECONDS = 978_307_200
 

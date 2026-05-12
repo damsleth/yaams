@@ -6,11 +6,11 @@ import json
 
 from yaams import __version__
 from yaams.conventions import (
-  DoctorFinding,
-  DoctorPayload,
   EXIT_OK,
   EXIT_PARTIAL,
   EXIT_USER_ERROR,
+  DoctorFinding,
+  DoctorPayload,
   action_envelope,
   data_error,
   emit_action,

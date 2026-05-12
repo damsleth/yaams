@@ -10,7 +10,6 @@ from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
-
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _EMBED_RE = re.compile(r"!\[\[([^\]]*)\]\]")
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")

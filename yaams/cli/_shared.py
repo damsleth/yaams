@@ -10,7 +10,6 @@ from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Item
 from yaams.schema import DEFAULT_EMBEDDING_DIM
 
-
 _CONFIG_HELP = (
   "Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, "
   "~/.config/yaams/config.yaml, or repo root if omitted."

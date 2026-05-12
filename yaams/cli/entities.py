@@ -5,6 +5,8 @@ import time
 
 import click
 
+from yaams.cli._root import cli
+from yaams.cli._shared import _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
 from yaams.conventions import (
   EXIT_USER_ERROR,
@@ -17,9 +19,6 @@ from yaams.db import open_db
 from yaams.schema import init_schema
 from yaams.store import backfill_entity_sources, seed_entities
 
-from yaams.cli._root import cli
-from yaams.cli._shared import _embedding_dim, config_option
-
 
 def _reject_interactive_json(command: str, alt_hint: str) -> None:
   click.echo(
@@ -31,7 +30,9 @@ def _reject_interactive_json(command: str, alt_hint: str) -> None:
 
 def _save_entities(config_path: str | None, entities_cfg: dict) -> None:
   import re
+
   import yaml
+
   from yaams.config import resolve_config_path
   p = resolve_config_path(config_path)
   text = p.read_text(encoding="utf-8")

@@ -13,7 +13,6 @@ from click.testing import CliRunner
 from yaams import __version__
 from yaams.cli import cli
 
-
 _MINIMAL_CONFIG = """
 db_path: {db_path}
 

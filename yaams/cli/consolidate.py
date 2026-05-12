@@ -5,6 +5,8 @@ import time
 
 import click
 
+from yaams.cli._root import cli
+from yaams.cli._shared import ProcessingContext, _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
 from yaams.consolidate import Consolidation, SessionConfig, build_consolidations
 from yaams.conventions import (
@@ -20,9 +22,6 @@ from yaams.store import (
   fetch_items_for_consolidation,
   store_consolidations,
 )
-
-from yaams.cli._root import cli
-from yaams.cli._shared import ProcessingContext, _embedding_dim, config_option
 
 
 @cli.command("consolidate")

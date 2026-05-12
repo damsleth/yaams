@@ -1,6 +1,6 @@
 [project]
 name = "yaams"
-version = "0.1.1"
+version = "0.1.2"
 description = "Yet Another Agent Memory System"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,11 +16,57 @@ dependencies = [
   "tqdm>=4.66",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "pyright>=1.1.380",
+]
+
 [project.scripts]
 yaams = "yaams.cli:cli"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+indent-width = 2
+extend-exclude = [
+  ".venv",
+  "yaams.egg-info",
+  ".plans",
+  ".tmp",
+]
+
+[tool.ruff.lint]
+# Initial rule set. Broaden to B/UP/SIM after a one-time auto-fix sweep.
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes (undefined names, unused imports)
+  "I",   # isort (import ordering)
+  "W",   # pycodestyle warnings
+]
+ignore = [
+  "E501",  # long lines, project uses soft limit
+  "E741",  # ambiguous variable names (existing usage)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+include = ["yaams", "tests"]
+exclude = [".venv", "yaams.egg-info", ".plans", ".tmp"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportFunctionMemberAccess = "none"
+reportOperatorIssue = "warning"
+reportArgumentType = "warning"
+reportGeneralTypeIssues = "warning"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]

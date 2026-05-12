@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -12,12 +13,13 @@ from typing import Iterator
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
-
 logger = logging.getLogger(__name__)
 
 
 MAX_EVENT_PAGES = 3
 PAGE_SIZE = 100
+REQUEST_TIMEOUT = 30
+AUTH_TIMEOUT = 15
 
 
 class GitHubAPIError(RuntimeError):
@@ -33,21 +35,45 @@ class GitHubAPIError(RuntimeError):
 class GitHubAdapter:
   username: str
   _token: str = field(default="", init=False, repr=False)
+  _last_rate: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
+    logger.info("github: starting extract user=%s since=%s", self.username, since.isoformat())
     self._token = _get_token()
     cutoff = ensure_utc(since)
+    yielded = 0
+    seen = 0
     for event in self._iter_events(cutoff):
+      seen += 1
       item = _event_item(event, self.username)
-      if item is not None:
-        yield item
+      if item is None:
+        continue
+      yielded += 1
+      yield item
+    logger.info(
+      "github: extract complete user=%s seen=%d yielded=%d cutoff=%s",
+      self.username, seen, yielded, cutoff.isoformat(),
+    )
 
   def _iter_events(self, since: datetime) -> Iterator[dict]:
     url = f"https://api.github.com/users/{self.username}/events?per_page={PAGE_SIZE}"
     pages = 0
+    total_events = 0
+    skipped_old = 0
     while url and pages < MAX_EVENT_PAGES:
+      logger.debug("github: GET page %d url=%s", pages + 1, url)
+      t0 = time.perf_counter()
       data, next_url = self._get(url)
+      elapsed_ms = (time.perf_counter() - t0) * 1000
       pages += 1
+      page_count = len(data) if isinstance(data, list) else 0
+      total_events += page_count
+      logger.info(
+        "github: page %d/%d in %.0fms events=%d rate_remaining=%s reset=%s next=%s",
+        pages, MAX_EVENT_PAGES, elapsed_ms, page_count,
+        self._last_rate.get("remaining", "?"), self._last_rate.get("reset", "?"),
+        "yes" if next_url else "no",
+      )
       if not isinstance(data, list) or not data:
         return
       stop = False
@@ -56,12 +82,18 @@ class GitHubAdapter:
         if created is None:
           continue
         if created < since:
+          skipped_old += 1
           stop = True
           break
         yield event
       if stop:
+        logger.debug("github: page %d hit since cutoff (%s); stopping pagination", pages, since.isoformat())
         return
       url = next_url
+    logger.info(
+      "github: pagination ended pages=%d total_events_scanned=%d skipped_older_than_since=%d",
+      pages, total_events, skipped_old,
+    )
 
   def _get(self, url: str) -> tuple[list[dict], str | None]:
     req = urllib.request.Request(
@@ -73,10 +105,17 @@ class GitHubAdapter:
       },
     )
     try:
-      with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+      with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+        body = resp.read()
+        data = json.loads(body)
         link = resp.headers.get("Link", "")
         next_url = _parse_next_link(link)
+        self._last_rate = {
+          "remaining": resp.headers.get("X-RateLimit-Remaining", ""),
+          "limit": resp.headers.get("X-RateLimit-Limit", ""),
+          "reset": resp.headers.get("X-RateLimit-Reset", ""),
+        }
+        logger.debug("github: response %d bytes status=%s", len(body), resp.status)
         return data, next_url
     except urllib.error.HTTPError as exc:
       if exc.code == 404:
@@ -87,13 +126,39 @@ class GitHubAdapter:
         body = exc.read().decode("utf-8", errors="replace")[:200]
       except Exception:
         pass
+      logger.error("github: HTTP %d on %s body=%r", exc.code, url, body)
       raise GitHubAPIError(exc.code, url, body) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+      logger.error("github: network error on %s: %s", url, exc)
+      raise
 
 
 def _get_token() -> str:
-  result = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+  logger.debug("github: invoking `gh auth token`")
+  t0 = time.perf_counter()
+  try:
+    result = subprocess.run(
+      ["gh", "auth", "token"],
+      capture_output=True,
+      text=True,
+      timeout=AUTH_TIMEOUT,
+    )
+  except subprocess.TimeoutExpired as exc:
+    logger.error("github: `gh auth token` timed out after %ds", AUTH_TIMEOUT)
+    raise RuntimeError(
+      f"`gh auth token` timed out after {AUTH_TIMEOUT}s - run 'gh auth login' interactively"
+    ) from exc
+  except FileNotFoundError as exc:
+    logger.error("github: gh CLI not found on PATH")
+    raise RuntimeError("`gh` CLI not found - install it or remove github from sources") from exc
+  elapsed_ms = (time.perf_counter() - t0) * 1000
   if result.returncode != 0 or not result.stdout.strip():
+    logger.error(
+      "github: `gh auth token` failed in %.0fms rc=%d stderr=%r",
+      elapsed_ms, result.returncode, result.stderr[:200],
+    )
     raise RuntimeError("GitHub auth failed - run 'gh auth login' first")
+  logger.debug("github: token retrieved in %.0fms", elapsed_ms)
   return result.stdout.strip()
 
 

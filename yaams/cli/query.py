@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import click
 
+from yaams.cli._root import cli
+from yaams.cli._shared import _embed_config, _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
 from yaams.db import open_db
 from yaams.enrich import Embedder
@@ -9,17 +11,17 @@ from yaams.retrieve import (
   HybridQueryConfig,
   filter_results_by_entities,
   parse_query,
+)
+from yaams.retrieve import (
   query as run_query,
+)
+from yaams.retrieve import (
   route as route_parsed,
 )
 from yaams.schema import init_schema
 from yaams.signals import log_query, new_query_id
 from yaams.synthesize import llm_adapter_from_config, synthesize_answer
 from yaams.time import format_local, parse_iso_datetime, to_local
-
-from yaams.cli._root import cli
-from yaams.cli._shared import _embed_config, _embedding_dim, config_option
-
 
 _LEDGER_SOURCE_ID = "tier2_ledger"
 

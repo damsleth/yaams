@@ -5,6 +5,8 @@ import time
 
 import click
 
+from yaams.cli._root import cli
+from yaams.cli._shared import _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
 from yaams.conventions import (
   EXIT_USER_ERROR,
@@ -16,9 +18,6 @@ from yaams.conventions import (
 from yaams.db import open_db
 from yaams.schema import init_schema
 from yaams.signals import log_feedback, recent_queries
-
-from yaams.cli._root import cli
-from yaams.cli._shared import _embedding_dim, config_option
 
 
 @cli.command("feedback")

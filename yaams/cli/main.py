@@ -6,6 +6,8 @@ import time
 import click
 
 from yaams import __version__
+from yaams.cli._root import cli
+from yaams.cli._shared import _embedding_dim, _entity_dictionary, config_option
 from yaams.config import get_db_path, load_config
 from yaams.conventions import (
   EXIT_USER_ERROR,
@@ -17,9 +19,6 @@ from yaams.conventions import (
 from yaams.db import open_db
 from yaams.schema import init_schema
 from yaams.store import backfill_entity_sources, seed_entities
-
-from yaams.cli._root import cli
-from yaams.cli._shared import _embedding_dim, _entity_dictionary, config_option
 
 
 @cli.command("version")

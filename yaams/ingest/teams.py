@@ -6,13 +6,12 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Callable, Iterator
+from datetime import datetime
+from typing import Iterator
 
 from yaams.ingest.base import Item, hash_id
 from yaams.ingest.email_mbox import strip_html
 from yaams.time import ensure_utc
-
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_REFRESH_MARGIN_SEC = 300

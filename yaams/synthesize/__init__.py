@@ -1,3 +1,10 @@
+from yaams.synthesize.answer import (
+  AnswerResult,
+  build_synthesis_prompt,
+  parse_citation_ids,
+  parse_structured_answer,
+  synthesize_answer,
+)
 from yaams.synthesize.llm import (
   DummyAdapter,
   LLMAdapter,
@@ -5,13 +12,6 @@ from yaams.synthesize.llm import (
   OllamaAdapter,
   SubprocessAdapter,
   llm_adapter_from_config,
-)
-from yaams.synthesize.answer import (
-  AnswerResult,
-  build_synthesis_prompt,
-  parse_citation_ids,
-  parse_structured_answer,
-  synthesize_answer,
 )
 
 __all__ = [

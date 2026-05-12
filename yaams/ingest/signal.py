@@ -31,7 +31,6 @@ from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
-
 CHROMIUM_SAFE_STORAGE_SALT = b"saltysalt"
 CHROMIUM_SAFE_STORAGE_ITERATIONS = 1003
 CHROMIUM_SAFE_STORAGE_KEY_LEN = 16

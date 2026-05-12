@@ -10,7 +10,6 @@ from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
-
 MIN_CONTENT_CHARS = 20
 
 

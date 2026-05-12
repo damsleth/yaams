@@ -24,7 +24,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-
 # Exit codes per CONVENTIONS.md
 EXIT_OK = 0
 EXIT_USER_ERROR = 1

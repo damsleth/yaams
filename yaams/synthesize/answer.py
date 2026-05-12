@@ -9,7 +9,6 @@ from typing import Sequence
 from yaams.retrieve import HybridResult
 from yaams.synthesize.llm import LLMAdapter, LLMResponse
 
-
 CITATION_RE = re.compile(r"\[(\d+)\]")
 _ANSWER_HEADER_RE = re.compile(r"(?im)^\s*ANSWER\s*:\s*")
 _CONFIDENCE_HEADER_RE = re.compile(r"(?im)^\s*CONFIDENCE\s*:\s*")

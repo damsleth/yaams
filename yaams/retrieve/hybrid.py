@@ -19,7 +19,6 @@ from typing import Sequence
 
 from yaams.time import ensure_utc
 
-
 DEFAULT_TOP_K = 20
 DEFAULT_PER_INDEX_K = 60
 RRF_K = 60

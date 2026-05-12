@@ -10,6 +10,31 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-12
+
+### Added
+
+- `yaams sources` interactive TUI to enable/disable ingest sources. Arrow
+  keys navigate, space toggles, enter applies. Stdlib-only (termios/tty);
+  rewrites only the `enabled:` lines in `config.yaml` so comments and
+  structure are preserved.
+- File-based logging via `yaams/logsetup.py`. Ingest now writes to
+  `<db_dir>/logs/yaams-YYYY-MM-DD.log`; `yaams ingest -v/--verbose` also
+  streams DEBUG to stderr.
+- GitHub adapter logs token-fetch timing, per-page request timing,
+  rate-limit headers, the effective `since` cutoff, and total
+  seen/yielded counts.
+- `[project.optional-dependencies].dev` with `pytest`, `ruff`, `pyright`,
+  plus `[tool.ruff]` and `[tool.pyright]` configuration in `pyproject.toml`.
+- GitHub Actions CI (`.github/workflows/ci.yml`): ruff lint + pytest on
+  Python 3.11/3.12, with a non-blocking pyright job.
+
+### Changed
+
+- GitHub adapter wraps `gh auth token` in a 15s timeout and surfaces a
+  clearer error if the binary is missing, so a stuck `gh` can no longer
+  hang ingest forever.
+
 ## [0.1.1] - 2026-05-11
 
 ### Added

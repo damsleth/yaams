@@ -13,7 +13,6 @@ copilot must be wireable as a backend. v1 ships:
 
 from __future__ import annotations
 
-import json
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol

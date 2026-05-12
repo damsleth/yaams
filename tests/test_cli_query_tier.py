@@ -18,7 +18,6 @@ from click.testing import CliRunner
 from yaams.cli import cli
 from yaams.cli.query import _LEDGER_SOURCE_ID, _resolve_source_filter
 
-
 _CONFIG = """
 db_path: {db_path}
 

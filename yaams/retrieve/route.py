@@ -13,7 +13,6 @@ from typing import Iterable
 from yaams.retrieve.hybrid import HybridQueryConfig
 from yaams.retrieve.parse import ParsedQuery
 
-
 SYNTHESIS_TOP_K = 12
 EVENT_TOP_K = 8
 TIER2_BOOST_PREFERRED = 1.6

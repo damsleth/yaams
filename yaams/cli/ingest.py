@@ -27,6 +27,7 @@ from yaams.conventions import (
   EXIT_PARTIAL,
   EXIT_USER_ERROR,
   action_envelope,
+  emit_action,
   stream_progress,
   stream_result,
 )
@@ -88,8 +89,19 @@ def ingest(
   as_json: bool,
   strict: bool,
 ) -> None:
-  cfg = load_config(config_path)
-  db_path = get_db_path(cfg)
+  total_start = time.perf_counter()
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="ingest", ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+        duration_ms=(time.perf_counter() - total_start) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
   log_file = setup_logging(db_path, verbose=verbose)
   if log_file and not as_json:
     click.echo(f"Logging to {log_file}", err=True)
@@ -100,7 +112,6 @@ def ingest(
   succeeded: list[str] = []
   failed_sources: list[str] = []
   run_id = uuid.uuid4().hex
-  total_start = time.perf_counter()
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
     seed_entities(conn, _entity_dictionary(cfg))

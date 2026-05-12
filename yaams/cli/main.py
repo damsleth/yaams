@@ -40,7 +40,17 @@ def setup_cmd(config_path: str, as_json: bool) -> None:
   import subprocess
 
   t0 = time.monotonic()
-  cfg = load_config(config_path)
+  try:
+    cfg = load_config(config_path)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="setup", ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
   ent_cfg = cfg.get("entities") or {}
   models = [m for m in (ent_cfg.get("spacy_model"), ent_cfg.get("spacy_model_nb")) if m]
 
@@ -191,8 +201,18 @@ def stats(config_path: str, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 def reset_db(config_path: str, yes: bool, as_json: bool) -> None:
   t0 = time.monotonic()
-  cfg = load_config(config_path)
-  db_path = get_db_path(cfg)
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="reset-db", ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
 
   if not yes:
     if as_json or not sys.stdin.isatty():

@@ -1,7 +1,6 @@
 # YAAMS
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.11+-blue)
 
 **Yet Another Agent Memory System.** A local-first, high-recall memory store
@@ -114,7 +113,7 @@ all-in-one bootstrap script (`scripts/install_phase_a.sh`) - it creates
 Verify the setup:
 
 ```bash
-yaams --version          # 0.1.0
+yaams --version          # 0.1.1
 yaams stats              # zero items - that is expected before first ingest
 yaams ingest --dry-run   # see what each adapter would pick up
 ```

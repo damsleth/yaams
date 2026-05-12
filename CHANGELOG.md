@@ -10,6 +10,19 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-12
+
+### Fixed
+
+- `setup`, `reset-db`, and `ingest` now wrap `load_config()` in a
+  try/except that emits the standard action envelope (with
+  `error.code=config_unreadable`) and exits `EXIT_USER_ERROR` when the
+  config is missing or invalid, instead of leaking a raw Python
+  traceback on stderr. Restores `--json` parseability for these
+  commands.
+- `yaams/cli/ingest.py` was missing `emit_action` in its conventions
+  import; the error branch raised `NameError`. Import fixed.
+
 ## [0.1.2] - 2026-05-12
 
 ### Added

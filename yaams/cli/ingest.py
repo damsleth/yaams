@@ -1,0 +1,499 @@
+from __future__ import annotations
+
+import time
+import uuid
+from collections import defaultdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+import click
+
+from yaams.config import get_db_path, load_config
+from yaams.db import open_db
+from yaams.ingest import Adapter, Item
+from yaams.ingest.calendar import CalendarAdapter
+from yaams.ingest.email_mbox import EmailAdapter
+from yaams.ingest.github import GitHubAdapter
+from yaams.ingest.imessage import IMessageAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.obsidian import ObsidianAdapter
+from yaams.ingest.signal import SignalAdapter
+from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
+from yaams.schema import init_schema
+from yaams.store import (
+  backfill_entity_sources,
+  database_stats,
+  seed_entities,
+  store_items,
+)
+from yaams.time import parse_iso_datetime
+from yaams.watermark import get_watermark, update_watermark
+
+from yaams.cli._root import cli
+from yaams.cli._shared import (
+  ProcessingContext,
+  _date,
+  _embedding_dim,
+  _entity_dictionary,
+  _format_duration,
+  _format_throughput,
+  _progress,
+  _size_mb,
+  config_option,
+)
+
+
+@cli.command("ingest")
+@config_option
+@click.option(
+  "--source",
+  default="all",
+  show_default=True,
+  help=(
+    "all, imessage, signal, email, notes, tier2_ledger, github, "
+    "teams or teams_<profile>, calendar or calendar_<profile>"
+  ),
+)
+@click.option("--dry-run", is_flag=True)
+@click.option("--batch-size", default=64, show_default=True)
+@click.option("--require-vec", is_flag=True)
+def ingest(
+  config_path: str,
+  source: str,
+  dry_run: bool,
+  batch_size: int,
+  require_vec: bool,
+) -> None:
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, require_vec=require_vec)
+  run_stats: dict[str, dict[str, object]] = defaultdict(
+    lambda: {"seen": 0, "new": 0, "skipped": 0}
+  )
+  run_id = uuid.uuid4().hex
+  total_start = time.perf_counter()
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    seed_entities(conn, _entity_dictionary(cfg))
+    backfill_entity_sources(conn, _entity_dictionary(cfg))
+    processors = None if dry_run else ProcessingContext(cfg)
+    for src in _sources_to_run(source, cfg):
+      if not _source_enabled(cfg, src):
+        continue
+      src_started_at = datetime.now(UTC)
+      src_perf_start = time.perf_counter()
+      try:
+        adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
+        source_stats = ingest_source(
+          conn,
+          src,
+          adapter,
+          cfg,
+          batch_size=batch_size,
+          dry_run=dry_run,
+          processors=processors,
+        )
+      except Exception as exc:
+        duration_ms = (time.perf_counter() - src_perf_start) * 1000
+        error_text = f"{type(exc).__name__}: {exc}"
+        click.echo(f"  {src}: failed - {error_text}", err=True)
+        run_stats[src]["failed"] = error_text
+        run_stats[src]["paths"] = _source_paths(src, cfg)
+        run_stats[src]["duration_ms"] = duration_ms
+        if not dry_run:
+          _record_ingest_run(
+            conn,
+            run_id=run_id,
+            source=src,
+            started_at=src_started_at,
+            ended_at=datetime.now(UTC),
+            duration_ms=duration_ms,
+            seen=0,
+            new=0,
+            skipped=0,
+            status="failed",
+            error=error_text,
+          )
+          conn.commit()
+        continue
+      run_stats[src]["seen"] += source_stats["seen"]
+      run_stats[src]["new"] += source_stats["new"]
+      run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
+      run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
+      run_stats[src]["skipped_newsletters"] = source_stats.get("skipped_newsletters", 0)
+      run_stats[src]["skipped_bots"] = source_stats.get("skipped_bots", 0)
+      run_stats[src]["skipped_system"] = source_stats.get("skipped_system", 0)
+      run_stats[src]["skipped_empty"] = source_stats.get("skipped_empty", 0)
+      run_stats[src]["decoded_attributed_body"] = source_stats[
+        "decoded_attributed_body"
+      ]
+      run_stats[src]["skipped_attributed_body"] = source_stats[
+        "skipped_attributed_body"
+      ]
+      run_stats[src]["since"] = source_stats["since"]
+      run_stats[src]["paths"] = _source_paths(src, cfg)
+      run_stats[src]["duration_ms"] = source_stats["duration_ms"]
+      if not dry_run:
+        _record_ingest_run(
+          conn,
+          run_id=run_id,
+          source=src,
+          started_at=parse_iso_datetime(str(source_stats["started_at"])),
+          ended_at=parse_iso_datetime(str(source_stats["ended_at"])),
+          duration_ms=float(source_stats["duration_ms"]),  # type: ignore[arg-type]
+          seen=int(source_stats["seen"]),  # type: ignore[arg-type]
+          new=int(source_stats["new"]),  # type: ignore[arg-type]
+          skipped=int(source_stats["skipped"]),  # type: ignore[arg-type]
+          status="success",
+          error=None,
+        )
+        conn.commit()
+    total_duration_ms = (time.perf_counter() - total_start) * 1000
+    print_stats(
+      conn,
+      db_path,
+      run_stats,
+      dry_run=dry_run,
+      total_duration_ms=total_duration_ms,
+    )
+  finally:
+    conn.close()
+
+
+def ingest_source(
+  conn,
+  source: str,
+  adapter: Adapter,
+  cfg: dict,
+  *,
+  batch_size: int,
+  dry_run: bool,
+  processors,
+) -> dict[str, object]:
+  started_at = datetime.now(UTC)
+  perf_start = time.perf_counter()
+  since = _effective_since(conn, source, cfg)
+  batch: list[Item] = []
+  latest_ts = since
+  seen = 0
+  inserted = 0
+  iterator = _progress(adapter.extract(since), desc=f"Ingesting {source}")
+  for item in iterator:
+    seen += 1
+    batch.append(item)
+    if item.timestamp > latest_ts:
+      latest_ts = item.timestamp
+    if len(batch) >= batch_size:
+      inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+      batch = []
+  if batch:
+    inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+  if not dry_run:
+    update_watermark(conn, source, latest_ts)
+    conn.commit()
+  duration_ms = (time.perf_counter() - perf_start) * 1000
+  return {
+    "seen": seen,
+    "new": inserted,
+    "skipped": int(getattr(adapter, "skipped_emlx", 0))
+    + int(getattr(adapter, "skipped_email_dates", 0))
+    + int(getattr(adapter, "skipped_newsletters", 0))
+    + int(getattr(adapter, "skipped_bots", 0))
+    + int(getattr(adapter, "skipped_system", 0))
+    + int(getattr(adapter, "skipped_empty", 0)),
+    "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
+    "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
+    "skipped_newsletters": int(getattr(adapter, "skipped_newsletters", 0)),
+    "skipped_bots": int(getattr(adapter, "skipped_bots", 0)),
+    "skipped_system": int(getattr(adapter, "skipped_system", 0)),
+    "skipped_empty": int(getattr(adapter, "skipped_empty", 0)),
+    "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
+    "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
+    "since": since.isoformat(),
+    "started_at": started_at.isoformat(),
+    "ended_at": datetime.now(UTC).isoformat(),
+    "duration_ms": duration_ms,
+  }
+
+
+def process_batch(
+  conn,
+  items: list[Item],
+  processors,
+  *,
+  dry_run: bool,
+) -> int:
+  if dry_run:
+    return 0
+  if processors is None:
+    raise RuntimeError("processors are required unless dry_run is set")
+  texts = [item.content for item in items]
+  embeddings = processors.embedder.embed_batch(texts)
+  tags = [processors.tagger.tag(text) for text in texts]
+  stats = store_items(conn, items, embeddings, tags)
+  return stats.items_inserted
+
+
+def get_adapter(source: str, cfg: dict) -> Adapter:
+  if source == "imessage":
+    return IMessageAdapter(Path(cfg["chat_db_path"]))
+  if source == "signal":
+    return SignalAdapter(
+      signal_dir=Path(cfg.get("signal_dir", "~/Library/Application Support/Signal")),
+      include_attachments=bool(cfg.get("include_attachments", True)),
+    )
+  if source == "email":
+    return EmailAdapter(
+      sources=list(cfg.get("sources", [])),
+      user_addresses=list(cfg.get("user_addresses", [])),
+      skip_newsletters=bool(cfg.get("skip_newsletters", True)),
+    )
+  if source == "notes":
+    from yaams.ingest.obsidian import DEFAULT_SKIP_DIRS as _DEFAULT_SKIP_DIRS
+    skip_dirs = set(cfg.get("skip_dirs") or _DEFAULT_SKIP_DIRS)
+    return ObsidianAdapter(
+      vault_path=Path(cfg["vault_path"]),
+      skip_dirs=skip_dirs,
+    )
+  if source == "tier2_ledger":
+    notes_path = cfg.get("notes_path")
+    if not notes_path:
+      raise ValueError(
+        "tier2_ledger source requires ingest.tier2_ledger.notes_path in config.yaml"
+      )
+    index_path = cfg.get(
+      "index_path", str(Path(notes_path) / "08_indices" / "note_index.json")
+    )
+    return LedgerNotesAdapter(
+      notes_path=Path(notes_path),
+      index_path=Path(index_path),
+    )
+  if source == "github":
+    return GitHubAdapter(username=cfg.get("username", ""))
+  if source.startswith("calendar_"):
+    profile = source[len("calendar_"):]
+    return CalendarAdapter(
+      profile=profile,
+      skip_free=bool(cfg.get("skip_free", True)),
+    )
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    token_source = OwaPiggyTokenSource(profile)
+    graph = GraphClient(token_source)
+    return TeamsAdapter(
+      profile=profile,
+      graph_client=graph,
+      skip_bots=bool(cfg.get("skip_bots", True)),
+      page_size=int(cfg.get("page_size", 50)),
+    )
+  raise ValueError(f"Unknown source: {source}")
+
+
+def _record_ingest_run(
+  conn,
+  *,
+  run_id: str,
+  source: str,
+  started_at: datetime,
+  ended_at: datetime,
+  duration_ms: float,
+  seen: int,
+  new: int,
+  skipped: int,
+  status: str,
+  error: str | None,
+) -> None:
+  conn.execute(
+    """
+    INSERT INTO ingest_runs (
+      run_id, source, started_at, ended_at, duration_ms,
+      items_seen, items_new, items_skipped, status, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+      run_id,
+      source,
+      started_at.isoformat(),
+      ended_at.isoformat(),
+      duration_ms,
+      seen,
+      new,
+      skipped,
+      status,
+      error,
+    ),
+  )
+
+
+def print_stats(
+  conn,
+  db_path: Path,
+  run_stats: dict[str, dict[str, object]],
+  *,
+  dry_run: bool,
+  total_duration_ms: float | None = None,
+) -> None:
+  stats = database_stats(conn)
+  if dry_run:
+    prefix = "Dry run complete."
+  elif run_stats:
+    prefix = "Ingest complete."
+  else:
+    prefix = "Database stats."
+  click.echo(prefix)
+  _print_sources(run_stats)
+  failed_sources = []
+  for source in _ordered_sources(run_stats):
+    failure = run_stats[source].get("failed")
+    duration_ms = run_stats[source].get("duration_ms")
+    timing = ""
+    if isinstance(duration_ms, (int, float)):
+      timing = f" [{_format_duration(float(duration_ms))}]"
+    if failure:
+      click.echo(f"  {source}: FAILED{timing} - {failure}")
+      failed_sources.append(source)
+      continue
+    seen = run_stats[source]["seen"]
+    new = run_stats[source]["new"]
+    skipped = run_stats[source].get("skipped", 0)
+    throughput = ""
+    if isinstance(duration_ms, (int, float)):
+      throughput = _format_throughput(int(seen), float(duration_ms))
+    if dry_run:
+      suffix = "would process, 0 written"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
+    else:
+      suffix = f"{new:,} new"
+      if skipped:
+        suffix = f"{suffix}, {skipped:,} skipped"
+      click.echo(f"  {source}: {seen:,} items ({suffix}){timing}{throughput}")
+    _print_source_diagnostics(source, run_stats[source])
+  click.echo(f"  Total in DB: {stats['total']:,} items")
+  click.echo(f"  Date range: {_date(stats['date_min'])} to {_date(stats['date_max'])}")
+  click.echo(
+    f"  Entities in DB: {stats['entities']:,} unique, "
+    f"{stats['entity_links']:,} links"
+  )
+  if db_path.exists():
+    click.echo(f"  Storage: {_size_mb(db_path):.1f} MB")
+  if total_duration_ms is not None:
+    click.echo(f"  Total elapsed: {_format_duration(total_duration_ms)}")
+
+
+def _effective_since(conn, source: str, cfg: dict) -> datetime:
+  configured = parse_iso_datetime(cfg["ingest"]["since"])
+  watermark = get_watermark(conn, source)
+  floor = datetime.min.replace(tzinfo=UTC)
+  return max(configured, watermark or floor)
+
+
+def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
+  cfg = cfg or {}
+  teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
+  teams_sources = [f"teams_{p}" for p in teams_profiles]
+  cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
+  cal_sources = [f"calendar_{p}" for p in cal_profiles]
+  if source == "all":
+    return ["imessage", "signal", "email", "notes", "tier2_ledger", "github", *teams_sources, *cal_sources]
+  if source == "teams":
+    return teams_sources
+  if source == "calendar":
+    return cal_sources
+  return [source]
+
+
+def _config_section(source: str) -> str:
+  if source.startswith("teams_") or source == "teams":
+    return "teams"
+  if source.startswith("calendar_") or source == "calendar":
+    return "calendar"
+  return source
+
+
+def _source_enabled(cfg: dict, source: str) -> bool:
+  section = _config_section(source)
+  return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
+
+
+def _source_paths(source: str, cfg: dict) -> list[str]:
+  section = _config_section(source)
+  source_cfg = cfg.get("ingest", {}).get(section, {})
+  if source == "imessage":
+    path = source_cfg.get("chat_db_path")
+    return [f"chat.db: {Path(path).expanduser()}" if path else "chat.db: n/a"]
+  if source == "signal":
+    path = source_cfg.get("signal_dir", "~/Library/Application Support/Signal")
+    return [f"signal: {Path(path).expanduser()}"]
+  if source == "email":
+    paths = []
+    for entry in source_cfg.get("sources", []):
+      source_type = entry.get("type", "unknown")
+      path = entry.get("path", "n/a")
+      paths.append(f"{source_type}: {Path(path).expanduser()}")
+    return paths or ["n/a"]
+  if source == "notes":
+    path = source_cfg.get("vault_path")
+    return [f"vault: {Path(path).expanduser()}" if path else "vault: n/a"]
+  if source == "tier2_ledger":
+    path = source_cfg.get("notes_path")
+    return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
+  if source == "github":
+    return [f"github: {source_cfg.get('username', 'unknown')} (events)"]
+  if source.startswith("calendar_"):
+    profile = source[len("calendar_"):]
+    return [f"owa-cal profile: {profile}"]
+  if source.startswith("teams_"):
+    profile = source[len("teams_"):]
+    return [f"graph (owa-piggy profile): {profile}"]
+  return ["n/a"]
+
+
+def _ordered_sources(run_stats: dict[str, dict[str, object]]) -> list[str]:
+  fixed = [s for s in ("imessage", "email") if s in run_stats]
+  teams = sorted(s for s in run_stats if s.startswith("teams_"))
+  others = sorted(
+    s for s in run_stats if s not in fixed and not s.startswith("teams_")
+  )
+  return fixed + teams + others
+
+
+def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
+  if not run_stats:
+    return
+  click.echo("  Sources:")
+  for source in _ordered_sources(run_stats):
+    since = run_stats[source].get("since", "n/a")
+    paths = run_stats[source].get("paths", [])
+    click.echo(f"    {source} since {since}:")
+    for path in paths:
+      click.echo(f"      - {path}")
+
+
+def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
+  if source == "imessage":
+    decoded = int(stats.get("decoded_attributed_body", 0))
+    skipped = int(stats.get("skipped_attributed_body", 0))
+    if decoded or skipped:
+      click.echo(f"    attributedBody: {decoded:,} decoded, {skipped:,} skipped")
+  if source == "email":
+    skipped_emlx = int(stats.get("skipped_emlx", 0))
+    skipped_dates = int(stats.get("skipped_email_dates", 0))
+    skipped_news = int(stats.get("skipped_newsletters", 0))
+    if skipped_emlx or skipped_dates or skipped_news:
+      click.echo(
+        f"    skipped email details: {skipped_emlx:,} parse errors, "
+        f"{skipped_dates:,} invalid dates, "
+        f"{skipped_news:,} newsletters/automated"
+      )
+  if source.startswith("teams_"):
+    skipped_bots = int(stats.get("skipped_bots", 0))
+    skipped_system = int(stats.get("skipped_system", 0))
+    skipped_empty = int(stats.get("skipped_empty", 0))
+    if skipped_bots or skipped_system or skipped_empty:
+      click.echo(
+        f"    skipped teams details: {skipped_bots:,} bots/automated, "
+        f"{skipped_system:,} system events, {skipped_empty:,} empty/deleted"
+      )

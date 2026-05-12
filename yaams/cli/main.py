@@ -6,15 +6,14 @@ import time
 import click
 
 from yaams import __version__
+from yaams.cli._envelope import JsonFailureGuard
 from yaams.cli._root import cli
 from yaams.cli._shared import _embedding_dim, _entity_dictionary, config_option
 from yaams.config import get_db_path, load_config
 from yaams.conventions import (
   EXIT_USER_ERROR,
   action_envelope,
-  data_error,
   emit_action,
-  emit_data_error,
 )
 from yaams.db import open_db
 from yaams.schema import init_schema
@@ -163,36 +162,28 @@ def init_db(config_path: str, require_vec: bool, as_json: bool) -> None:
 @config_option
 @click.option("--json", "as_json", is_flag=True, help="Emit raw stats JSON on stdout.")
 def stats(config_path: str, as_json: bool) -> None:
-  cfg = load_config(config_path)
-  db_path = get_db_path(cfg)
-  try:
+  # Wrap the entire body so config-load and db-open failures surface as
+  # data_error envelopes on stdout under --json (Plan 06). The previous
+  # implementation only guarded open_db, leaving load_config to traceback.
+  with JsonFailureGuard("stats", as_json=as_json):
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
     conn = open_db(db_path, readonly=True)
-  except Exception as exc:
-    if as_json:
-      emit_data_error(data_error(
-        command="stats",
-        code="db_open_failed",
-        message=str(exc),
-        hint="Run: yaams init-db",
-      ))
-      sys.exit(EXIT_USER_ERROR)
-    raise
+    try:
+      from yaams.cli.ingest import print_stats
+      from yaams.store import database_stats
 
-  try:
-    from yaams.cli.ingest import print_stats
-    from yaams.store import database_stats
-
-    if as_json:
-      import json as _json
-      payload = dict(database_stats(conn))
-      payload["db_path"] = str(db_path)
-      if db_path.exists():
-        payload["storage_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
-      click.echo(_json.dumps(payload, ensure_ascii=False))
-    else:
-      print_stats(conn, db_path, {}, dry_run=False)
-  finally:
-    conn.close()
+      if as_json:
+        import json as _json
+        payload = dict(database_stats(conn))
+        payload["db_path"] = str(db_path)
+        if db_path.exists():
+          payload["storage_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
+        click.echo(_json.dumps(payload, ensure_ascii=False))
+      else:
+        print_stats(conn, db_path, {}, dry_run=False)
+    finally:
+      conn.close()
 
 
 @cli.command("reset-db")

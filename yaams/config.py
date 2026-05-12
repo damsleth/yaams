@@ -10,6 +10,22 @@ def expand_path(value: str | Path) -> Path:
 
 
 def _candidate_config_paths() -> list[Path]:
+  """Build the ordered list of config paths YAAMS searches.
+
+  Order (first match wins):
+
+  1. ``$YAAMS_CONFIG`` - explicit override.
+  2. ``$XDG_CONFIG_HOME/mnem/yaams/config.yaml`` - the suite path. This
+     is where ``mnem init`` writes the generated YAAMS config, so it
+     wins over the legacy direct-CLI location when both files exist.
+  3. ``$XDG_CONFIG_HOME/yaams/config.yaml`` - legacy direct-CLI path,
+     kept so existing users who installed YAAMS standalone keep
+     working.
+  4. ``./config.yaml`` - cwd fallback for ad-hoc / dev usage.
+
+  When ``XDG_CONFIG_HOME`` is unset, ``~/.config`` is used per the
+  XDG Base Directory spec.
+  """
   candidates: list[Path] = []
 
   env_path = os.environ.get("YAAMS_CONFIG")
@@ -18,6 +34,9 @@ def _candidate_config_paths() -> list[Path]:
 
   xdg = os.environ.get("XDG_CONFIG_HOME")
   xdg_root = expand_path(xdg) if xdg else expand_path("~/.config")
+  # Suite path first (mnem init writes here), then legacy direct-CLI
+  # path. See docstring above for rationale.
+  candidates.append(xdg_root / "mnem" / "yaams" / "config.yaml")
   candidates.append(xdg_root / "yaams" / "config.yaml")
 
   candidates.append(expand_path("config.yaml"))
@@ -36,7 +55,7 @@ def resolve_config_path(explicit: str | Path | None = None) -> Path:
   searched = "\n  ".join(str(p) for p in _candidate_config_paths())
   raise FileNotFoundError(
     "Could not find a YAAMS config file. Searched:\n  " + searched +
-    "\nSet $YAAMS_CONFIG or place a file at ~/.config/yaams/config.yaml."
+    "\nRun `mnem init` to generate one, or set $YAAMS_CONFIG."
   )
 
 

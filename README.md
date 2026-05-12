@@ -24,6 +24,17 @@ Each tier is split between a public **engine** and a private **store**:
 Engines ship code, no data. Stores live outside the repo, are gitignored
 by default, and never get pushed.
 
+## Suite
+
+YAAMS is one of four tools in the **[mnem](https://github.com/damsleth/mnem)**
+memory suite. The suite gives you one install (`brew install
+damsleth/tap/mnem`), one verb surface (`mnem query`, `mnem ingest`,
+`mnem promote`, ...), and one CLI contract (output classes, exit
+codes, action envelopes - see
+[mnem/CONVENTIONS.md](https://github.com/damsleth/mnem/blob/main/CONVENTIONS.md)).
+Power users can still call `yaams` directly and get byte-identical
+JSON.
+
 ## What
 
 ```

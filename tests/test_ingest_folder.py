@@ -130,3 +130,54 @@ def test_folder_adapter_skips_missing_root(tmp_path: Path) -> None:
   adapter = FolderAdapter(folder_paths=[real, tmp_path / "does-not-exist"])
   items = list(adapter.extract(datetime(1970, 1, 1, tzinfo=UTC)))
   assert len(items) == 1
+
+
+def _touch_binary(path: Path, body: bytes = b"\x89PNG\r\n\x1a\n") -> Path:
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_bytes(body)
+  return path
+
+
+def test_folder_adapter_ingests_images_with_hierarchy(tmp_path: Path) -> None:
+  _touch_binary(tmp_path / "photos" / "2024" / "sandvika-byfest" / "img_001.jpg")
+  _touch_binary(tmp_path / "photos" / "headshot.png")
+  _touch(tmp_path / "notes.txt", "Plain text body long enough to clear the minimum threshold filter.")
+
+  adapter = FolderAdapter(folder_paths=[tmp_path])
+  items = list(adapter.extract(datetime(1970, 1, 1, tzinfo=UTC)))
+
+  by_path = {item.raw_metadata["path"]: item for item in items}
+  assert set(by_path) == {
+    "photos/2024/sandvika-byfest/img_001.jpg",
+    "photos/headshot.png",
+    "notes.txt",
+  }
+
+  nested = by_path["photos/2024/sandvika-byfest/img_001.jpg"]
+  assert nested.raw_metadata["kind"] == "image"
+  assert nested.raw_metadata["folder_path"] == "photos/2024/sandvika-byfest"
+  assert nested.raw_metadata["folder_parts"] == ["photos", "2024", "sandvika-byfest"]
+  assert nested.raw_metadata["filename"] == "img_001.jpg"
+  assert nested.thread_id == "photos/2024/sandvika-byfest"
+  assert nested.subject == "photos/2024/sandvika-byfest/img_001"
+  assert "Image: img_001.jpg" in nested.content
+  assert "Folder: photos/2024/sandvika-byfest" in nested.content
+  assert "Hierarchy: photos > 2024 > sandvika-byfest" in nested.content
+
+  shallow = by_path["photos/headshot.png"]
+  assert shallow.raw_metadata["kind"] == "image"
+  assert shallow.raw_metadata["folder_path"] == "photos"
+  assert shallow.thread_id == "photos"
+
+  doc = by_path["notes.txt"]
+  assert doc.raw_metadata["kind"] == "document"
+  assert doc.raw_metadata["folder_path"] == ""
+
+
+def test_folder_adapter_image_short_content_not_filtered(tmp_path: Path) -> None:
+  _touch_binary(tmp_path / "a.jpg")
+  adapter = FolderAdapter(folder_paths=[tmp_path])
+  items = list(adapter.extract(datetime(1970, 1, 1, tzinfo=UTC)))
+  assert len(items) == 1
+  assert items[0].raw_metadata["kind"] == "image"
+  assert adapter.skipped_empty == 0

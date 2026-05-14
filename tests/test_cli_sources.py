@@ -242,6 +242,36 @@ def test_set_profile_enabled_removes_from_list(tmp_path: Path) -> None:
   assert cfg["ingest"]["calendar"]["profiles"] == ["dno"]
 
 
+def test_set_profile_enabled_handles_inline_flow_list(tmp_path: Path) -> None:
+  body = (
+    "ingest:\n"
+    "  calendar:\n"
+    "    enabled: false\n"
+    "    profiles: ['brkh', 'crayon', 'dno', 'nocos', 'swon']\n"
+  )
+  cfg_path = _write(tmp_path, body)
+  _yaml_set_profile_enabled(cfg_path, "calendar", "kova", enabled=True)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  assert cfg["ingest"]["calendar"]["profiles"] == [
+    "brkh", "crayon", "dno", "nocos", "swon", "kova",
+  ]
+
+
+def test_set_profile_enabled_removes_from_inline_flow_list(tmp_path: Path) -> None:
+  body = (
+    "ingest:\n"
+    "  calendar:\n"
+    "    enabled: false\n"
+    "    profiles: ['brkh', 'crayon', 'swon']\n"
+  )
+  cfg_path = _write(tmp_path, body)
+  _yaml_set_profile_enabled(cfg_path, "calendar", "crayon", enabled=False)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  assert cfg["ingest"]["calendar"]["profiles"] == ["brkh", "swon"]
+
+
 def test_set_profile_enabled_creates_profiles_key(tmp_path: Path) -> None:
   body = (
     "ingest:\n"
@@ -351,3 +381,21 @@ def test_discover_calendar_parses_json(monkeypatch) -> None:
   sources_mod._clear_profile_cache()
   result = sources_mod.discover_calendar_profiles()
   assert result == [{"alias": "swon", "kind": "oauth", "default": True}]
+
+
+def test_discover_teams_marks_unregistered_profiles_disabled(monkeypatch) -> None:
+  class Result:
+    returncode = 0
+    stdout = (
+      '{"profiles":['
+      '{"alias":"swon","default":true,"registered":true,"has_config":true},'
+      '{"alias":"crayon","default":false,"registered":false,"has_config":true}'
+      ']}'
+    )
+
+  monkeypatch.setattr(sources_mod.subprocess, "run", lambda *a, **kw: Result())
+  sources_mod._clear_profile_cache()
+  result = sources_mod.discover_teams_profiles()
+  by_alias = {p["alias"]: p for p in result}
+  assert by_alias["swon"]["enabled"] is True
+  assert by_alias["crayon"]["enabled"] is False

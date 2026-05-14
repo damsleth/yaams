@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from yaams.cli import sources as sources_mod
 from yaams.cli._root import cli
 from yaams.cli._shared import (
   ProcessingContext,
@@ -645,7 +646,7 @@ def _effective_since(conn, source: str, cfg: dict) -> datetime:
 def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cfg = cfg or {}
   teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
-  teams_sources = [f"teams_{p}" for p in teams_profiles]
+  teams_sources = [f"teams_{p}" for p in teams_profiles if _teams_profile_active(p)]
   cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
   cal_sources = [f"calendar_{p}" for p in cal_profiles]
   if source == "all":
@@ -660,6 +661,17 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   return [source]
 
 
+def _teams_profile_active(profile: str) -> bool:
+  profiles = sources_mod.discover_teams_profiles()
+  if not profiles:
+    return True
+  by_alias = {str(p.get("alias")): p for p in profiles if p.get("alias")}
+  discovered = by_alias.get(profile)
+  if discovered is None:
+    return False
+  return bool(discovered.get("enabled", True))
+
+
 def _config_section(source: str) -> str:
   if source.startswith("teams_") or source == "teams":
     return "teams"
@@ -670,6 +682,8 @@ def _config_section(source: str) -> str:
 
 def _source_enabled(cfg: dict, source: str) -> bool:
   section = _config_section(source)
+  if source.startswith("teams_") and not _teams_profile_active(source[len("teams_"):]):
+    return False
   return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
 
 

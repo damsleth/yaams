@@ -122,7 +122,7 @@ def discover_calendar_profiles() -> list[dict]:
 
 
 def discover_teams_profiles() -> list[dict]:
-  """Return [{alias, default}] from `owa-piggy profiles --json`."""
+  """Return [{alias, default, enabled}] from `owa-piggy profiles --json`."""
   if "teams" in _profile_cache:
     return _profile_cache["teams"]
   data = _run_json(["owa-piggy", "profiles", "--json"])
@@ -136,9 +136,19 @@ def discover_teams_profiles() -> list[dict]:
         alias = entry.get("alias")
         if not alias:
           continue
+        enabled = True
+        if "enabled" in entry:
+          enabled = bool(entry.get("enabled"))
+        elif "disabled" in entry:
+          enabled = not bool(entry.get("disabled"))
+        elif "registered" in entry:
+          enabled = bool(entry.get("registered"))
         result.append({
           "alias": alias,
           "default": bool(entry.get("default", False)),
+          "enabled": enabled,
+          "registered": bool(entry.get("registered", enabled)),
+          "has_config": bool(entry.get("has_config", True)),
         })
   _profile_cache["teams"] = result
   return result
@@ -230,10 +240,15 @@ def _build_rows(cfg: dict) -> list[Row]:
       for prof in available:
         alias = prof["alias"]
         seen.add(alias)
-        tag = "default" if prof.get("default") else ""
+        tag_parts = []
+        if prof.get("default"):
+          tag_parts.append("default")
+        if not prof.get("enabled", True):
+          tag_parts.append("disabled")
         rows.append(SubPathRow(
           kind="subpath", parent=key, subkind="profile", index=0,
-          label=alias, enabled=alias in configured, tag=tag,
+          label=alias, enabled=alias in configured,
+          tag=" / ".join(tag_parts),
         ))
       for alias in configured:
         if alias not in seen:
@@ -769,12 +784,29 @@ def _yaml_set_profile_enabled(
     ]
     config_path.write_text("".join(lines))
     return
-  if re.match(r"\s+profiles\s*:\s*\[\s*\]\s*$", lines[profiles_idx].rstrip("\n")):
-    if not enabled:
+  flow_match = re.match(
+    r"^(\s+)profiles\s*:\s*\[(?P<body>.*)\]\s*$",
+    lines[profiles_idx].rstrip("\n"),
+  )
+  if flow_match:
+    indent = flow_match.group(1)
+    body = flow_match.group("body").strip()
+    items: list[str] = []
+    if body:
+      for raw in body.split(","):
+        item = raw.strip().strip("'").strip('"')
+        if item:
+          items.append(item)
+    if enabled and profile not in items:
+      items.append(profile)
+    elif not enabled and profile in items:
+      items.remove(profile)
+    else:
       return
-    indent = re.match(r"^(\s+)", lines[profiles_idx]).group(1)  # type: ignore[union-attr]
-    lines[profiles_idx] = f"{indent}profiles:\n"
-    lines.insert(profiles_idx + 1, f"      - {profile}\n")
+    replacement = [f"{indent}profiles:\n"]
+    for item in items:
+      replacement.append(f"{indent}  - {item}\n")
+    lines[profiles_idx:profiles_idx + 1] = replacement
     config_path.write_text("".join(lines))
     return
   entries = _list_entry_spans(lines, profiles_idx, block_end)

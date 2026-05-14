@@ -6,6 +6,7 @@ and the partial-success exit-code rules (0 / 1 / 5).
 """
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -137,6 +138,43 @@ def test_strict_flag_present(tmp_path):
   assert result.exit_code == 0
   final = next(e for e in _parse_ndjson(result.output) if e.get("type") == "result")
   assert final["ok"] is True
+
+
+def test_sources_to_run_skips_disabled_owa_piggy_profiles(monkeypatch):
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+  monkeypatch.setattr(
+    ingest_mod.sources_mod,
+    "discover_teams_profiles",
+    lambda: [
+      {"alias": "swon", "enabled": True},
+      {"alias": "crayon", "enabled": False},
+    ],
+  )
+  cfg = {
+    "ingest": {
+      "teams": {"enabled": True, "profiles": ["swon", "crayon"]},
+      "calendar": {"enabled": False, "profiles": []},
+    }
+  }
+  assert ingest_mod._sources_to_run("teams", cfg) == ["teams_swon"]
+  assert ingest_mod._source_enabled(cfg, "teams_crayon") is False
+
+
+def test_sources_to_run_keeps_configured_teams_when_discovery_unavailable(monkeypatch):
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+  monkeypatch.setattr(
+    ingest_mod.sources_mod,
+    "discover_teams_profiles",
+    lambda: [],
+  )
+  cfg = {
+    "ingest": {
+      "teams": {"enabled": True, "profiles": ["swon", "crayon"]},
+      "calendar": {"enabled": False, "profiles": []},
+    }
+  }
+  assert ingest_mod._sources_to_run("teams", cfg) == ["teams_swon", "teams_crayon"]
+  assert ingest_mod._source_enabled(cfg, "teams_crayon") is True
 
 
 # --- Unit test of the exit-code builder (catches partial / all-failed cases

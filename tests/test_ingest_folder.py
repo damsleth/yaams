@@ -181,3 +181,37 @@ def test_folder_adapter_image_short_content_not_filtered(tmp_path: Path) -> None
   assert len(items) == 1
   assert items[0].raw_metadata["kind"] == "image"
   assert adapter.skipped_empty == 0
+
+
+def test_folder_adapter_files_walked_counts_all_matched_files(tmp_path: Path) -> None:
+  _touch(tmp_path / "a.txt", "Body content long enough to clear the minimum threshold filter.")
+  _touch(tmp_path / "nested" / "b.md", "# Beta\n\nBody content long enough to clear the threshold.")
+  _touch_binary(tmp_path / "nested" / "deep" / "c.png")
+  _touch(tmp_path / "skip.html", "<html>ignored ext</html>")
+
+  adapter = FolderAdapter(folder_paths=[tmp_path])
+  items = list(adapter.extract(datetime(1970, 1, 1, tzinfo=UTC)))
+
+  assert len(items) == 3
+  assert adapter.files_walked == 3
+  assert adapter.skipped_before_cutoff == 0
+
+
+def test_folder_adapter_files_walked_includes_cutoff_filtered(tmp_path: Path) -> None:
+  _touch(
+    tmp_path / "old.txt",
+    "Old file body content with enough characters for the threshold.",
+    mtime=datetime(2020, 1, 1, tzinfo=UTC),
+  )
+  _touch(
+    tmp_path / "new.txt",
+    "New file body content with enough characters for the threshold.",
+    mtime=datetime(2026, 1, 1, tzinfo=UTC),
+  )
+
+  adapter = FolderAdapter(folder_paths=[tmp_path])
+  items = list(adapter.extract(datetime(2025, 1, 1, tzinfo=UTC)))
+
+  assert len(items) == 1
+  assert adapter.files_walked == 2
+  assert adapter.skipped_before_cutoff == 1

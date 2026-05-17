@@ -38,11 +38,11 @@ def _entity_dictionary(cfg: dict) -> list[dict]:
   return list(_entities_config(cfg).get("dictionary", []))
 
 
-def _progress(iterable: Iterable[Item], desc: str) -> Iterable[Item]:
+def _progress(iterable: Iterable[Item], desc: str, unit: str = "it") -> Iterable[Item]:
   try:
     from tqdm import tqdm
 
-    return tqdm(iterable, desc=desc)
+    return tqdm(iterable, desc=desc, unit=unit)
   except ImportError:
     return iterable
 

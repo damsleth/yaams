@@ -45,12 +45,16 @@ class FolderAdapter:
   skipped_unsupported: int = field(default=0, init=False)
   skipped_missing_dep: int = field(default=0, init=False)
   skipped_images: int = field(default=0, init=False)
+  files_walked: int = field(default=0, init=False)
+  skipped_before_cutoff: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_empty = 0
     self.skipped_unsupported = 0
     self.skipped_missing_dep = 0
     self.skipped_images = 0
+    self.files_walked = 0
+    self.skipped_before_cutoff = 0
     cutoff = ensure_utc(since)
 
     for raw_root in self.folder_paths:
@@ -58,8 +62,10 @@ class FolderAdapter:
       if not root.exists():
         continue
       for path in _walk_folder(root, self.skip_dirs, self.skip_filename_prefixes, self.extensions):
+        self.files_walked += 1
         mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         if mtime < cutoff:
+          self.skipped_before_cutoff += 1
           continue
 
         rel = path.relative_to(root)

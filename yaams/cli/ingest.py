@@ -168,6 +168,13 @@ def ingest(
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["files_walked"] = (
+        int(run_stats[src].get("files_walked", 0) or 0)
+        + int(source_stats.get("files_walked", 0) or 0)
+      )
+      run_stats[src]["skipped_before_cutoff"] = int(
+        source_stats.get("skipped_before_cutoff", 0) or 0
+      )
       run_stats[src]["skipped_emlx"] = source_stats["skipped_emlx"]
       run_stats[src]["skipped_email_dates"] = source_stats["skipped_email_dates"]
       run_stats[src]["skipped_newsletters"] = source_stats.get("skipped_newsletters", 0)
@@ -334,7 +341,10 @@ def ingest_source(
   latest_ts = since
   seen = 0
   inserted = 0
-  iterator = _progress(adapter.extract(since), desc=f"Ingesting {source}")
+  progress_unit = "file" if source == "folders" else "it"
+  iterator = _progress(
+    adapter.extract(since), desc=f"Ingesting {source}", unit=progress_unit
+  )
   for item in iterator:
     seen += 1
     batch.append(item)
@@ -349,15 +359,20 @@ def ingest_source(
     update_watermark(conn, source, latest_ts)
     conn.commit()
   duration_ms = (time.perf_counter() - perf_start) * 1000
+  files_walked = int(getattr(adapter, "files_walked", 0))
+  skipped_before_cutoff = int(getattr(adapter, "skipped_before_cutoff", 0))
   return {
     "seen": seen,
     "new": inserted,
+    "files_walked": files_walked,
+    "skipped_before_cutoff": skipped_before_cutoff,
     "skipped": int(getattr(adapter, "skipped_emlx", 0))
     + int(getattr(adapter, "skipped_email_dates", 0))
     + int(getattr(adapter, "skipped_newsletters", 0))
     + int(getattr(adapter, "skipped_bots", 0))
     + int(getattr(adapter, "skipped_system", 0))
-    + int(getattr(adapter, "skipped_empty", 0)),
+    + int(getattr(adapter, "skipped_empty", 0))
+    + skipped_before_cutoff,
     "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
     "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
     "skipped_newsletters": int(getattr(adapter, "skipped_newsletters", 0)),
@@ -571,15 +586,16 @@ def _print_run_table(
     seen = int(s.get("seen", 0) or 0)
     new = int(s.get("new", 0) or 0)
     skipped = int(s.get("skipped", 0) or 0)
-    totals["seen"] += seen
+    items_count = int(s.get("files_walked", 0) or 0) if source == "folders" else seen
+    totals["seen"] += items_count
     totals["new"] += new
     totals["skipped"] += skipped
     rate_str = ""
-    if isinstance(duration_ms, (int, float)) and duration_ms > 0 and seen > 0:
-      rate_str = f"{seen / (duration_ms / 1000):,.1f}/s"
+    if isinstance(duration_ms, (int, float)) and duration_ms > 0 and items_count > 0:
+      rate_str = f"{items_count / (duration_ms / 1000):,.1f}/s"
     rows.append({
       "source": source,
-      "items": f"{seen:,}",
+      "items": f"{items_count:,}",
       "new": "-" if dry_run else f"{new:,}",
       "skipped": f"{skipped:,}" if skipped else "",
       "time": time_str,

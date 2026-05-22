@@ -1,6 +1,6 @@
 """Interactive commands MUST reject --json with a clear error.
 
-Per mnem CONVENTIONS.md output-classes: interactive commands have
+Per hugr CONVENTIONS.md output-classes: interactive commands have
 no machine path; consumers that pass --json get an actionable error
 and exit 1, not a silent flag drop.
 """

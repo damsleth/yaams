@@ -1,8 +1,8 @@
-"""YAAMS implementation of the mnem suite CLI contract.
+"""YAAMS implementation of the hugr suite CLI contract.
 
 Mirrors the in-repo version of what will eventually become a shared
-``mnem-conventions`` package. See
-https://github.com/damsleth/mnem/blob/main/CONVENTIONS.md for the
+``hugr-conventions`` package. See
+https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md for the
 binding spec.
 
 Public surface:

@@ -1,6 +1,6 @@
 """``yaams --doctor`` - data-class health check.
 
-Per the mnem CONVENTIONS.md spec:
+Per the hugr CONVENTIONS.md spec:
 
 - Output class: data.
 - Returns a structured JSON document on stdout (doctor schema) when

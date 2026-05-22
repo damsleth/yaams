@@ -1,4 +1,4 @@
-"""Config alias rewriting per mnem CONVENTIONS.md.
+"""Config alias rewriting per hugr CONVENTIONS.md.
 
 Pins the `ingest.ledger:` -> `ingest.tier2_ledger:` rename. The
 internal source id stays `tier2_ledger`; the alias is a CLI-and-

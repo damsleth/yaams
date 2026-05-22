@@ -32,7 +32,7 @@ Top MCP Servers:
 ### Codebases
 - [ ] yaams — https://github.com/damsleth/yaams (this repo, Tier 1 memory engine)
 - [ ] cognitive-ledger — sibling repo at `../cognitive-ledger` (Tier 2 curated notes)
-- [ ] mnem — sibling repo at `../mnem` (unified CLI wrapper around yaams/ledger/owa-*)
+- [ ] hugr — sibling repo at `../hugr` (unified CLI wrapper around yaams/ledger/owa-*)
 
 ### MCP Servers to Activate
 - [ ] _none required_ — YAAMS itself runs without MCP. If you want browser

@@ -7,11 +7,11 @@ their ``load_config`` call in a try/except and emit an action envelope
 on failure. Data-class commands (``query``, ``stats``) historically
 called ``load_config`` outside any try block, so a missing or malformed
 config produced a raw Python traceback on stderr - exit 1 with no JSON
-on stdout. Mnem's passthrough wrapper sees that as "tool crashed" and
+on stdout. Hugr's passthrough wrapper sees that as "tool crashed" and
 hides the underlying config error from the user.
 
 This module gives data commands a single, uniform way to satisfy the
-mnem CLI contract for ``--json``: stdout is exactly one line of valid
+hugr CLI contract for ``--json``: stdout is exactly one line of valid
 JSON, ok=false on failure, exit code mapped from CONVENTIONS.md.
 
 Usage
@@ -46,7 +46,7 @@ from yaams.conventions import (
 def _classify(exc: BaseException) -> tuple[str, str | None, int]:
   """Map an exception to (error_code, hint, exit_code).
 
-  Known classes get a stable code so mnem and other callers can branch
+  Known classes get a stable code so hugr and other callers can branch
   on it; everything else falls into ``unhandled`` with EXIT_USER_ERROR.
 
   Exit codes follow CONVENTIONS.md:
@@ -83,12 +83,12 @@ def _classify(exc: BaseException) -> tuple[str, str | None, int]:
       or target_lower.endswith(".yaml'")
       or target_lower.endswith(".yml'")
       or "/yaams/config." in target_lower
-      or "/mnem/yaams/config." in target_lower
+      or "/hugr/yaams/config." in target_lower
       or "config" in target_lower
     ):
       return (
         "config_not_found",
-        "Run `mnem init` to generate a config, or pass --config <path>.",
+        "Run `hugr init` to generate a config, or pass --config <path>.",
         EXIT_NOT_FOUND,
       )
     return (

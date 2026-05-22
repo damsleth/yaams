@@ -1,6 +1,6 @@
 """JSON failure envelopes for `yaams query --json` (Plan 06).
 
-Pins the data-class failure contract from mnem CONVENTIONS.md:
+Pins the data-class failure contract from hugr CONVENTIONS.md:
 
 - stdout is exactly ONE line of valid JSON
 - ``ok`` is ``false``
@@ -88,7 +88,7 @@ def test_query_missing_db_emits_envelope(tmp_path):
 def test_query_traceback_only_on_stderr(tmp_path):
   """Stdout must remain pure JSON even when the body would traceback.
 
-  Mnem's passthrough only treats stdout as the result channel; any
+  Hugr's passthrough only treats stdout as the result channel; any
   bleed of stack frames would corrupt the envelope.
   """
   runner = CliRunner()

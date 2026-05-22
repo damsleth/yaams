@@ -1,6 +1,6 @@
 """`yaams --doctor` - data-class health check.
 
-Pins the mnem CONVENTIONS.md doctor schema for YAAMS.
+Pins the hugr CONVENTIONS.md doctor schema for YAAMS.
 """
 from __future__ import annotations
 

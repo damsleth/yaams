@@ -26,6 +26,9 @@ dev = [
 [project.scripts]
 yaams = "yaams.cli:cli"
 
+[tool.setuptools.package-data]
+yaams = ["_default_config.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

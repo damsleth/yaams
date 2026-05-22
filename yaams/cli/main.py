@@ -117,6 +117,93 @@ def setup_cmd(config_path: str, as_json: bool) -> None:
     click.echo("Setup complete.")
 
 
+@cli.command("init")
+@click.option(
+  "--path",
+  "dest_path",
+  default=None,
+  help="Destination path. Default: $XDG_CONFIG_HOME/yaams/config.yaml.",
+)
+@click.option(
+  "--force",
+  is_flag=True,
+  help="Overwrite an existing config file.",
+)
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  help="Emit action envelope on stdout.",
+)
+def init_cmd(dest_path: str | None, force: bool, as_json: bool) -> None:
+  """Write a default YAAMS config to ~/.config/yaams/config.yaml.
+
+  The contents are a copy of ``config.yaml.example`` - edit it before
+  running ``yaams ingest`` (the defaults disable everything except
+  iMessage and Apple Mail).
+
+  This is the standalone-yaams equivalent of ``hugr init``'s yaams
+  step. Use ``hugr init`` instead if you want probe-driven defaults
+  and the broader suite setup.
+  """
+  import os
+  from importlib import resources
+  from pathlib import Path
+
+  from yaams.config import expand_path
+
+  t0 = time.monotonic()
+
+  if dest_path is None:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    xdg_root = expand_path(xdg) if xdg else expand_path("~/.config")
+    dest = xdg_root / "yaams" / "config.yaml"
+  else:
+    dest = expand_path(dest_path)
+
+  if dest.is_file() and not force:
+    msg = f"Config file already exists: {dest} (use --force to overwrite)"
+    if as_json:
+      emit_action(action_envelope(
+        command="init",
+        ok=False,
+        error={"code": "exists", "message": msg, "hint": "pass --force or pick a different --path"},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise click.ClickException(msg)
+
+  try:
+    body = resources.files("yaams").joinpath("_default_config.yaml").read_text(encoding="utf-8")
+  except (FileNotFoundError, ModuleNotFoundError) as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="init",
+        ok=False,
+        error={"code": "default_missing", "message": str(exc)},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise click.ClickException(f"Default config missing from the yaams package: {exc}") from exc
+
+  dest.parent.mkdir(parents=True, exist_ok=True)
+  dest.write_text(body, encoding="utf-8")
+
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="init",
+      ok=True,
+      stats={"path": str(dest), "overwritten": force and dest.is_file()},
+      duration_ms=duration_ms,
+    ))
+  else:
+    click.echo(f"Wrote default config to {dest}")
+    click.echo("Edit it to enable the sources you want, then run:")
+    click.echo("  yaams init-db")
+    click.echo("  yaams ingest")
+
+
 @cli.command("init-db")
 @config_option
 @click.option("--require-vec", is_flag=True)

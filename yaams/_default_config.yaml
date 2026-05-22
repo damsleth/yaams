@@ -1,0 +1,86 @@
+# YAAMS configuration. Copy to config.yaml and fill in your own values.
+# See README.md and .plans/ for what each block does.
+
+db_path: ~/yaams/data.db
+
+ingest:
+  since: '2025-01-01T00:00:00Z'
+
+  imessage:
+    enabled: true
+    chat_db_path: ~/Library/Messages/chat.db
+
+  email:
+    enabled: true
+    sources:
+      # Apple Mail .emlx tree (point at the newest ~/Library/Mail/Vxx)
+      - type: emlx
+        path: ~/Library/Mail/V10
+      # Or one or more .mbox exports:
+      # - type: mbox
+      #   path: ~/Downloads/all-mail.mbox
+    skip_newsletters: true
+    # Emails From these addresses are always kept regardless of List-* headers
+    # or noreply patterns. Add every address you send from across roles.
+    user_addresses:
+      - you@example.com
+
+  # Generic recursive folder ingestion. Reads .txt and .md natively;
+  # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
+  # Files of unsupported types (or types with the dep missing) are skipped.
+  # Paths can be added/removed from the `yaams sources` TUI.
+  folders:
+    enabled: false
+    paths: []
+      # - ~/Documents/notes
+      # - ~/work/specs
+    # Optional. Defaults to .txt, .md, .markdown, .pdf, .docx
+    # extensions: [.txt, .md, .pdf]
+    # Optional. Directory names to skip anywhere in the tree.
+    # skip_dirs: [.git, .obsidian, node_modules]
+
+  teams:
+    enabled: false
+    # owa-piggy profile names (configure with `owa-piggy setup --profile <name>`)
+    profiles:
+      - work
+    skip_bots: true
+    page_size: 50
+
+embed:
+  model: BAAI/bge-m3
+  batch_size: 32
+  # Apple Silicon: mps. Otherwise: cpu. CUDA also works if torch sees it.
+  device: mps
+  dimension: 1024
+  # Use only the locally cached HF snapshot; no network calls per run.
+  # Set to false the first time you change `model` so the new weights download.
+  offline: true
+
+# LLM backend for synthesis (and future query parsing).
+# Used by `yaams query --answer ...`. Off by default (dummy backend); pick
+# one of:
+#   backend: ollama       # local Ollama server
+#     model: llama3.1
+#     host: http://localhost:11434
+#   backend: subprocess   # any CLI that takes prompt on stdin and prints answer
+#     command: ["codex", "exec", "--prompt-stdin"]
+#     # or: ["claude", "-p"]
+#   backend: dummy        # no synthesis (also default if section omitted)
+synth:
+  backend: dummy
+
+entities:
+  spacy_model: xx_ent_wiki_sm
+  dictionary:
+    # Known people, places, projects, and aliases for entity tagging.
+    # Surface form on the left, casual variants under aliases.
+    - canonical: Example Person
+      type: person
+      aliases:
+        - Ex
+        - E. Person
+    - canonical: Example Org
+      type: org
+      aliases:
+        - EX

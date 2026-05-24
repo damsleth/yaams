@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -9,6 +10,10 @@ import click
 from yaams.enrich import Embedder, EntityTagger
 from yaams.ingest import Item
 from yaams.schema import DEFAULT_EMBEDDING_DIM
+
+# Where HF model weights live by default. We keep them out of `~/.cache`
+# because they're durable, multi-GB artifacts, not regenerable cache.
+DEFAULT_MODELS_DIR = "~/.local/share/huggingface"
 
 _CONFIG_HELP = (
   "Path to config.yaml. Auto-resolves from $YAAMS_CONFIG, "
@@ -23,6 +28,10 @@ def config_option(f):
 def _embed_config(cfg: dict) -> dict:
   raw = dict(cfg.get("embed", {}))
   model = raw.pop("model")
+  # Config wins; otherwise respect an externally set $HF_HOME; otherwise fall
+  # back to DEFAULT_MODELS_DIR so models survive `~/.cache` wipes.
+  if "models_dir" not in raw and not os.environ.get("HF_HOME"):
+    raw["models_dir"] = DEFAULT_MODELS_DIR
   return {"model": model, **raw}
 
 

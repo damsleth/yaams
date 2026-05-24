@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 from typing import Sequence
 
 
@@ -12,7 +14,13 @@ class Embedder:
     batch_size: int = 32,
     dimension: int | None = None,
     offline: bool = True,
+    models_dir: str | Path | None = None,
   ):
+    # Set HF_HOME before importing sentence_transformers: huggingface_hub
+    # freezes cache paths into module constants at import time.
+    if models_dir is not None:
+      os.environ["HF_HOME"] = str(Path(models_dir).expanduser())
+
     try:
       from sentence_transformers import SentenceTransformer
     except ImportError as exc:

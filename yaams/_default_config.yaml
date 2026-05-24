@@ -56,6 +56,10 @@ embed:
   # Use only the locally cached HF snapshot; no network calls per run.
   # Set to false the first time you change `model` so the new weights download.
   offline: true
+  # Where HF stores model weights (sets HF_HOME). Defaults to
+  # ~/.local/share/huggingface so multi-GB weights survive `~/.cache` wipes.
+  # Respects an externally set $HF_HOME if you'd rather configure it that way.
+  # models_dir: ~/.local/share/huggingface
 
 # LLM backend for synthesis (and future query parsing).
 # Used by `yaams query --answer ...`. Off by default (dummy backend); pick

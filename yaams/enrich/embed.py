@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from typing import Sequence
 
@@ -14,10 +13,6 @@ class Embedder:
     dimension: int | None = None,
     offline: bool = True,
   ):
-    if offline:
-      os.environ["HF_HUB_OFFLINE"] = "1"
-      os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
     try:
       from sentence_transformers import SentenceTransformer
     except ImportError as exc:
@@ -28,16 +23,15 @@ class Embedder:
     kwargs = {}
     if device:
       kwargs["device"] = device
+    # Use local_files_only rather than HF_HUB_OFFLINE env vars: huggingface_hub
+    # freezes the offline flag into a module constant at import time, so toggling
+    # the env var after import is a no-op.
     try:
-      self.model = SentenceTransformer(model, **kwargs)
+      self.model = SentenceTransformer(model, local_files_only=offline, **kwargs)
     except OSError:
       if not offline or not _confirm_download(model):
         raise
-      os.environ["HF_HUB_OFFLINE"] = "0"
-      os.environ["TRANSFORMERS_OFFLINE"] = "0"
-      self.model = SentenceTransformer(model, **kwargs)
-      os.environ["HF_HUB_OFFLINE"] = "1"
-      os.environ["TRANSFORMERS_OFFLINE"] = "1"
+      self.model = SentenceTransformer(model, local_files_only=False, **kwargs)
     self.model.max_seq_length = 512
     self.batch_size = batch_size
     self.dim = self.model.get_embedding_dimension()

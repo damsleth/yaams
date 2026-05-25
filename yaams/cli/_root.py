@@ -18,7 +18,7 @@ from yaams import __version__
   "as_json_top",
   is_flag=True,
   default=False,
-  help="Machine mode for top-level commands (currently: --doctor).",
+  help="Machine mode for top-level --doctor (subcommand form: `yaams doctor --json`).",
 )
 @click.option(
   "--config",
@@ -34,3 +34,24 @@ def cli(ctx: click.Context, doctor: bool, as_json_top: bool, config_path_top: st
   if ctx.invoked_subcommand is None:
     click.echo(ctx.get_help())
     ctx.exit(0)
+
+
+@cli.command("doctor")
+@click.option(
+  "--config",
+  "config_path",
+  default=None,
+  help="Path to config.yaml.",
+)
+@click.option(
+  "--json",
+  "as_json",
+  is_flag=True,
+  default=False,
+  help="Emit the doctor payload as JSON (machine mode).",
+)
+def doctor_cmd(config_path: str | None, as_json: bool) -> None:
+  """Run health check (subcommand alias for --doctor)."""
+  from yaams.cli.doctor import emit_doctor
+  exit_code = emit_doctor(config_path, as_json)
+  raise click.exceptions.Exit(exit_code)

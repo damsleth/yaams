@@ -47,6 +47,22 @@ def test_doctor_json_shape(tmp_path):
   assert isinstance(payload["findings"], list)
 
 
+def test_doctor_subcommand_matches_flag_form(tmp_path):
+  """`yaams doctor` should produce identical output to `yaams --doctor`."""
+  cfg_path = _write_config(tmp_path)
+  flag = CliRunner().invoke(cli, ["--doctor", "--config", str(cfg_path), "--json"])
+  sub = CliRunner().invoke(cli, ["doctor", "--config", str(cfg_path), "--json"])
+  assert flag.exit_code == sub.exit_code
+  assert json.loads(flag.output.strip()) == json.loads(sub.output.strip())
+
+
+def test_doctor_subcommand_human_default(tmp_path):
+  cfg_path = _write_config(tmp_path)
+  result = CliRunner().invoke(cli, ["doctor", "--config", str(cfg_path)])
+  assert result.exit_code == 0
+  assert "yaams doctor" in result.output
+
+
 def test_doctor_warns_on_missing_db(tmp_path):
   cfg_path = _write_config(tmp_path)
   result = CliRunner().invoke(cli, ["--doctor", "--config", str(cfg_path), "--json"])

@@ -10,6 +10,23 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-25
+
+### Added
+
+- Microsoft 365 mail ingester. `mail_<profile>` source shells out to
+  `owa-mail` to pull Inbox + SentItems per owa-piggy profile, fetches
+  full bodies via `owa-mail show`, and reuses the mbox body cleaner so
+  output matches the local emlx ingester. Configure under
+  `ingest.mail.profiles` in `config.yaml`.
+- `yaams sources` synthesizes `mail`, `calendar`, and `teams` rows
+  whenever owa-piggy reports any enabled profile, even when the YAML
+  doesn't yet have the source block. First toggle (parent or profile
+  child) writes a default block, so users no longer have to hand-edit
+  YAML before the TUI can manage M365 sources.
+- `yaams doctor` is now also exposed as a subcommand for parity with
+  `hugr doctor`. The `--doctor` flag still works.
+
 ## [0.1.5] - 2026-05-12
 
 ### Added

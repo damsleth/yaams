@@ -39,13 +39,41 @@ ingest:
     # Optional. Directory names to skip anywhere in the tree.
     # skip_dirs: [.git, .obsidian, node_modules]
 
+  # ---- Microsoft 365 / Graph sources ----
+  # All M365 sources authenticate via owa-piggy. Configure profiles once with
+  # `owa-piggy setup --profile <name>` and reference them by alias below.
+  # `calendar` and `mail` are profile-keyed and produce one yaams source per
+  # profile (e.g. mail_work, calendar_work). `teams` likewise.
+
   teams:
     enabled: false
-    # owa-piggy profile names (configure with `owa-piggy setup --profile <name>`)
     profiles:
       - work
     skip_bots: true
     page_size: 50
+
+  # owa-mail-backed inbox + sent ingestion. One source per profile.
+  # `folders` defaults to [Inbox, SentItems] — add Archive/etc. if wanted.
+  mail:
+    enabled: false
+    profiles:
+      - work
+    folders:
+      - Inbox
+      - SentItems
+    skip_newsletters: true
+    # Date range is sliced into chunks to stay under owa-mail's 200/req cap.
+    chunk_days: 30
+    # Addresses you send from. Messages From these are never filtered as
+    # newsletters/automated even if subject patterns would otherwise match.
+    user_addresses: []
+      # - you@example.com
+
+  # calendar:
+  #   enabled: false
+  #   profiles:
+  #     - work
+  #   skip_free: true
 
 embed:
   model: BAAI/bge-m3

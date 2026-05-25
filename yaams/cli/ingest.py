@@ -40,6 +40,7 @@ from yaams.ingest.folder import FolderAdapter
 from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.signal import SignalAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
@@ -63,7 +64,8 @@ from yaams.watermark import get_watermark, update_watermark
   show_default=True,
   help=(
     "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
-    "teams or teams_<profile>, calendar or calendar_<profile>"
+    "teams or teams_<profile>, calendar or calendar_<profile>, "
+    "mail or mail_<profile>"
   ),
 )
 @click.option("--dry-run", is_flag=True)
@@ -485,6 +487,16 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       skip_bots=bool(cfg.get("skip_bots", True)),
       page_size=int(cfg.get("page_size", 50)),
     )
+  if source.startswith("mail_"):
+    profile = source[len("mail_"):]
+    folders = tuple(cfg.get("folders") or ("Inbox", "SentItems"))
+    return M365MailAdapter(
+      profile=profile,
+      folders=folders,
+      user_addresses=list(cfg.get("user_addresses", [])),
+      skip_newsletters=bool(cfg.get("skip_newsletters", True)),
+      chunk_days=int(cfg.get("chunk_days", 30)),
+    )
   raise ValueError(f"Unknown source: {source}")
 
 
@@ -665,15 +677,19 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   teams_sources = [f"teams_{p}" for p in teams_profiles if _teams_profile_active(p)]
   cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
   cal_sources = [f"calendar_{p}" for p in cal_profiles]
+  mail_profiles = list((cfg.get("ingest", {}).get("mail", {}) or {}).get("profiles", []))
+  mail_sources = [f"mail_{p}" for p in mail_profiles]
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github", *teams_sources, *cal_sources,
+      "github", *teams_sources, *cal_sources, *mail_sources,
     ]
   if source == "teams":
     return teams_sources
   if source == "calendar":
     return cal_sources
+  if source == "mail":
+    return mail_sources
   return [source]
 
 
@@ -693,6 +709,8 @@ def _config_section(source: str) -> str:
     return "teams"
   if source.startswith("calendar_") or source == "calendar":
     return "calendar"
+  if source.startswith("mail_") or source == "mail":
+    return "mail"
   return source
 
 
@@ -736,6 +754,10 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     return [f"graph (owa-piggy profile): {profile}"]
+  if source.startswith("mail_"):
+    profile = source[len("mail_"):]
+    folders = source_cfg.get("folders") or ["Inbox", "SentItems"]
+    return [f"owa-mail profile: {profile} ({', '.join(folders)})"]
   return ["n/a"]
 
 
@@ -784,4 +806,12 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
       click.echo(
         f"    skipped teams details: {skipped_bots:,} bots/automated, "
         f"{skipped_system:,} system events, {skipped_empty:,} empty/deleted"
+      )
+  if source.startswith("mail_"):
+    skipped_news = int(stats.get("skipped_newsletters", 0))
+    skipped_empty = int(stats.get("skipped_empty", 0))
+    if skipped_news or skipped_empty:
+      click.echo(
+        f"    skipped mail details: {skipped_news:,} newsletters/automated, "
+        f"{skipped_empty:,} empty/fetch-failed"
       )

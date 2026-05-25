@@ -46,7 +46,7 @@ ARROW = "▸"
 BULLET = "·"
 
 
-PROFILE_AWARE = {"teams", "calendar"}
+PROFILE_AWARE = {"teams", "calendar", "mail"}
 PATH_LIST_SOURCES = {"email", "folders"}
 
 
@@ -119,6 +119,18 @@ def discover_calendar_profiles() -> list[dict]:
       })
   _profile_cache["calendar"] = result
   return result
+
+
+def discover_mail_profiles() -> list[dict]:
+  """Return [{alias, default, enabled}] from `owa-piggy profiles --json`.
+
+  Mail and Teams share the same auth audience (Graph), so they pull from
+  the same owa-piggy profile list.
+  """
+  if "mail" in _profile_cache:
+    return _profile_cache["mail"]
+  _profile_cache["mail"] = list(discover_teams_profiles())
+  return _profile_cache["mail"]
 
 
 def discover_teams_profiles() -> list[dict]:
@@ -233,6 +245,29 @@ def _build_rows(cfg: dict) -> list[Row]:
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
           ))
+    elif key == "mail":
+      configured = list(block.get("profiles") or [])
+      available = discover_mail_profiles()
+      seen = set()
+      for prof in available:
+        alias = prof["alias"]
+        seen.add(alias)
+        tag_parts = []
+        if prof.get("default"):
+          tag_parts.append("default")
+        if not prof.get("enabled", True):
+          tag_parts.append("disabled")
+        rows.append(SubPathRow(
+          kind="subpath", parent=key, subkind="profile", index=0,
+          label=alias, enabled=alias in configured,
+          tag=" / ".join(tag_parts),
+        ))
+      for alias in configured:
+        if alias not in seen:
+          rows.append(SubPathRow(
+            kind="subpath", parent=key, subkind="profile", index=0,
+            label=alias, enabled=True, tag="not discovered",
+          ))
     elif key == "teams":
       configured = list(block.get("profiles") or [])
       available = discover_teams_profiles()
@@ -296,6 +331,9 @@ def _summary_for(key: str, block: dict) -> str:
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
   if key == "teams":
+    configured = block.get("profiles") or []
+    return f"{len(configured)} profile(s) active"
+  if key == "mail":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
   return ""

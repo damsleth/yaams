@@ -49,6 +49,41 @@ BULLET = "·"
 PROFILE_AWARE = {"teams", "calendar", "mail"}
 PATH_LIST_SOURCES = {"email", "folders"}
 
+# M365 source blocks the TUI can lazy-create on first toggle. These are the
+# sources whose availability is implied by an owa-piggy profile existing:
+# rather than make the user edit YAML before they can see the checkbox,
+# the TUI synthesizes a "not configured" row and writes a default block
+# when the user toggles the parent or a profile child.
+_M365_BLOCK_TEMPLATES: dict[str, list[str]] = {
+  "mail": [
+    "\n",
+    "  mail:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    folders:\n",
+    "      - Inbox\n",
+    "      - SentItems\n",
+    "    skip_newsletters: true\n",
+    "    chunk_days: 30\n",
+    "    user_addresses: []\n",
+  ],
+  "calendar": [
+    "\n",
+    "  calendar:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    skip_free: true\n",
+  ],
+  "teams": [
+    "\n",
+    "  teams:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    skip_bots: true\n",
+    "    page_size: 50\n",
+  ],
+}
+
 
 @dataclass
 class SourceRow:
@@ -300,7 +335,36 @@ def _build_rows(cfg: dict) -> list[Row]:
       summary="0 source(s)  (not configured — press `a` to add)",
       synthetic=True,
     ))
+
+  # Synthesize missing M365 source rows. If owa-piggy reports any enabled
+  # profile, expose mail/calendar/teams as toggleable rows even when the
+  # config doesn't have the block yet — first toggle writes it.
+  _append_synthetic_m365_rows(rows)
   return rows
+
+
+def _append_synthetic_m365_rows(rows: list[Row]) -> None:
+  configured = {r.name for r in rows if isinstance(r, SourceRow)}
+  piggy = [p for p in discover_teams_profiles() if p.get("enabled", True)]
+  if not piggy:
+    return
+  for source_name in ("mail", "calendar", "teams"):
+    if source_name in configured:
+      continue
+    rows.append(SourceRow(
+      kind="source",
+      name=source_name,
+      enabled=False,
+      summary="not configured — toggle a profile to create the block",
+      synthetic=True,
+    ))
+    for prof in piggy:
+      alias = prof["alias"]
+      tag = "default" if prof.get("default") else ""
+      rows.append(SubPathRow(
+        kind="subpath", parent=source_name, subkind="profile", index=0,
+        label=alias, enabled=False, tag=tag,
+      ))
 
 
 def _summary_for(key: str, block: dict) -> str:
@@ -449,7 +513,7 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
       row = rows[cursor]
       if key == " ":
         if isinstance(row, SourceRow):
-          if row.synthetic:
+          if row.synthetic and row.name not in _M365_BLOCK_TEMPLATES:
             message = "Add a path first (`a`)."
             continue
           current = selected.get(row.name, row.enabled)
@@ -560,6 +624,14 @@ def _rewrite_enabled_flags(config_path: Path, target_state: dict[str, bool]) -> 
       lines, top_level_key=source, parent_indent=2,
       search_from=ingest_start, search_to=ingest_end,
     )
+    if (block_start is None or block_end is None) and source in _M365_BLOCK_TEMPLATES:
+      out_lines = _ensure_m365_block(out_lines, source)
+      lines = list(out_lines)
+      ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+      block_start, block_end = _find_block_span(
+        lines, top_level_key=source, parent_indent=2,
+        search_from=ingest_start, search_to=ingest_end,
+      )
     if block_start is None or block_end is None:
       continue
     flag_line_idx = _find_enabled_line(lines, block_start, block_end)
@@ -697,6 +769,32 @@ def _folders_entry_spans(lines: list[str]) -> list[tuple[int, int]] | None:
   return _list_entry_spans(lines, paths_idx, folders_end)
 
 
+def _ensure_m365_block(lines: list[str], source: str) -> list[str]:
+  """Insert a default ingest.<source>: block if it's missing.
+
+  Used when the user toggles a synthetic m365 row or one of its profile
+  children — we lazy-create the block so they don't have to hand-edit
+  YAML before the TUI can manage it.
+  """
+  if source not in _M365_BLOCK_TEMPLATES:
+    return lines
+  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+  if ingest_start is None:
+    raise click.ClickException("No `ingest:` block in config.")
+  block_start, _ = _find_block_span(
+    lines, top_level_key=source, parent_indent=2,
+    search_from=ingest_start, search_to=ingest_end,
+  )
+  if block_start is not None:
+    return lines
+  template = list(_M365_BLOCK_TEMPLATES[source])
+  insert_at = ingest_end if ingest_end is not None else len(lines)
+  if insert_at > 0 and lines[insert_at - 1].strip() == "":
+    template = template[1:]
+  lines[insert_at:insert_at] = template
+  return lines
+
+
 def _ensure_folders_block(lines: list[str]) -> list[str]:
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
@@ -808,6 +906,13 @@ def _yaml_set_profile_enabled(
     lines, top_level_key=source, parent_indent=2,
     search_from=ingest_start, search_to=ingest_end,
   )
+  if (block_start is None or block_end is None) and source in _M365_BLOCK_TEMPLATES:
+    lines = _ensure_m365_block(lines, source)
+    ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+    block_start, block_end = _find_block_span(
+      lines, top_level_key=source, parent_indent=2,
+      search_from=ingest_start, search_to=ingest_end,
+    )
   if block_start is None or block_end is None:
     raise click.ClickException(f"No `ingest.{source}:` block in config.")
   profiles_idx = _find_key_line(lines, block_start, block_end, "profiles")

@@ -272,6 +272,110 @@ def test_set_profile_enabled_removes_from_inline_flow_list(tmp_path: Path) -> No
   assert cfg["ingest"]["calendar"]["profiles"] == ["brkh", "swon"]
 
 
+def test_set_profile_enabled_lazy_creates_mail_block(tmp_path: Path) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  cfg_path = _write(tmp_path, body)
+  _yaml_set_profile_enabled(cfg_path, "mail", "crayon", enabled=True)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  mail = cfg["ingest"]["mail"]
+  assert mail["enabled"] is False
+  assert mail["profiles"] == ["crayon"]
+  assert mail["folders"] == ["Inbox", "SentItems"]
+  assert mail["chunk_days"] == 30
+
+
+def test_rewrite_enabled_flags_lazy_creates_mail_block(tmp_path: Path) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  cfg_path = _write(tmp_path, body)
+  changed = _rewrite_enabled_flags(cfg_path, {"mail": True})
+  assert changed == {"mail": True}
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  assert cfg["ingest"]["mail"]["enabled"] is True
+  assert cfg["ingest"]["mail"]["profiles"] == []
+
+
+def test_build_rows_synthesizes_missing_m365_from_piggy(
+  tmp_path: Path, monkeypatch
+) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(
+    monkeypatch,
+    teams=[
+      {"alias": "crayon", "enabled": True, "default": True},
+      {"alias": "brkh", "enabled": True, "default": False},
+    ],
+  )
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  source_names = [r.name for r in rows if isinstance(r, SourceRow)]
+  assert "mail" in source_names
+  assert "calendar" in source_names
+  assert "teams" in source_names
+  mail_children = [
+    r for r in rows
+    if isinstance(r, SubPathRow) and r.parent == "mail"
+  ]
+  assert {c.label for c in mail_children} == {"crayon", "brkh"}
+  assert all(c.enabled is False for c in mail_children)
+
+
+def test_build_rows_skips_m365_synthesis_when_already_configured(
+  tmp_path: Path, monkeypatch
+) -> None:
+  _stub_discovery(
+    monkeypatch,
+    teams=[{"alias": "swon", "enabled": True}],
+  )
+  cfg_path = _write(tmp_path)  # SAMPLE has calendar + teams blocks
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  synthetic = [
+    r for r in rows
+    if isinstance(r, SourceRow) and r.name in {"calendar", "teams"} and r.synthetic
+  ]
+  assert synthetic == []
+
+
+def test_build_rows_skips_m365_synthesis_when_no_piggy_profiles(
+  tmp_path: Path, monkeypatch
+) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(monkeypatch, teams=[])
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  source_names = [r.name for r in rows if isinstance(r, SourceRow)]
+  assert "mail" not in source_names
+  assert "calendar" not in source_names
+  assert "teams" not in source_names
+
+
 def test_set_profile_enabled_creates_profiles_key(tmp_path: Path) -> None:
   body = (
     "ingest:\n"

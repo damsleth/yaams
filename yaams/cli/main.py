@@ -77,8 +77,34 @@ def setup_cmd(config_path: str, as_json: bool) -> None:
       continue
     if not as_json:
       click.echo(f"  {model}: downloading...")
+    # Resolve the wheel URL via spaCy's compat helpers, then install via
+    # `python -m pip` directly. spaCy 3.8's `spacy download` looks for `pip`
+    # on PATH via shutil.which, which fails in uv-built venvs that don't ship
+    # a `pip` entry-point script. We run the resolver in a subprocess because
+    # spaCy's helpers sys.exit on lookup failures.
+    resolver = (
+      "import sys; from urllib.parse import urljoin; "
+      "from spacy.cli.download import get_compatibility, get_version, get_model_filename; "
+      "from spacy import about; "
+      "name = sys.argv[1]; "
+      "version = get_version(name, get_compatibility()); "
+      "filename = get_model_filename(name, version); "
+      "base = about.__download_url__.rstrip('/') + '/'; "
+      "print(urljoin(base, filename))"
+    )
+    resolve = subprocess.run(
+      [sys.executable, "-c", resolver, model],
+      check=False, capture_output=True, text=True,
+    )
+    if resolve.returncode != 0:
+      failed.append(model)
+      if not as_json:
+        detail = resolve.stderr.strip() or resolve.stdout.strip() or "wheel URL resolution failed"
+        click.echo(f"  {model}: FAILED ({detail})", err=True)
+      continue
+    url = resolve.stdout.strip()
     result = subprocess.run(
-      [sys.executable, "-m", "spacy", "download", model],
+      [sys.executable, "-m", "pip", "install", url],
       check=False,
       capture_output=as_json,
     )

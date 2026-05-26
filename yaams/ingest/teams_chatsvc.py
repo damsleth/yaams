@@ -26,6 +26,8 @@ problem tenants opt into chatsvc via per-profile engine config.
 """
 from __future__ import annotations
 
+import base64
+import json
 import re
 import urllib.parse
 import urllib.request
@@ -44,6 +46,14 @@ from yaams.time import ensure_utc
 
 CHATSVC_HOST = "https://teams.microsoft.com"
 DEFAULT_VIEW = "msnp24Equivalent|supportsMessageProperties"
+
+# 1:1 chat IDs encode both participants' AAD OIDs as
+#   19:<oid_a>_<oid_b>@unq.gbl.spaces
+# so we can identify the "other party" without an extra /threads call.
+_ONE_ON_ONE_CHAT_RE = re.compile(
+  r"^19:([0-9a-f-]{36})_([0-9a-f-]{36})@unq\.gbl\.spaces$",
+  re.IGNORECASE,
+)
 
 # chatsvc returns 7-digit fractional seconds, which datetime.fromisoformat
 # can't handle pre-3.11. Trim to microseconds.
@@ -86,27 +96,76 @@ def is_bot_chatsvc_message(message: dict) -> bool:
   return False
 
 
+def _self_mri_from_token(token: str) -> str:
+  """Extract the user's chatsvc MRI (`8:orgid:<oid>`) from a JWT.
+
+  We decode the payload without verifying the signature - this is fine
+  because we trust the token (we just minted it via owa-piggy) and only
+  need a single non-sensitive claim.
+  """
+  try:
+    payload = token.split(".")[1]
+    padded = payload + "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(padded))
+    oid = claims.get("oid") or ""
+    return f"8:orgid:{oid}" if oid else ""
+  except (ValueError, IndexError, json.JSONDecodeError):
+    return ""
+
+
+def other_party_mri(chat_id: str, self_mri: str) -> str:
+  """For 1:1 chats, return the other participant's MRI from the chat ID.
+
+  Returns empty string for group chats / meetings / channels where the
+  ID structure doesn't encode participants.
+  """
+  m = _ONE_ON_ONE_CHAT_RE.match(chat_id or "")
+  if not m:
+    return ""
+  oids = (m.group(1).lower(), m.group(2).lower())
+  self_oid = self_mri.removeprefix("8:orgid:").lower()
+  for oid in oids:
+    if oid != self_oid:
+      return f"8:orgid:{oid}"
+  return ""
+
+
 def _chat_topic(chat: dict) -> str:
   return (chat.get("threadProperties") or {}).get("topic") or ""
 
 
 def _chat_type(chat: dict) -> str:
+  """Normalize chatsvc threadType into the Graph adapter's vocabulary.
+
+  chatsvc's "chat" threadType is overloaded for both 1:1 and group
+  chats; we disambiguate via the chat ID structure -
+  `@unq.gbl.spaces` is always 1:1, anything else under "chat" is group.
+  """
   tt = (chat.get("threadProperties") or {}).get("threadType") or ""
-  # Normalize chatsvc threadType to the same vocabulary the Graph adapter
-  # emits so downstream consumers don't need to branch: "Meeting"->"meeting",
-  # "Group"->"group", "OneOnOne"->"oneOnOne", "Space"/"Channel"->"channel".
+  tt_low = tt.lower()
   m = {
     "meeting": "meeting",
     "group": "group",
     "oneonone": "oneOnOne",
-    "chat": "oneOnOne",
     "space": "channel",
     "channel": "channel",
   }
-  return m.get(tt.lower(), tt)
+  if tt_low in m:
+    return m[tt_low]
+  if tt_low == "chat":
+    chat_id = chat.get("id") or ""
+    return "oneOnOne" if chat_id.endswith("@unq.gbl.spaces") else "group"
+  return tt
 
 
-def message_to_item(profile: str, chat: dict, message: dict) -> Item | None:
+def message_to_item(
+  profile: str,
+  chat: dict,
+  message: dict,
+  *,
+  roster: dict[str, str],
+  self_mri: str,
+) -> Item | None:
   if message.get("deletetime") or message.get("deletionDate"):
     return None
   if is_system_chatsvc_message(message):
@@ -123,22 +182,33 @@ def message_to_item(profile: str, chat: dict, message: dict) -> Item | None:
     return None
   timestamp = parse_chatsvc_time(ts_str)
 
-  sender_display = (message.get("imdisplayname") or "").strip() or sender_mri(message)
+  msg_sender_mri = sender_mri(message)
+  sender_display = (message.get("imdisplayname") or "").strip() or msg_sender_mri or "unknown"
   chat_id = chat.get("id") or message.get("conversationid") or ""
   message_id = str(message.get("id"))
   source_id = f"{chat_id}:{message_id}"
   topic = _chat_topic(chat)
   ctype = _chat_type(chat)
 
+  # Recipients = everyone in the roster except self and the sender, by
+  # display name (chatsvc doesn't expose UPN/email at this layer; display
+  # names are what the Teams UI itself uses).
+  recipients = [
+    name for mri, name in roster.items()
+    if mri and mri != self_mri and mri != msg_sender_mri and name
+  ]
+  # 1:1 chats may have empty topic - fall back to the other party's name.
+  subject = topic or (recipients[0] if recipients and ctype == "oneOnOne" else "")
+
   return Item(
     id=hash_id(f"teams_{profile}", source_id),
     source=f"teams_{profile}",
     source_id=source_id,
     timestamp=timestamp,
-    sender=sender_display or "unknown",
-    recipients=[],
+    sender=sender_display,
+    recipients=recipients,
     content=body,
-    subject=topic,
+    subject=subject,
     thread_id=chat_id,
     raw_metadata={
       "profile": profile,
@@ -146,7 +216,7 @@ def message_to_item(profile: str, chat: dict, message: dict) -> Item | None:
       "chat_type": ctype,
       "topic": topic,
       "messagetype": message.get("messagetype"),
-      "sender_mri": sender_mri(message),
+      "sender_mri": msg_sender_mri,
     },
   )
 
@@ -187,14 +257,28 @@ class ChatsvcAdapter:
   skipped_bots: int = field(default=0, init=False)
   skipped_system: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
+  _self_mri: str = field(default="", init=False)
+
+  def _ensure_self_mri(self) -> str:
+    if not self._self_mri:
+      self._self_mri = _self_mri_from_token(self.client.tokens.get_token())
+    return self._self_mri
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
     self.skipped_system = 0
     self.skipped_empty = 0
     cutoff = ensure_utc(since)
+    self_mri = self._ensure_self_mri()
 
     for chat in self._iter_conversations():
+      # Skip Teams' internal "streamof*" conversations (notifications,
+      # mentions roll-up, call logs). These are aggregator pointers into
+      # real chats, not chats themselves - ingesting them duplicates the
+      # underlying messages and bloats the entity graph with self-mentions.
+      tt = (chat.get("threadProperties") or {}).get("threadType", "").lower()
+      if tt.startswith("streamof"):
+        continue
       last_msg = chat.get("lastMessage") or {}
       last_ts_raw = last_msg.get("originalarrivaltime") or last_msg.get("composetime")
       if last_ts_raw:
@@ -203,7 +287,7 @@ class ChatsvcAdapter:
             continue
         except ValueError:
           pass  # bad timestamp - fall through and iterate, the per-message check will filter
-      yield from self._iter_chat_messages(chat, cutoff)
+      yield from self._iter_chat_messages(chat, cutoff, self_mri)
 
   def _iter_conversations(self) -> Iterator[dict]:
     url = (
@@ -214,7 +298,25 @@ class ChatsvcAdapter:
       for c in page.get("conversations", []):
         yield c
 
-  def _iter_chat_messages(self, chat: dict, cutoff: datetime) -> Iterator[Item]:
+  def _iter_chat_messages(
+    self,
+    chat: dict,
+    cutoff: datetime,
+    self_mri: str,
+  ) -> Iterator[Item]:
+    """Two-pass over a single chat's messages.
+
+    Pass 1: walk all in-window messages into `buffered`, building a
+            mri -> display-name roster from each sender. For 1:1 chats
+            seed the roster with the other party's MRI extracted from
+            the chat ID, so recipients still populate even if the
+            other party hasn't spoken in the window.
+
+    Pass 2: yield Items in newest-first order with full recipients.
+
+    The buffer is bounded by `since` (yaams' watermark), which in
+    practice keeps it well under a few hundred messages per chat.
+    """
     chat_id = chat.get("id")
     if not chat_id:
       return
@@ -223,7 +325,20 @@ class ChatsvcAdapter:
       f"{CHATSVC_HOST}/api/chatsvc/{self.region}/v1/users/ME/conversations/{cid}/messages"
       f"?pageSize={self.page_size}&view={urllib.parse.quote(DEFAULT_VIEW)}"
     )
+
+    buffered: list[dict] = []
+    roster: dict[str, str] = {}
+    # Seed 1:1 roster from chat ID so the other party is known even if
+    # they haven't sent a message in the visible window (e.g. user is
+    # always the speaker in a short window).
+    other = other_party_mri(chat_id, self_mri)
+    if other:
+      roster[other] = ""  # name fills in if/when they speak
+
+    stop_walking = False
     for page in self.client.paginate(url):
+      if stop_walking:
+        break
       for message in page.get("messages", []):
         ts_str = message.get("originalarrivaltime") or message.get("composetime")
         if not ts_str:
@@ -233,17 +348,30 @@ class ChatsvcAdapter:
         except ValueError:
           continue
         if ts <= cutoff:
-          # chatsvc messages are returned newest-first; once we hit the
-          # cutoff we can stop walking this conversation entirely.
-          return
-        if is_system_chatsvc_message(message):
-          self.skipped_system += 1
-          continue
-        if self.skip_bots and is_bot_chatsvc_message(message):
-          self.skipped_bots += 1
-          continue
-        item = message_to_item(self.profile, chat, message)
-        if item is None:
-          self.skipped_empty += 1
-          continue
-        yield item
+          # chatsvc returns newest-first; once we hit the cutoff we're done
+          # with the entire chat.
+          stop_walking = True
+          break
+        mri = sender_mri(message)
+        display = (message.get("imdisplayname") or "").strip()
+        if mri and display:
+          # Last write wins; display names are stable so the choice
+          # doesn't matter, but this keeps the roster fresh.
+          roster[mri] = display
+        buffered.append(message)
+
+    for message in buffered:
+      if is_system_chatsvc_message(message):
+        self.skipped_system += 1
+        continue
+      if self.skip_bots and is_bot_chatsvc_message(message):
+        self.skipped_bots += 1
+        continue
+      item = message_to_item(
+        self.profile, chat, message,
+        roster=roster, self_mri=self_mri,
+      )
+      if item is None:
+        self.skipped_empty += 1
+        continue
+      yield item

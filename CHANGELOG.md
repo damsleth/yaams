@@ -10,6 +10,25 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-05-26
+
+### Added
+
+- Obsidian vault is now a first-class ingest source. `ingest.notes`
+  ships in the default config and `config.yaml.example`, and the
+  `yaams sources` TUI synthesizes a `notes` row when missing — press
+  `a` to set `vault_path` (lazy-creates the block) and toggle from
+  there.
+- Teams chatsvc engine. `ingest.teams.engine_overrides` lets a profile
+  use the `teams.microsoft.com/api/chatsvc` API instead of Graph
+  `/me/chats` for tenants that gate Graph behind device-compliance CA
+  policies. Optional `chatsvc_region` (default `emea`).
+
+### Changed
+
+- `yaams ingest --source notes` now raises a clear error when
+  `vault_path` is unset instead of a bare `KeyError`.
+
 ## [0.1.8] - 2026-05-25
 
 ### Added

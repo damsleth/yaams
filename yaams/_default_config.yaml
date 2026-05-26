@@ -25,6 +25,17 @@ ingest:
     user_addresses:
       - you@example.com
 
+  # Personal Obsidian vault. One vault per source; honors frontmatter
+  # `date:` / `created:` or YYYY-MM-DD filename prefixes for timestamps,
+  # strips embeds/wikilinks/frontmatter before indexing. Set `vault_path`
+  # via the `yaams sources` TUI or by editing it here.
+  notes:
+    enabled: false
+    vault_path: ~/Documents/Obsidian
+    # Optional. Directory names to skip anywhere in the vault tree.
+    # Defaults to .obsidian, .git, .smartchats, .smart-env, .claude.
+    # skip_dirs: [.obsidian, .git, archive]
+
   # Generic recursive folder ingestion. Reads .txt and .md natively;
   # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
   # Files of unsupported types (or types with the dep missing) are skipped.

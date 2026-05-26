@@ -48,6 +48,7 @@ BULLET = "·"
 
 PROFILE_AWARE = {"teams", "calendar", "mail"}
 PATH_LIST_SOURCES = {"email", "folders"}
+SINGLE_PATH_SOURCES = {"notes"}
 
 # M365 source blocks the TUI can lazy-create on first toggle. These are the
 # sources whose availability is implied by an owa-piggy profile existing:
@@ -336,6 +337,15 @@ def _build_rows(cfg: dict) -> list[Row]:
       synthetic=True,
     ))
 
+  if not any(isinstance(r, SourceRow) and r.name == "notes" for r in rows):
+    rows.append(SourceRow(
+      kind="source",
+      name="notes",
+      enabled=False,
+      summary="(not configured — press `a` to set vault path)",
+      synthetic=True,
+    ))
+
   # Synthesize missing M365 source rows. If owa-piggy reports any enabled
   # profile, expose mail/calendar/teams as toggleable rows even when the
   # config doesn't have the block yet — first toggle writes it.
@@ -385,7 +395,8 @@ def _summary_for(key: str, block: dict) -> str:
         active += 1
     return f"{active}/{len(paths)} active"
   if key == "notes":
-    return str(block.get("vault_path", ""))
+    vault = block.get("vault_path")
+    return str(vault) if vault else "(no vault_path — press `a` to set)"
   if key == "tier2_ledger":
     return str(block.get("notes_path", ""))
   if key == "github":
@@ -513,8 +524,14 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
       row = rows[cursor]
       if key == " ":
         if isinstance(row, SourceRow):
-          if row.synthetic and row.name not in _M365_BLOCK_TEMPLATES:
+          allowed_synthetic = (
+            row.name in _M365_BLOCK_TEMPLATES or row.name == "notes"
+          )
+          if row.synthetic and not allowed_synthetic:
             message = "Add a path first (`a`)."
+            continue
+          if row.synthetic and row.name == "notes":
+            message = "Set a vault_path first (`a`)."
             continue
           current = selected.get(row.name, row.enabled)
           selected[row.name] = not current
@@ -588,6 +605,17 @@ def _add_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None
     _yaml_append_folder_path(config_path, path_val.strip())
     cfg = load_config(config_path)
     return _build_rows(cfg), f"Added folder: {path_val}"
+  if parent == "notes":
+    cfg_current = load_config(config_path)
+    current_vault = (
+      (cfg_current.get("ingest", {}).get("notes") or {}).get("vault_path") or ""
+    )
+    path_val = _prompt("Obsidian vault path", default=str(current_vault))
+    if not path_val:
+      return None, "Add cancelled."
+    _yaml_set_notes_vault_path(config_path, path_val.strip())
+    cfg = load_config(config_path)
+    return _build_rows(cfg), f"Set notes vault_path: {path_val}"
   return None, f"Adding paths is not supported for `{parent}`."
 
 
@@ -626,6 +654,14 @@ def _rewrite_enabled_flags(config_path: Path, target_state: dict[str, bool]) -> 
     )
     if (block_start is None or block_end is None) and source in _M365_BLOCK_TEMPLATES:
       out_lines = _ensure_m365_block(out_lines, source)
+      lines = list(out_lines)
+      ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+      block_start, block_end = _find_block_span(
+        lines, top_level_key=source, parent_indent=2,
+        search_from=ingest_start, search_to=ingest_end,
+      )
+    if (block_start is None or block_end is None) and source == "notes":
+      out_lines = _ensure_notes_block(out_lines)
       lines = list(out_lines)
       ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
       block_start, block_end = _find_block_span(
@@ -811,6 +847,50 @@ def _ensure_folders_block(lines: list[str]) -> list[str]:
     block_lines = block_lines[1:]
   lines[insert_at:insert_at] = block_lines
   return lines
+
+
+def _ensure_notes_block(lines: list[str]) -> list[str]:
+  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+  if ingest_start is None:
+    raise click.ClickException("No `ingest:` block in config.")
+  notes_start, _ = _find_block_span(
+    lines, top_level_key="notes", parent_indent=2,
+    search_from=ingest_start, search_to=ingest_end,
+  )
+  if notes_start is not None:
+    return lines
+  block_lines = [
+    "\n",
+    "  notes:\n",
+    "    enabled: false\n",
+    "    vault_path: ~/Documents/Obsidian\n",
+  ]
+  insert_at = ingest_end if ingest_end is not None else len(lines)
+  if insert_at > 0 and lines[insert_at - 1].strip() == "":
+    block_lines = block_lines[1:]
+  lines[insert_at:insert_at] = block_lines
+  return lines
+
+
+def _yaml_set_notes_vault_path(config_path: Path, value: str) -> None:
+  lines = config_path.read_text().splitlines(keepends=True)
+  lines = _ensure_notes_block(lines)
+  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
+  assert ingest_start is not None
+  notes_start, notes_end = _find_block_span(
+    lines, top_level_key="notes", parent_indent=2,
+    search_from=ingest_start, search_to=ingest_end,
+  )
+  assert notes_start is not None and notes_end is not None
+  vault_idx = _find_key_line(lines, notes_start, notes_end, "vault_path")
+  new_line = f"    vault_path: {value}\n"
+  if vault_idx is None:
+    enabled_idx = _find_enabled_line(lines, notes_start, notes_end)
+    insert_at = (enabled_idx + 1) if enabled_idx is not None else (notes_start + 1)
+    lines.insert(insert_at, new_line)
+  else:
+    lines[vault_idx] = new_line
+  config_path.write_text("".join(lines))
 
 
 def _yaml_append_email_source(config_path: Path, src_type: str, path: str) -> None:

@@ -44,6 +44,7 @@ from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.signal import SignalAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
+from yaams.ingest.teams_chatsvc import ChatsvcAdapter, ChatsvcClient
 from yaams.logsetup import setup_logging
 from yaams.schema import init_schema
 from yaams.store import (
@@ -429,9 +430,15 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     )
   if source == "notes":
     from yaams.ingest.obsidian import DEFAULT_SKIP_DIRS as _DEFAULT_SKIP_DIRS
+    vault_path = cfg.get("vault_path")
+    if not vault_path:
+      raise ValueError(
+        "notes source requires ingest.notes.vault_path in config.yaml "
+        "(set via `yaams sources` → press `a` on the notes row)"
+      )
     skip_dirs = set(cfg.get("skip_dirs") or _DEFAULT_SKIP_DIRS)
     return ObsidianAdapter(
-      vault_path=Path(cfg["vault_path"]),
+      vault_path=Path(vault_path),
       skip_dirs=skip_dirs,
     )
   if source == "folders":
@@ -479,6 +486,24 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
+    engine = (cfg.get("engine_overrides") or {}).get(profile, "graph")
+    if engine == "chatsvc":
+      # owa-piggy mints an ic3.teams.office.com-audience token via FOCI
+      # without re-auth; that audience is not gated by the same CA policy
+      # as Graph /me/chats on tenants like SoftwareOne.
+      token_source = OwaPiggyTokenSource(
+        profile,
+        command=["owa-piggy", "--profile", profile, "--audience", "ic3"],
+      )
+      client = ChatsvcClient(token_source)
+      region = (cfg.get("chatsvc_region") or {}).get(profile, "emea")
+      return ChatsvcAdapter(
+        profile=profile,
+        client=client,
+        region=region,
+        skip_bots=bool(cfg.get("skip_bots", True)),
+        page_size=int(cfg.get("page_size", 50)),
+      )
     token_source = OwaPiggyTokenSource(profile)
     graph = GraphClient(token_source)
     return TeamsAdapter(
@@ -753,6 +778,11 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     return [f"owa-cal profile: {profile}"]
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
+    teams_cfg = cfg.get("ingest", {}).get("teams", {}) or {}
+    engine = (teams_cfg.get("engine_overrides") or {}).get(profile, "graph")
+    if engine == "chatsvc":
+      region = (teams_cfg.get("chatsvc_region") or {}).get(profile, "emea")
+      return [f"chatsvc {region} (owa-piggy profile): {profile}"]
     return [f"graph (owa-piggy profile): {profile}"]
   if source.startswith("mail_"):
     profile = source[len("mail_"):]

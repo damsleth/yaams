@@ -10,6 +10,28 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-05-26
+
+### Security
+
+- Signal ingest now validates that the SQLCipher key is pure hex before
+  interpolating it into the `PRAGMA key` script fed to the `sqlcipher`
+  CLI, refusing keys that could break out of the quoting.
+
+### Changed
+
+- Config is validated at load time: top-level `ingest`/`embed`/`synth`/
+  `entities` sections must be mappings, and numeric knobs (`embed.batch_size`/
+  `dimension`, `synth.timeout`, `mail.chunk_days`/`page_size`,
+  `teams.page_size`, `calendar.chunk_days`) must be positive numbers. A
+  mistyped value now fails with a message naming the key instead of a
+  cryptic error mid-run.
+- `owa-mail` subprocess failures and non-JSON output during M365 mail
+  ingest are now logged instead of silently returning empty.
+- Folder ingest logs PDF/DOCX read failures (and EXIF/frontmatter parse
+  failures at debug) instead of swallowing them; missing optional
+  dependencies still skip silently.
+
 ## [0.1.10] - 2026-05-26
 
 ### Fixed
@@ -196,6 +218,7 @@ documentation, and establishes a versioning baseline.
 - Added `SECURITY.md` documenting the threat model, data classification,
   and disclosure flow (GitHub Security Advisories).
 
-[Unreleased]: https://github.com/damsleth/YAAMS/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/damsleth/YAAMS/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/damsleth/YAAMS/compare/v0.1.10...v0.1.11
 [0.1.1]: https://github.com/damsleth/YAAMS/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/damsleth/YAAMS/releases/tag/v0.1.0

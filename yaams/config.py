@@ -70,7 +70,64 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
   if not isinstance(data, dict):
     raise ValueError(f"Config file must contain a mapping: {config_path}")
   _apply_aliases(data)
+  _validate_config(data, config_path)
   return data
+
+
+# Numeric knobs that get coerced with int()/float() deep in the call stack.
+# Validating them up front turns an opaque ValueError/TypeError mid-ingest
+# into a clear "fix this key" message at load time. Each entry is
+# (dotted path, expected python type, must-be-positive).
+_NUMERIC_KNOBS: tuple[tuple[str, type, bool], ...] = (
+  ("embed.batch_size", int, True),
+  ("embed.dimension", int, True),
+  ("synth.timeout", (int, float), True),
+  ("ingest.mail.chunk_days", int, True),
+  ("ingest.mail.page_size", int, True),
+  ("ingest.teams.page_size", int, True),
+  ("ingest.calendar.chunk_days", int, True),
+)
+
+
+def _dig(data: dict[str, Any], dotted: str) -> tuple[bool, Any]:
+  """Return (found, value) for a dotted path, stopping if a node isn't a dict."""
+  node: Any = data
+  for part in dotted.split("."):
+    if not isinstance(node, dict) or part not in node:
+      return False, None
+    node = node[part]
+  return True, node
+
+
+def _validate_config(data: dict[str, Any], config_path: Path) -> None:
+  """Reject structurally broken configs with an actionable message.
+
+  Catches the two failure modes that otherwise surface as cryptic
+  tracebacks well after load: a top-level section that isn't a mapping,
+  and a numeric knob set to a non-numeric (or non-positive) value.
+  """
+  for section in ("ingest", "embed", "synth", "entities"):
+    value = data.get(section)
+    if value is not None and not isinstance(value, dict):
+      raise ValueError(
+        f"Config section '{section}' must be a mapping, got "
+        f"{type(value).__name__}: {config_path}"
+      )
+
+  for dotted, expected, positive in _NUMERIC_KNOBS:
+    found, value = _dig(data, dotted)
+    if not found or value is None:
+      continue
+    # bool is a subclass of int; reject it explicitly as a likely mistake.
+    if isinstance(value, bool) or not isinstance(value, expected):
+      raise ValueError(
+        f"Config value '{dotted}' must be a number, got "
+        f"{type(value).__name__} ({value!r}): {config_path}"
+      )
+    if positive and value <= 0:
+      raise ValueError(
+        f"Config value '{dotted}' must be positive, got {value!r}: {config_path}"
+      )
 
 
 def _apply_aliases(data: dict[str, Any]) -> None:

@@ -10,6 +10,14 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-05-26
+
+### Fixed
+
+- Teams chatsvc messages now populate `recipients` (with a subject
+  fallback) and include the local user in recipients when another
+  participant is the sender.
+
 ## [0.1.9] - 2026-05-26
 
 ### Added

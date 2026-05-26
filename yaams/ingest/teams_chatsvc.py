@@ -96,21 +96,25 @@ def is_bot_chatsvc_message(message: dict) -> bool:
   return False
 
 
-def _self_mri_from_token(token: str) -> str:
-  """Extract the user's chatsvc MRI (`8:orgid:<oid>`) from a JWT.
+def _self_identity_from_token(token: str) -> tuple[str, str]:
+  """Extract the user's chatsvc MRI and display name from a JWT.
 
-  We decode the payload without verifying the signature - this is fine
-  because we trust the token (we just minted it via owa-piggy) and only
-  need a single non-sensitive claim.
+  Returns `(mri, display_name)`. We decode the payload without
+  verifying the signature - this is fine because we trust the token
+  (we just minted it via owa-piggy) and only read non-sensitive claims.
+  Falls back to `("", "")` on any parse failure; callers must tolerate
+  empty values.
   """
   try:
     payload = token.split(".")[1]
     padded = payload + "=" * (-len(payload) % 4)
     claims = json.loads(base64.urlsafe_b64decode(padded))
     oid = claims.get("oid") or ""
-    return f"8:orgid:{oid}" if oid else ""
+    mri = f"8:orgid:{oid}" if oid else ""
+    name = (claims.get("name") or claims.get("unique_name") or "").strip()
+    return mri, name
   except (ValueError, IndexError, json.JSONDecodeError):
-    return ""
+    return "", ""
 
 
 def other_party_mri(chat_id: str, self_mri: str) -> str:
@@ -190,15 +194,24 @@ def message_to_item(
   topic = _chat_topic(chat)
   ctype = _chat_type(chat)
 
-  # Recipients = everyone in the roster except self and the sender, by
-  # display name (chatsvc doesn't expose UPN/email at this layer; display
-  # names are what the Teams UI itself uses).
+  # Recipients = everyone in the roster except the sender. Self IS
+  # included when someone else sent the message (matches Graph adapter:
+  # see yaams/ingest/teams.py _resolve_recipients, which excludes the
+  # sender only). chatsvc doesn't expose UPN/email at this layer so we
+  # use display names; downstream entity linking copes either way.
   recipients = [
     name for mri, name in roster.items()
-    if mri and mri != self_mri and mri != msg_sender_mri and name
+    if mri and mri != msg_sender_mri and name
   ]
-  # 1:1 chats may have empty topic - fall back to the other party's name.
-  subject = topic or (recipients[0] if recipients and ctype == "oneOnOne" else "")
+  # For 1:1 chats, subject falls back to "the other person's name" -
+  # never self, since that's not informative. Use self_mri to pick.
+  subject = topic
+  if not subject and ctype == "oneOnOne":
+    others = [
+      name for mri, name in roster.items()
+      if mri and mri != self_mri and name
+    ]
+    subject = others[0] if others else ""
 
   return Item(
     id=hash_id(f"teams_{profile}", source_id),
@@ -258,18 +271,21 @@ class ChatsvcAdapter:
   skipped_system: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
   _self_mri: str = field(default="", init=False)
+  _self_name: str = field(default="", init=False)
 
-  def _ensure_self_mri(self) -> str:
+  def _ensure_self_identity(self) -> tuple[str, str]:
     if not self._self_mri:
-      self._self_mri = _self_mri_from_token(self.client.tokens.get_token())
-    return self._self_mri
+      self._self_mri, self._self_name = _self_identity_from_token(
+        self.client.tokens.get_token()
+      )
+    return self._self_mri, self._self_name
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
     self.skipped_system = 0
     self.skipped_empty = 0
     cutoff = ensure_utc(since)
-    self_mri = self._ensure_self_mri()
+    self_mri, self_name = self._ensure_self_identity()
 
     for chat in self._iter_conversations():
       # Skip Teams' internal "streamof*" conversations (notifications,
@@ -287,7 +303,7 @@ class ChatsvcAdapter:
             continue
         except ValueError:
           pass  # bad timestamp - fall through and iterate, the per-message check will filter
-      yield from self._iter_chat_messages(chat, cutoff, self_mri)
+      yield from self._iter_chat_messages(chat, cutoff, self_mri, self_name)
 
   def _iter_conversations(self) -> Iterator[dict]:
     url = (
@@ -303,6 +319,7 @@ class ChatsvcAdapter:
     chat: dict,
     cutoff: datetime,
     self_mri: str,
+    self_name: str,
   ) -> Iterator[Item]:
     """Two-pass over a single chat's messages.
 
@@ -328,12 +345,17 @@ class ChatsvcAdapter:
 
     buffered: list[dict] = []
     roster: dict[str, str] = {}
+    # Seed self into the roster so `recipients = roster - sender` resolves
+    # to [self_name] when someone else sends to us, even if we never spoke
+    # in the visible window.
+    if self_mri:
+      roster[self_mri] = self_name
     # Seed 1:1 roster from chat ID so the other party is known even if
     # they haven't sent a message in the visible window (e.g. user is
     # always the speaker in a short window).
     other = other_party_mri(chat_id, self_mri)
     if other:
-      roster[other] = ""  # name fills in if/when they speak
+      roster.setdefault(other, "")  # name fills in if/when they speak
 
     stop_walking = False
     for page in self.client.paginate(url):

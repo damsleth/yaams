@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from yaams.ingest.folder import FolderAdapter
+from yaams.ingest.folder import FolderAdapter, _parse_frontmatter
 
 
 def _touch(path: Path, body: str, mtime: datetime | None = None) -> Path:
@@ -215,3 +216,28 @@ def test_folder_adapter_files_walked_includes_cutoff_filtered(tmp_path: Path) ->
   assert len(items) == 1
   assert adapter.files_walked == 2
   assert adapter.skipped_before_cutoff == 1
+
+
+def test_parse_frontmatter_valid() -> None:
+  text = "---\ntitle: Hello\ntags: a\n---\nbody\n"
+  fm = _parse_frontmatter(text)
+  assert fm == {"title": "Hello", "tags": "a"}
+
+
+def test_parse_frontmatter_malformed_logs_and_returns_empty(caplog) -> None:
+  # Unbalanced flow sequence: valid frontmatter fence, invalid YAML inside.
+  text = "---\ntitle: [unclosed\n---\nbody\n"
+  # The yaams logger sets propagate=False once setup_logging runs (which other
+  # tests may trigger), so attach caplog's handler to the module logger
+  # directly rather than relying on propagation to the root.
+  logger = logging.getLogger("yaams.ingest.folder")
+  logger.addHandler(caplog.handler)
+  prev_level = logger.level
+  logger.setLevel(logging.DEBUG)
+  try:
+    fm = _parse_frontmatter(text)
+  finally:
+    logger.removeHandler(caplog.handler)
+    logger.setLevel(prev_level)
+  assert fm == {}
+  assert any("frontmatter parse failed" in r.message for r in caplog.records)

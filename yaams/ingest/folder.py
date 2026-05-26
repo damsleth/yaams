@@ -14,6 +14,7 @@ than erroring out.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ from typing import Iterator
 from yaams.config import expand_path
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
+
+logger = logging.getLogger("yaams.ingest.folder")
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _H1_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
@@ -175,10 +178,12 @@ def _read_pdf(path: Path) -> str | None:
     for page in reader.pages:
       try:
         chunks.append(page.extract_text() or "")
-      except Exception:
+      except Exception as exc:
+        logger.debug("folder: PDF page extract failed for %s: %s", path, exc)
         continue
     return "\n\n".join(c.strip() for c in chunks if c.strip()).strip()
-  except Exception:
+  except Exception as exc:
+    logger.warning("folder: failed to read PDF %s: %s", path, exc)
     return ""
 
 
@@ -191,7 +196,8 @@ def _read_docx(path: Path) -> str | None:
     document = docx.Document(str(path))
     paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
     return "\n\n".join(paragraphs).strip()
-  except Exception:
+  except Exception as exc:
+    logger.warning("folder: failed to read DOCX %s: %s", path, exc)
     return ""
 
 
@@ -203,7 +209,8 @@ def _parse_frontmatter(text: str) -> dict:
     import yaml
     data = yaml.safe_load(m.group(0).strip("---\n")) or {}
     return data if isinstance(data, dict) else {}
-  except Exception:
+  except Exception as exc:
+    logger.debug("folder: frontmatter parse failed: %s", exc)
     return {}
 
 
@@ -288,5 +295,6 @@ def _read_image_exif(path: Path) -> dict:
         if model:
           result["camera_model"] = str(model).strip()
       return result
-  except Exception:
+  except Exception as exc:
+    logger.debug("folder: EXIF read failed for %s: %s", path, exc)
     return {}

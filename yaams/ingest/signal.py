@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json as jsonlib
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -161,12 +162,31 @@ def _strip_pkcs7(data: bytes) -> bytes:
   return data[:-pad]
 
 
+_HEX_KEY = re.compile(r"\A[0-9a-fA-F]+\Z")
+
+
+def _validate_hex_key(sqlcipher_key: str) -> str:
+  """Reject keys that aren't pure hex.
+
+  The key is interpolated into a ``PRAGMA key = "x'...'"`` statement fed to
+  the sqlcipher CLI. A non-hex value (a stray ``'`` from a corrupt config.json
+  ``key`` field, or a botched decrypt) could break out of the quoting, so we
+  constrain it to hex before it ever reaches the subprocess.
+  """
+  if not _HEX_KEY.match(sqlcipher_key or ""):
+    raise RuntimeError(
+      "Signal SQLCipher key is not valid hex; refusing to pass it to sqlcipher."
+    )
+  return sqlcipher_key
+
+
 def export_plaintext_db(encrypted_db: Path, sqlcipher_key: str, target: Path) -> None:
   """Shell out to the sqlcipher CLI to export a plaintext copy."""
   if shutil.which("sqlcipher") is None:
     raise RuntimeError(
       "sqlcipher CLI is required for Signal ingest. Install with: brew install sqlcipher"
     )
+  _validate_hex_key(sqlcipher_key)
   if target.exists():
     target.unlink()
   script = (

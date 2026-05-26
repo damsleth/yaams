@@ -6,13 +6,27 @@ from datetime import UTC, datetime
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+import pytest
+
 from yaams.ingest.signal import (
   CHROMIUM_SAFE_STORAGE_IV,
   CHROMIUM_SAFE_STORAGE_PREFIX,
+  _validate_hex_key,
   derive_safe_storage_key,
   extract_from_connection,
   unwrap_encrypted_key,
 )
+
+
+def test_validate_hex_key_accepts_hex():
+  key = "ab" * 32
+  assert _validate_hex_key(key) == key
+
+
+@pytest.mark.parametrize("bad", ["", "nothex", "ab'; DROP", "ab cd", None])
+def test_validate_hex_key_rejects_non_hex(bad):
+  with pytest.raises(RuntimeError, match="not valid hex"):
+    _validate_hex_key(bad)
 
 
 def _signal_schema(conn: sqlite3.Connection) -> None:

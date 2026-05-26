@@ -18,11 +18,14 @@ Strategy:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Iterator
+
+logger = logging.getLogger("yaams.ingest.m365_mail")
 
 from yaams.ingest.base import Item, hash_id
 from yaams.ingest.email_mbox import (
@@ -80,11 +83,22 @@ class M365MailAdapter:
        "--limit", "200"],
       capture_output=True, text=True,
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode != 0:
+      logger.warning(
+        "owa-mail messages failed (profile=%s folder=%s rc=%d): %s",
+        self.profile, folder, result.returncode,
+        (result.stderr or "").strip() or "no stderr",
+      )
+      return []
+    if not result.stdout.strip():
       return []
     try:
       data = json.loads(result.stdout)
     except json.JSONDecodeError:
+      logger.warning(
+        "owa-mail messages returned non-JSON (profile=%s folder=%s)",
+        self.profile, folder,
+      )
       return []
     return data if isinstance(data, list) else []
 
@@ -93,11 +107,22 @@ class M365MailAdapter:
       ["owa-mail", "show", "--profile", self.profile, "--id", message_id],
       capture_output=True, text=True,
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode != 0:
+      logger.warning(
+        "owa-mail show failed (profile=%s id=%s rc=%d): %s",
+        self.profile, message_id, result.returncode,
+        (result.stderr or "").strip() or "no stderr",
+      )
+      return None
+    if not result.stdout.strip():
       return None
     try:
       data = json.loads(result.stdout)
     except json.JSONDecodeError:
+      logger.warning(
+        "owa-mail show returned non-JSON (profile=%s id=%s)",
+        self.profile, message_id,
+      )
       return None
     return data if isinstance(data, dict) else None
 

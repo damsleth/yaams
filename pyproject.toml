@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "click>=8.1",
+  "hugr-conventions>=0.1",
   "cryptography>=42.0",
   "pyyaml>=6.0",
   "numpy<2",

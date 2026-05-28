@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import click
 
 from yaams.cli._envelope import JsonFailureGuard
@@ -25,6 +27,21 @@ from yaams.synthesize import llm_adapter_from_config, synthesize_answer
 from yaams.time import format_local, parse_iso_datetime, to_local
 
 _LEDGER_SOURCE_ID = "tier2_ledger"
+
+
+def _cli_provenance() -> str | None:
+  """Tag CLI-issued queries; flag hugr passthrough when detectable.
+
+  ``hugr`` sets ``HUGR_PASSTHROUGH=1`` when shelling out to ``yaams query``
+  so those rows can be distinguished from a direct ``yaams query`` call.
+  Returns ``None`` under pytest so ``detect_provenance`` falls through to
+  its ``PYTEST_CURRENT_TEST`` check and tags the row ``"test"`` instead.
+  """
+  if os.environ.get("PYTEST_CURRENT_TEST"):
+    return None
+  if os.environ.get("HUGR_PASSTHROUGH"):
+    return "hugr"
+  return "cli"
 
 
 def _resolve_source_filter(
@@ -117,6 +134,13 @@ def _resolve_source_filter(
 @click.option("--no-parse", is_flag=True, help="Skip the LLM query parser (raw text -> hybrid retrieve)")
 @click.option("--explain", is_flag=True, help="Print the parsed query JSON before results")
 @click.option("--high-quality", is_flag=True, help="Force synthesis-grade depth (bumps top_k, future rerank hook)")
+@click.option(
+  "--prompt/--no-prompt",
+  "feedback_prompt",
+  default=None,
+  help="After results, ask for a feedback verdict (h/m/1-9/n). "
+       "Default: on when stdin and stdout are TTYs and --format=text.",
+)
 def query_cmd(
   text: tuple[str, ...],
   config_path: str,
@@ -135,6 +159,7 @@ def query_cmd(
   no_parse: bool,
   explain: bool,
   high_quality: bool,
+  feedback_prompt: bool | None,
 ) -> None:
   # --json and --pretty are aliases for --format. Last-one-wins by
   # presence; if both are set we honor --json (machine mode is the
@@ -260,6 +285,7 @@ def query_cmd(
           confidence_reason=answer_result.confidence_reason if answer_result else None,
           gaps=answer_result.gaps if answer_result else None,
           parser_fallback=parser_fallback_used,
+          provenance=_cli_provenance(),
         )
       finally:
         conn_rw.close()
@@ -313,6 +339,91 @@ def query_cmd(
     click.echo()
     for i, r in enumerate(results, 1):
       _render_result(i, r)
+
+    if not no_log and _should_prompt(feedback_prompt, output_format):
+      _prompt_feedback(
+        db_path=db_path,
+        query_id=query_id,
+        query_text=query_text,
+        results=results,
+      )
+
+
+def _should_prompt(feedback_prompt: bool | None, output_format: str) -> bool:
+  """Decide whether to show the inline feedback prompt.
+
+  Explicit ``--prompt`` / ``--no-prompt`` always win. Otherwise prompt
+  only in interactive text mode: both stdin and stdout must be TTYs and
+  the output_format must be ``text``. JSON callers never see a prompt.
+  """
+  import sys
+
+  if output_format != "text":
+    return False
+  if feedback_prompt is not None:
+    return feedback_prompt
+  return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _prompt_feedback(*, db_path, query_id: str, query_text: str, results) -> None:
+  """Inline post-query verdict prompt. One keystroke, no Enter required."""
+  from yaams.signals import flush_session, log_feedback, noise_cascade
+
+  if not results:
+    return
+
+  click.echo("")
+  click.echo(
+    "Useful? [h]it  [m]iss  [1-9]correction  [n]oise  [enter]skip",
+    nl=False,
+  )
+  try:
+    ch = click.getchar(echo=False)
+  except (KeyboardInterrupt, EOFError):
+    click.echo("")
+    return
+  click.echo("")  # finalize the prompt line
+
+  # Treat enter / esc / space / any non-verdict input as skip.
+  if ch in ("\r", "\n", " ", "\x1b", "\x03", ""):
+    return
+
+  try:
+    conn = open_db(db_path)
+  except Exception as exc:
+    click.echo(f"feedback skipped (db open failed: {exc})", err=True)
+    return
+
+  try:
+    if ch == "h":
+      log_feedback(
+        conn, query_id=query_id, kind="hit", result_id=results[0].id
+      )
+      click.echo(f"  logged: hit on rank 1 ({results[0].id})")
+      return
+    if ch == "m":
+      log_feedback(conn, query_id=query_id, kind="miss")
+      click.echo("  logged: miss")
+      return
+    if ch == "n":
+      entries = noise_cascade(conn, query_id=query_id, text=query_text)
+      written = flush_session(conn, entries)
+      click.echo(f"  logged: noise (cascaded to {written} row(s))")
+      return
+    if len(ch) == 1 and ch in "123456789":
+      rank = int(ch)
+      if rank > len(results):
+        click.echo(f"  no result at rank {rank}; skipped")
+        return
+      target = results[rank - 1]
+      log_feedback(
+        conn, query_id=query_id, kind="correction", result_id=target.id
+      )
+      click.echo(f"  logged: correction → rank {rank} ({target.id})")
+      return
+    click.echo(f"  {ch!r} — no verdict; skipped")
+  finally:
+    conn.close()
 
 
 def _result_to_dict(r) -> dict:

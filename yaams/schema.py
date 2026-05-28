@@ -193,6 +193,9 @@ def _migrate_query_structured_fields(conn: sqlite3.Connection) -> None:
     ("confidence_reason", "TEXT"),
     ("gaps", "TEXT"),
     ("parser_fallback", "INTEGER NOT NULL DEFAULT 0"),
+    # `provenance`: who issued the query (cli, test, hugr, unknown, …).
+    # NULL for rows logged before this column existed — treat as 'unknown'.
+    ("provenance", "TEXT"),
   )
   for name, decl in additions:
     if name not in cols:

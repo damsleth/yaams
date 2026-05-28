@@ -1,16 +1,22 @@
 """Microsoft 365 mail ingester.
 
 Shells out to `owa-mail` (which talks to Microsoft Graph via owa-piggy) to
-list and fetch message bodies per profile. One yaams source per profile:
+list message bodies per profile. One yaams source per profile:
 ``mail_<profile>``.
 
 Strategy:
   - Walk a date range in ``chunk_days`` slices to stay under owa-mail's
     200-result hard cap.
-  - For each listed message, call ``owa-mail show --id <id>`` to fetch
-    the full body (the listing endpoint only returns a short preview).
+  - One `owa-mail messages --with-body` call per (folder, chunk) returns
+    the full body + InternetMessageHeaders inline — no per-message
+    `show` roundtrip. This is the difference between O(messages) and
+    O(chunks) subprocess hops.
   - Walk both Inbox and SentItems by default so the user's outbound
     messages aren't lost.
+  - Apply real RFC newsletter heuristics (List-Unsubscribe / List-Id /
+    Precedence / Auto-Submitted) against the listing headers, matching
+    `is_newsletter` from the mbox path. Falls back to sender / subject
+    heuristics for messages without selectable headers.
   - Reuse ``clean_email_body`` / ``strip_html`` from email_mbox so the
     cleaned text matches what the mbox/emlx ingester produces.
 """
@@ -44,6 +50,14 @@ _AUTOMATED_SUBJECT = re.compile(
   re.IGNORECASE,
 )
 
+# RFC headers that mark a message as bulk/automated. Matches
+# email_mbox.is_newsletter() but reads from owa-mail's internet_headers
+# list (Graph's InternetMessageHeaders) instead of an email.Message.
+_NEWSLETTER_HEADER_NAMES = frozenset({
+  "list-unsubscribe", "list-id", "list-help",
+})
+_BULK_PRECEDENCES = frozenset({"bulk", "list", "junk"})
+
 
 @dataclass
 class M365MailAdapter:
@@ -55,11 +69,13 @@ class M365MailAdapter:
   skipped_newsletters: int = field(default=0, init=False)
   skipped_email_dates: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
+  skipped_no_timestamp: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_newsletters = 0
     self.skipped_email_dates = 0
     self.skipped_empty = 0
+    self.skipped_no_timestamp = 0
     cutoff = ensure_utc(since).date()
     today = date.today()
     user_set = {a.strip().lower() for a in self.user_addresses if a}
@@ -67,20 +83,26 @@ class M365MailAdapter:
       chunk_start = cutoff
       while chunk_start <= today:
         chunk_end = min(chunk_start + timedelta(days=self.chunk_days - 1), today)
-        for envelope in self._list(folder, chunk_start, chunk_end):
-          item = self._materialize(envelope, folder, user_set)
+        for message in self._list(folder, chunk_start, chunk_end):
+          item = self._materialize(message, folder, user_set)
           if item is not None:
             yield item
         chunk_start = chunk_end + timedelta(days=1)
 
   def _list(self, folder: str, start: date, end: date) -> list[dict]:
+    """Bulk-fetch listings with body + headers inline (`--with-body`).
+
+    One subprocess per (folder, chunk) replaces a per-message `show`
+    fan-out. Each entry has the same shape as `owa-mail show` output.
+    """
     result = subprocess.run(
       ["owa-mail", "messages",
        "--profile", self.profile,
        "--folder", folder,
        "--since", str(start),
        "--until", str(end),
-       "--limit", "200"],
+       "--limit", "200",
+       "--with-body"],
       capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -102,69 +124,61 @@ class M365MailAdapter:
       return []
     return data if isinstance(data, list) else []
 
-  def _fetch_body(self, message_id: str) -> dict | None:
-    result = subprocess.run(
-      ["owa-mail", "show", "--profile", self.profile, "--id", message_id],
-      capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-      logger.warning(
-        "owa-mail show failed (profile=%s id=%s rc=%d): %s",
-        self.profile, message_id, result.returncode,
-        (result.stderr or "").strip() or "no stderr",
-      )
-      return None
-    if not result.stdout.strip():
-      return None
-    try:
-      data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-      logger.warning(
-        "owa-mail show returned non-JSON (profile=%s id=%s)",
-        self.profile, message_id,
-      )
-      return None
-    return data if isinstance(data, dict) else None
-
   def _materialize(
-    self, envelope: dict, folder: str, user_set: set[str],
+    self, message: dict, folder: str, user_set: set[str],
   ) -> Item | None:
-    sender = (envelope.get("from") or "").strip()
+    sender = (message.get("from") or "").strip()
     sender_lower = sender.lower()
     is_outbound = sender_lower in user_set
     if self.skip_newsletters and not is_outbound:
-      if is_automated_sender(sender) or _is_owa_newsletter(envelope):
+      if is_automated_sender(sender) or _is_owa_newsletter(message):
         self.skipped_newsletters += 1
         return None
 
-    message_id = envelope.get("id") or ""
+    message_id = message.get("id") or ""
     if not message_id:
-      return None
-
-    body_data = self._fetch_body(message_id)
-    if body_data is None:
       self.skipped_empty += 1
       return None
-    return _to_item(body_data, envelope, folder, self.profile)
+
+    item = _to_item(message, folder, self.profile)
+    if item is None:
+      # _to_item returns None for missing timestamp or empty body after
+      # cleaning. Track both so the perf cost of these silent drops is
+      # visible in stats — the previous design hid them entirely.
+      if not (message.get("received") or ""):
+        self.skipped_no_timestamp += 1
+      else:
+        self.skipped_empty += 1
+    return item
 
 
-def _is_owa_newsletter(envelope: dict) -> bool:
-  """Best-effort newsletter detection from the listing payload.
+def _is_owa_newsletter(message: dict) -> bool:
+  """Detect newsletters using the same signals as email_mbox.is_newsletter().
 
-  owa-mail's listing doesn't expose List-Unsubscribe headers, so we lean
-  on sender patterns and subject keywords. The mbox path uses real RFC
-  headers via is_newsletter() — this is the lossy equivalent.
+  Prefers RFC headers from `internet_headers` (`--with-body` populates
+  this); falls back to sender / subject heuristics when headers are
+  absent. Mirrors `is_newsletter` in email_mbox.py.
   """
-  subject = envelope.get("subject") or ""
+  headers = message.get("internet_headers") or []
+  for h in headers:
+    name = (h.get("name") or "").lower()
+    value = (h.get("value") or "").strip().lower()
+    if not name:
+      continue
+    if name in _NEWSLETTER_HEADER_NAMES and value:
+      return True
+    if name == "precedence" and value in _BULK_PRECEDENCES:
+      return True
+    if name == "auto-submitted" and value and value != "no":
+      return True
+  subject = message.get("subject") or ""
   if _AUTOMATED_SUBJECT.search(subject):
     return True
   return False
 
 
-def _to_item(
-  body_data: dict, envelope: dict, folder: str, profile: str,
-) -> Item | None:
-  ts_str = body_data.get("received") or envelope.get("received") or ""
+def _to_item(message: dict, folder: str, profile: str) -> Item | None:
+  ts_str = message.get("received") or ""
   if not ts_str:
     return None
   try:
@@ -172,8 +186,8 @@ def _to_item(
   except ValueError:
     return None
 
-  body_raw = body_data.get("body") or ""
-  body_type = (body_data.get("body_type") or "").lower()
+  body_raw = message.get("body") or ""
+  body_type = (message.get("body_type") or "").lower()
   if body_type == "html":
     body_text = strip_html(body_raw)
   else:
@@ -184,17 +198,14 @@ def _to_item(
   if len(body) > MAX_EMAIL_CHARS:
     body = body[:MAX_EMAIL_CHARS]
 
-  sender = (body_data.get("from") or envelope.get("from") or "unknown").strip()
-  to_field = body_data.get("to") or envelope.get("to") or ""
-  cc_field = body_data.get("cc") or envelope.get("cc") or ""
-  bcc_field = body_data.get("bcc") or envelope.get("bcc") or ""
-  to = _split_addresses(to_field)
-  cc = _split_addresses(cc_field)
-  bcc = _split_addresses(bcc_field)
+  sender = (message.get("from") or "unknown").strip()
+  to = _split_addresses(message.get("to") or "")
+  cc = _split_addresses(message.get("cc") or "")
+  bcc = _split_addresses(message.get("bcc") or "")
 
-  subject = (body_data.get("subject") or envelope.get("subject") or "").strip()
-  message_id = body_data.get("id") or envelope.get("id") or ""
-  conversation_id = body_data.get("conversation_id") or envelope.get("conversation_id")
+  subject = (message.get("subject") or "").strip()
+  message_id = message.get("id") or ""
+  conversation_id = message.get("conversation_id")
 
   source = f"mail_{profile}"
   return Item(
@@ -212,10 +223,10 @@ def _to_item(
       "folder": folder,
       "cc": cc,
       "bcc": bcc,
-      "has_attachments": bool(body_data.get("has_attachments", False)),
-      "importance": body_data.get("importance", ""),
-      "is_read": bool(body_data.get("is_read", False)),
-      "web_link": body_data.get("web_link", ""),
+      "has_attachments": bool(message.get("has_attachments", False)),
+      "importance": message.get("importance", ""),
+      "is_read": bool(message.get("is_read", False)),
+      "web_link": message.get("web_link", ""),
     },
   )
 

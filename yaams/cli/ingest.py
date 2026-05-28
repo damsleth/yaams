@@ -184,6 +184,7 @@ def ingest(
       run_stats[src]["skipped_bots"] = source_stats.get("skipped_bots", 0)
       run_stats[src]["skipped_system"] = source_stats.get("skipped_system", 0)
       run_stats[src]["skipped_empty"] = source_stats.get("skipped_empty", 0)
+      run_stats[src]["skipped_no_timestamp"] = source_stats.get("skipped_no_timestamp", 0)
       run_stats[src]["decoded_attributed_body"] = source_stats[
         "decoded_attributed_body"
       ]
@@ -375,6 +376,7 @@ def ingest_source(
     + int(getattr(adapter, "skipped_bots", 0))
     + int(getattr(adapter, "skipped_system", 0))
     + int(getattr(adapter, "skipped_empty", 0))
+    + int(getattr(adapter, "skipped_no_timestamp", 0))
     + skipped_before_cutoff,
     "skipped_emlx": int(getattr(adapter, "skipped_emlx", 0)),
     "skipped_email_dates": int(getattr(adapter, "skipped_email_dates", 0)),
@@ -382,6 +384,7 @@ def ingest_source(
     "skipped_bots": int(getattr(adapter, "skipped_bots", 0)),
     "skipped_system": int(getattr(adapter, "skipped_system", 0)),
     "skipped_empty": int(getattr(adapter, "skipped_empty", 0)),
+    "skipped_no_timestamp": int(getattr(adapter, "skipped_no_timestamp", 0)),
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
@@ -840,8 +843,10 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
   if source.startswith("mail_"):
     skipped_news = int(stats.get("skipped_newsletters", 0))
     skipped_empty = int(stats.get("skipped_empty", 0))
-    if skipped_news or skipped_empty:
+    skipped_no_ts = int(stats.get("skipped_no_timestamp", 0))
+    if skipped_news or skipped_empty or skipped_no_ts:
       click.echo(
         f"    skipped mail details: {skipped_news:,} newsletters/automated, "
-        f"{skipped_empty:,} empty/fetch-failed"
+        f"{skipped_empty:,} empty/fetch-failed, "
+        f"{skipped_no_ts:,} no timestamp"
       )

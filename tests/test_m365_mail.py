@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from yaams.ingest.m365_mail import _is_owa_newsletter, _split_addresses, _to_item
+from yaams.ingest.m365_mail import (
+  M365MailAdapter,
+  _is_owa_newsletter,
+  _split_addresses,
+  _to_item,
+)
 
 
-def _envelope(**overrides) -> dict:
-  env = {
+def _message(**overrides) -> dict:
+  """A message shaped like `owa-mail messages --with-body` output."""
+  m = {
     "id": "msg-1",
     "conversation_id": "thr-1",
     "received": "2026-05-23T13:20:46Z",
@@ -15,27 +21,20 @@ def _envelope(**overrides) -> dict:
     "to": "bob@example.com",
     "cc": "",
     "bcc": "",
-  }
-  env.update(overrides)
-  return env
-
-
-def _body(**overrides) -> dict:
-  body = dict(_envelope())
-  body.update({
     "body_type": "Text",
     "body": "Just checking in.",
     "has_attachments": False,
     "is_read": False,
     "importance": "Normal",
     "web_link": "https://outlook.office.com/...",
-  })
-  body.update(overrides)
-  return body
+    "internet_headers": [],
+  }
+  m.update(overrides)
+  return m
 
 
 def test_to_item_basic_text_body():
-  item = _to_item(_body(), _envelope(), folder="Inbox", profile="work")
+  item = _to_item(_message(), folder="Inbox", profile="work")
   assert item is not None
   assert item.source == "mail_work"
   assert item.source_id == "msg-1"
@@ -51,7 +50,7 @@ def test_to_item_basic_text_body():
 def test_to_item_strips_html_body():
   html = "<html><body><p>Hi <b>there</b></p></body></html>"
   item = _to_item(
-    _body(body=html, body_type="HTML"), _envelope(),
+    _message(body=html, body_type="HTML"),
     folder="Inbox", profile="work",
   )
   assert item is not None
@@ -61,17 +60,12 @@ def test_to_item_strips_html_body():
 
 
 def test_to_item_returns_none_for_empty_body():
-  item = _to_item(
-    _body(body=""), _envelope(), folder="Inbox", profile="work",
-  )
+  item = _to_item(_message(body=""), folder="Inbox", profile="work")
   assert item is None
 
 
 def test_to_item_returns_none_for_missing_timestamp():
-  item = _to_item(
-    _body(received=""), _envelope(received=""),
-    folder="Inbox", profile="work",
-  )
+  item = _to_item(_message(received=""), folder="Inbox", profile="work")
   assert item is None
 
 
@@ -82,6 +76,62 @@ def test_split_addresses_handles_csv_and_blanks():
 
 
 def test_is_owa_newsletter_detects_subject_keywords():
-  assert _is_owa_newsletter(_envelope(subject="Weekly update from foo"))
-  assert _is_owa_newsletter(_envelope(subject="Click here to unsubscribe"))
-  assert not _is_owa_newsletter(_envelope(subject="Lunch tomorrow?"))
+  assert _is_owa_newsletter(_message(subject="Weekly update from foo"))
+  assert _is_owa_newsletter(_message(subject="Click here to unsubscribe"))
+  assert not _is_owa_newsletter(_message(subject="Lunch tomorrow?"))
+
+
+def test_is_owa_newsletter_detects_list_unsubscribe_header():
+  msg = _message(
+    subject="Quarterly report",
+    internet_headers=[
+      {"name": "List-Unsubscribe", "value": "<mailto:unsub@example.com>"},
+    ],
+  )
+  assert _is_owa_newsletter(msg)
+
+
+def test_is_owa_newsletter_detects_precedence_bulk():
+  msg = _message(
+    subject="Quarterly report",
+    internet_headers=[{"name": "Precedence", "value": "bulk"}],
+  )
+  assert _is_owa_newsletter(msg)
+
+
+def test_is_owa_newsletter_ignores_auto_submitted_no():
+  msg = _message(
+    subject="Quarterly report",
+    internet_headers=[{"name": "Auto-Submitted", "value": "no"}],
+  )
+  assert not _is_owa_newsletter(msg)
+
+
+def test_is_owa_newsletter_detects_auto_submitted_generated():
+  msg = _message(
+    subject="Quarterly report",
+    internet_headers=[{"name": "Auto-Submitted", "value": "auto-generated"}],
+  )
+  assert _is_owa_newsletter(msg)
+
+
+def test_materialize_counts_no_timestamp_as_skip():
+  adapter = M365MailAdapter(profile="work")
+  adapter.skipped_no_timestamp = 0
+  adapter.skipped_empty = 0
+  msg = _message(received="")
+  out = adapter._materialize(msg, folder="Inbox", user_set=set())
+  assert out is None
+  assert adapter.skipped_no_timestamp == 1
+  assert adapter.skipped_empty == 0
+
+
+def test_materialize_counts_empty_body_as_skip():
+  adapter = M365MailAdapter(profile="work")
+  adapter.skipped_no_timestamp = 0
+  adapter.skipped_empty = 0
+  msg = _message(body="")
+  out = adapter._materialize(msg, folder="Inbox", user_set=set())
+  assert out is None
+  assert adapter.skipped_no_timestamp == 0
+  assert adapter.skipped_empty == 1

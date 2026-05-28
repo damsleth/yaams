@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import sqlite3
 from datetime import UTC, datetime
@@ -13,6 +14,20 @@ from yaams.retrieve import HybridResult
 
 def new_query_id() -> str:
   return f"q_{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}_{secrets.token_hex(4)}"
+
+
+def detect_provenance(explicit: str | None = None) -> str:
+  """Return the provenance label for a logged query.
+
+  Caller can pass ``explicit`` (e.g. ``"cli"`` or ``"hugr"``); otherwise
+  detect a pytest run via the ``PYTEST_CURRENT_TEST`` env var that pytest
+  exports during test execution. Falls back to ``"unknown"``.
+  """
+  if explicit:
+    return explicit
+  if os.environ.get("PYTEST_CURRENT_TEST"):
+    return "test"
+  return "unknown"
 
 
 def log_query(
@@ -38,6 +53,7 @@ def log_query(
   confidence_reason: str | None = None,
   gaps: Sequence[str] | None = None,
   parser_fallback: bool = False,
+  provenance: str | None = None,
   ts: datetime | None = None,
 ) -> None:
   ts_iso = (ts or datetime.now(UTC)).isoformat()
@@ -45,6 +61,7 @@ def log_query(
   gaps_text = (
     json.dumps(list(gaps), ensure_ascii=False) if gaps is not None else None
   )
+  prov = detect_provenance(provenance)
   with conn:
     conn.execute(
       """
@@ -53,8 +70,8 @@ def log_query(
         backend, model, latency_ms, retrieval_ms, synthesis_ms,
         results_returned, answer, ts,
         parsed_query, shape, confidence, confidence_reason, gaps,
-        parser_fallback
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parser_fallback, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       (
         query_id,
@@ -77,6 +94,7 @@ def log_query(
         confidence_reason,
         gaps_text,
         1 if parser_fallback else 0,
+        prov,
       ),
     )
     for rank, result in enumerate(results, 1):

@@ -4,6 +4,7 @@ import sys
 import time
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,7 +19,6 @@ from yaams.cli._shared import (
   _entity_dictionary,
   _format_duration,
   _format_throughput,
-  _progress,
   _size_mb,
   config_option,
 )
@@ -125,25 +125,77 @@ def ingest(
     sources_planned = [s for s in _sources_to_run(source, cfg) if _source_enabled(cfg, s)]
     if as_json:
       stream_progress(stage="plan", total=len(sources_planned))
-    for src in sources_planned:
-      if as_json:
-        stream_progress(source=src, stage="start")
-      src_started_at = datetime.now(UTC)
-      src_perf_start = time.perf_counter()
+
+    # `since` is read from the DB; resolve it on the main thread before
+    # fanning out, since a sqlite connection can't be shared across threads.
+    since_by_source = {src: _effective_since(conn, src, cfg) for src in sources_planned}
+
+    # Phase 1 — fetch every source concurrently. Sources are network/IO-bound
+    # (owa-* subprocesses, Graph round-trips) and independent, so wall-clock
+    # collapses from the sum of per-source latency toward the slowest source.
+    # No conn access here: only get_adapter() + adapter.extract().
+    def _fetch_source(src: str) -> tuple:
+      started_at = datetime.now(UTC)
+      perf_start = time.perf_counter()
       try:
         adapter = get_adapter(src, cfg["ingest"][_config_section(src)])
-        source_stats = ingest_source(
-          conn,
-          src,
-          adapter,
-          cfg,
-          batch_size=batch_size,
-          dry_run=dry_run,
-          processors=processors,
+        items = list(adapter.extract(since_by_source[src]))
+        fetch_ms = (time.perf_counter() - perf_start) * 1000
+        return src, adapter, items, started_at, fetch_ms, None
+      except Exception as exc:  # reported per source in the serial phase
+        fetch_ms = (time.perf_counter() - perf_start) * 1000
+        return src, None, [], started_at, fetch_ms, exc
+
+    fetched: dict[str, tuple] = {}
+    if sources_planned:
+      max_workers = min(8, len(sources_planned))
+      if not as_json:
+        click.echo(
+          f"Fetching {len(sources_planned)} source(s), "
+          f"up to {max_workers} in parallel...",
+          err=True,
         )
-      except Exception as exc:
-        duration_ms = (time.perf_counter() - src_perf_start) * 1000
-        error_text = f"{type(exc).__name__}: {exc}"
+      with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_fetch_source, src) for src in sources_planned]
+        for fut in as_completed(futures):
+          res = fut.result()
+          fetched[res[0]] = res
+          if not as_json:
+            fsrc, _adapter, fitems, _started, _ms, ferr = res
+            if ferr is None:
+              click.echo(f"  fetched {fsrc}: {len(fitems)} item(s)", err=True)
+            else:
+              click.echo(
+                f"  {fsrc}: fetch failed - {type(ferr).__name__}: {ferr}",
+                err=True,
+              )
+
+    # Phase 2 — process serially in plan order. Embedding + SQLite writes
+    # share one connection and the embedder batches best single-threaded.
+    for src in sources_planned:
+      _src, adapter, items, src_started_at, fetch_ms, src_error = fetched[src]
+      if as_json:
+        stream_progress(source=src, stage="start")
+      source_stats = None
+      if src_error is None:
+        try:
+          source_stats = ingest_source(
+            conn,
+            src,
+            adapter,
+            items,
+            since_by_source[src],
+            batch_size=batch_size,
+            dry_run=dry_run,
+            processors=processors,
+            started_at=src_started_at,
+            fetch_ms=fetch_ms,
+          )
+        except Exception as exc:
+          src_error = exc
+      if src_error is not None:
+        duration_ms = fetch_ms
+        error_text = f"{type(src_error).__name__}: {src_error}"
         if not as_json:
           click.echo(f"  {src}: failed - {error_text}", err=True)
         else:
@@ -332,24 +384,28 @@ def ingest_source(
   conn,
   source: str,
   adapter: Adapter,
-  cfg: dict,
+  items: list[Item],
+  since: datetime,
   *,
   batch_size: int,
   dry_run: bool,
   processors,
+  started_at: datetime,
+  fetch_ms: float,
 ) -> dict[str, object]:
-  started_at = datetime.now(UTC)
-  perf_start = time.perf_counter()
-  since = _effective_since(conn, source, cfg)
+  """Embed + store an already-fetched item list and advance the watermark.
+
+  Fetching (``adapter.extract``) happens upstream so sources can run
+  concurrently; this half is serial because it shares one sqlite connection.
+  ``fetch_ms`` is folded into the reported duration so per-source timings
+  still reflect total work.
+  """
+  store_start = time.perf_counter()
   batch: list[Item] = []
   latest_ts = since
   seen = 0
   inserted = 0
-  progress_unit = "file" if source == "folders" else "it"
-  iterator = _progress(
-    adapter.extract(since), desc=f"Ingesting {source}", unit=progress_unit
-  )
-  for item in iterator:
+  for item in items:
     seen += 1
     batch.append(item)
     if item.timestamp > latest_ts:
@@ -359,10 +415,16 @@ def ingest_source(
       batch = []
   if batch:
     inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+  # Advance the watermark past messages that were scanned but deliberately
+  # skipped (e.g. newsletters) so wide date windows aren't re-walked every
+  # run. Adapters that can't bound their scan leave scanned_through unset.
+  scanned_through = getattr(adapter, "scanned_through", None)
+  if scanned_through is not None and scanned_through > latest_ts:
+    latest_ts = scanned_through
   if not dry_run:
     update_watermark(conn, source, latest_ts)
     conn.commit()
-  duration_ms = (time.perf_counter() - perf_start) * 1000
+  duration_ms = fetch_ms + (time.perf_counter() - store_start) * 1000
   files_walked = int(getattr(adapter, "files_walked", 0))
   skipped_before_cutoff = int(getattr(adapter, "skipped_before_cutoff", 0))
   return {

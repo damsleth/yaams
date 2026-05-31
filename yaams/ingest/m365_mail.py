@@ -5,12 +5,13 @@ list message bodies per profile. One yaams source per profile:
 ``mail_<profile>``.
 
 Strategy:
-  - Walk a date range in ``chunk_days`` slices to stay under owa-mail's
-    200-result hard cap.
-  - One `owa-mail messages --with-body` call per (folder, chunk) returns
-    the full body + InternetMessageHeaders inline — no per-message
-    `show` roundtrip. This is the difference between O(messages) and
-    O(chunks) subprocess hops.
+  - One `owa-mail messages --all --with-body` call per folder follows
+    Graph's ``@odata.nextLink`` until the date window is exhausted, so a
+    profile costs O(folders) subprocess hops regardless of message count.
+    ``--all`` removes the old 200-result cap that forced date chunking
+    (and silently dropped anything past 200 per chunk).
+  - ``--with-body`` returns the full body + InternetMessageHeaders inline,
+    so there is no per-message `show` roundtrip.
   - Walk both Inbox and SentItems by default so the user's outbound
     messages aren't lost.
   - Apply real RFC newsletter heuristics (List-Unsubscribe / List-Id /
@@ -28,7 +29,7 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Iterator
 
 logger = logging.getLogger("yaams.ingest.m365_mail")
@@ -65,34 +66,41 @@ class M365MailAdapter:
   folders: tuple[str, ...] = DEFAULT_FOLDERS
   user_addresses: list[str] = field(default_factory=list)
   skip_newsletters: bool = True
+  # Retained for config/back-compat; ``--all`` paginates server-side so
+  # the adapter no longer slices the window into chunks.
   chunk_days: int = DEFAULT_CHUNK_DAYS
   skipped_newsletters: int = field(default=0, init=False)
   skipped_email_dates: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
   skipped_no_timestamp: int = field(default=0, init=False)
+  # High-water timestamp of every message *scanned* (including ones we
+  # skip as newsletters/empty). The ingest loop advances the watermark to
+  # this so an all-skip profile stops re-walking its whole window forever.
+  scanned_through: datetime | None = field(default=None, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_newsletters = 0
     self.skipped_email_dates = 0
     self.skipped_empty = 0
     self.skipped_no_timestamp = 0
+    self.scanned_through = None
     cutoff = ensure_utc(since).date()
     today = date.today()
+    if cutoff > today:
+      return
     user_set = {a.strip().lower() for a in self.user_addresses if a}
     for folder in self.folders:
-      chunk_start = cutoff
-      while chunk_start <= today:
-        chunk_end = min(chunk_start + timedelta(days=self.chunk_days - 1), today)
-        for message in self._list(folder, chunk_start, chunk_end):
-          item = self._materialize(message, folder, user_set)
-          if item is not None:
-            yield item
-        chunk_start = chunk_end + timedelta(days=1)
+      for message in self._list(folder, cutoff, today):
+        item = self._materialize(message, folder, user_set)
+        if item is not None:
+          yield item
 
   def _list(self, folder: str, start: date, end: date) -> list[dict]:
-    """Bulk-fetch listings with body + headers inline (`--with-body`).
+    """Bulk-fetch a folder's listings with body + headers inline.
 
-    One subprocess per (folder, chunk) replaces a per-message `show`
+    ``--all`` follows ``@odata.nextLink`` until the window is exhausted and
+    ``--with-body`` inlines body + InternetMessageHeaders, so one subprocess
+    per folder replaces both the per-chunk loop and any per-message `show`
     fan-out. Each entry has the same shape as `owa-mail show` output.
     """
     result = subprocess.run(
@@ -102,6 +110,7 @@ class M365MailAdapter:
        "--since", str(start),
        "--until", str(end),
        "--limit", "200",
+       "--all",
        "--with-body"],
       capture_output=True, text=True,
     )
@@ -127,6 +136,17 @@ class M365MailAdapter:
   def _materialize(
     self, message: dict, folder: str, user_set: set[str],
   ) -> Item | None:
+    # Track the high-water timestamp of everything we scan, before any
+    # skip decision, so the watermark can advance past skipped messages.
+    ts_str = message.get("received") or ""
+    if ts_str:
+      try:
+        ts = parse_iso_datetime(ts_str)
+      except ValueError:
+        ts = None
+      if ts is not None and (self.scanned_through is None or ts > self.scanned_through):
+        self.scanned_through = ts
+
     sender = (message.get("from") or "").strip()
     sender_lower = sender.lower()
     is_outbound = sender_lower in user_set

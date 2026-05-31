@@ -10,6 +10,26 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-05-31
+
+### Changed
+
+- Ingest now fetches all sources concurrently (network-bound owa-* and Graph
+  calls) and then embeds/stores serially, collapsing total wall-clock from the
+  sum of per-source latency toward the slowest single source.
+- M365 mail ingest uses `owa-mail --all` to follow Graph pagination instead of
+  walking the date range in fixed chunks — one subprocess per folder regardless
+  of message count.
+
+### Fixed
+
+- Mail watermarks now advance past messages that were scanned but skipped (e.g.
+  newsletters), so all-skip profiles no longer re-walk their entire date window
+  on every run.
+- `owa-mail --all` removes a silent truncation: the previous chunked path
+  capped each window at 200 results with no pagination, dropping anything past
+  the cap.
+
 ## [0.1.12] - 2026-05-31
 
 ### Added

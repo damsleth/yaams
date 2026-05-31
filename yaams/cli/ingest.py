@@ -50,6 +50,7 @@ from yaams.schema import init_schema
 from yaams.store import (
   backfill_entity_sources,
   database_stats,
+  existing_ids,
   seed_entities,
   store_items,
 )
@@ -467,10 +468,18 @@ def process_batch(
     return 0
   if processors is None:
     raise RuntimeError("processors are required unless dry_run is set")
-  texts = [item.content for item in items]
+  # Drop already-stored items before embedding/tagging. Re-seen items (the
+  # common case once a watermark is established) carry identical content, so
+  # this skips wasted work — and avoids loading the embedding model at all
+  # when a run turns up nothing new.
+  known = existing_ids(conn, [item.id for item in items])
+  new_items = [item for item in items if item.id not in known]
+  if not new_items:
+    return 0
+  texts = [item.content for item in new_items]
   embeddings = processors.embedder.embed_batch(texts)
   tags = [processors.tagger.tag(text) for text in texts]
-  stats = store_items(conn, items, embeddings, tags)
+  stats = store_items(conn, new_items, embeddings, tags)
   return stats.items_inserted
 
 

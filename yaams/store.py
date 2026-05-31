@@ -78,6 +78,28 @@ def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]
   return upgraded
 
 
+def existing_ids(conn: sqlite3.Connection, ids: Sequence[str]) -> set[str]:
+  """Return the subset of ``ids`` already present in the items table.
+
+  Lets the ingest loop drop already-stored items before the expensive
+  embed/tag step — these sources are append-only (id = hash of source +
+  source_id), so a known id has identical content and re-embedding is pure
+  waste. When a run re-sees only known items, the embedding model is never
+  loaded at all.
+  """
+  found: set[str] = set()
+  id_list = list(ids)
+  # Stay under SQLite's default 999-variable limit per statement.
+  for start in range(0, len(id_list), 900):
+    chunk = id_list[start:start + 900]
+    placeholders = ",".join("?" * len(chunk))
+    rows = conn.execute(
+      f"SELECT id FROM items WHERE id IN ({placeholders})", chunk
+    )
+    found.update(row[0] for row in rows)
+  return found
+
+
 def store_items(
   conn: sqlite3.Connection,
   items: Sequence[Item],

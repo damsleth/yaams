@@ -20,6 +20,9 @@ surface; pin to a specific version if you need stability.
 - M365 mail ingest uses `owa-mail --all` to follow Graph pagination instead of
   walking the date range in fixed chunks — one subprocess per folder regardless
   of message count.
+- Ingest skips already-stored items before embedding and entity-tagging, so a
+  run that re-sees only known items does no embedding work and never loads the
+  embedding model. A no-op full ingest drops from ~10s to ~3s.
 
 ### Fixed
 

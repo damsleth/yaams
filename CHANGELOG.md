@@ -10,6 +10,29 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-05-31
+
+### Added
+
+- Signal review now runs a scan-and-judge loop with a noise cascade and
+  provenance tracking, so low-signal items are filtered before judging.
+- Display-time formatting helpers for retrieval results, with improved
+  rendering of consolidation results and participant formatting.
+
+### Changed
+
+- Mail ingest uses `owa-mail --with-body` and now surfaces silently dropped
+  messages in the run stats.
+- `embed` supports a quiet mode that suppresses progress bars.
+- The `hugr-conventions` dependency was dropped in favour of an inline
+  vendored contract.
+
+### Fixed
+
+- Review TUI inherits the terminal foreground/background colours instead of
+  forcing white-on-black.
+- Review result snippets use a longer length for better context.
+
 ## [0.1.11] - 2026-05-26
 
 ### Security

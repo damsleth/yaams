@@ -181,8 +181,9 @@ The maintainer cuts releases. The flow:
 2. Bump `__version__` in `yaams/__init__.py` and `version` in
    `pyproject.toml` (must match).
 3. Commit as `chore(release): vx.y.z`.
-4. Tag `git tag -a vx.y.z -m "vx.y.z"` and push tags.
-5. GitHub release notes are generated from the changelog entry.
+4. Tag `git tag -a vx.y.z -m "vx.y.z"` and push `main` and the tag.
+5. Publish a GitHub release for the tag (`gh release create vx.y.z --title
+   vx.y.z --notes ...`), using the changelog entry as the release notes.
 
 Pre-`1.0` rules: any breaking change (CLI surface, on-disk schema in a way
 that requires manual migration, config file shape) bumps the **minor**.

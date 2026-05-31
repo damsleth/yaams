@@ -10,6 +10,11 @@ from yaams.cli._shared import _embed_config, _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
 from yaams.db import open_db
 from yaams.enrich import Embedder
+from yaams.render import (
+  render_consolidation_snippet,
+  short_participants,
+  short_sender,
+)
 from yaams.retrieve import (
   HybridQueryConfig,
   filter_results_by_entities,
@@ -213,7 +218,7 @@ def query_cmd(
     try:
       embedding = None
       if not no_vector:
-        embedder = Embedder(**_embed_config(cfg))
+        embedder = Embedder(**_embed_config(cfg), quiet=_quiet_embedder(output_format))
         embedding = embedder.embed_batch([query_text])[0]
 
       base_cfg = HybridQueryConfig(
@@ -349,6 +354,15 @@ def query_cmd(
       )
 
 
+def _quiet_embedder(output_format: str) -> bool:
+  """Suppress sentence-transformers / HF progress bars unless the user
+  asked for JSON (which already implies a non-interactive caller that may
+  want stderr noise for debugging) or set `YAAMS_VERBOSE`."""
+  if os.environ.get("YAAMS_VERBOSE"):
+    return False
+  return output_format == "text"
+
+
 def _should_prompt(feedback_prompt: bool | None, output_format: str) -> bool:
   """Decide whether to show the inline feedback prompt.
 
@@ -442,16 +456,39 @@ def _result_to_dict(r) -> dict:
   }
 
 
+_BODY_WIDTH = 92
+_BODY_INDENT = "     "
+
+
 def _render_result(rank: int, r) -> None:
-  ts = format_local(r.timestamp, "%Y-%m-%d %H:%M %Z") if hasattr(r.timestamp, "strftime") else str(r.timestamp)
-  kind_tag = "C" if r.kind == "consolidation" else "i"
-  click.echo(f"[{rank:>2}] [{kind_tag}] {r.source:<14} {ts}  score={r.score:.3f}")
+  import textwrap
+
+  ts = (
+    format_local(r.timestamp, "%Y-%m-%d %H:%M %Z")
+    if hasattr(r.timestamp, "strftime")
+    else str(r.timestamp)
+  )
+  click.echo(f"[{rank:>2}] {r.source} · {ts} · score {r.score:.3f}")
+
   if r.kind == "consolidation":
-    click.echo(f"     {len(r.participants)} participants, {r.item_count} items: {', '.join(r.participants[:5])}")
+    parts = short_participants(r.participants or [])
+    meta = f"{r.item_count} items"
+    if parts:
+      meta += f" · {parts}"
+    click.echo(f"{_BODY_INDENT}{meta}")
+    body = render_consolidation_snippet(
+      r.content or "", multiline=True, max_chars=600
+    )
   else:
-    click.echo(f"     from: {r.sender}")
-  preview = (r.content or "").strip().replace("\n", " ")
-  if len(preview) > 240:
-    preview = preview[:237] + "..."
-  click.echo(f"     {preview}")
+    click.echo(f"{_BODY_INDENT}from {short_sender(r.sender or '')}")
+    body = (r.content or "").strip()
+    if len(body) > 600:
+      body = body[:599].rstrip() + "…"
+
+  for raw_line in body.splitlines() or [""]:
+    wrapped = textwrap.wrap(
+      raw_line, width=_BODY_WIDTH, subsequent_indent="  "
+    ) or [""]
+    for piece in wrapped:
+      click.echo(f"{_BODY_INDENT}{piece}")
   click.echo()

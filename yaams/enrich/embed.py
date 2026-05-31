@@ -15,11 +15,19 @@ class Embedder:
     dimension: int | None = None,
     offline: bool = True,
     models_dir: str | Path | None = None,
+    quiet: bool = False,
   ):
     # Set HF_HOME before importing sentence_transformers: huggingface_hub
     # freezes cache paths into module constants at import time.
     if models_dir is not None:
       os.environ["HF_HOME"] = str(Path(models_dir).expanduser())
+
+    if quiet:
+      # Same reason as HF_HOME — these env vars are read at import time by
+      # huggingface_hub / transformers / tqdm, so set them before the import.
+      os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+      os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+      os.environ.setdefault("TQDM_DISABLE", "1")
 
     try:
       from sentence_transformers import SentenceTransformer

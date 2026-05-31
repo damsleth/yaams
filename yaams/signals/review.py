@@ -13,6 +13,7 @@ and :func:`dashboard_data`) so it can be tested without curses.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,7 +31,7 @@ VERDICT_KINDS = {"hit", "miss", "correction", "noise"}
   drops out of the review queue. Mark with ``n`` in the TUI.
 """
 
-_SNIPPET_LEN = 240
+_SNIPPET_LEN = 480
 
 _HELP_LINES = [
   "h  hit (top result was right)      m  miss (none right)",
@@ -133,7 +134,15 @@ def score_query(
 def _snippet_for(
   conn: sqlite3.Connection, *, result_id: str, kind: str
 ) -> tuple[str, str | None, str | None]:
-  """Return (snippet, sender, timestamp) for one result. None on missing."""
+  """Return (snippet, sender, timestamp) for one result. None on missing.
+
+  Consolidation snippets are run through
+  :func:`yaams.render.render_consolidation_snippet` so the stored header
+  and per-line prefixes don't waste display real estate. The returned
+  snippet may contain newlines — callers should split on them before
+  wrapping."""
+  from yaams.render import render_consolidation_snippet, short_participants
+
   if kind == "consolidation":
     row = conn.execute(
       "SELECT summary, participants, start_timestamp FROM consolidations WHERE id = ?",
@@ -142,18 +151,34 @@ def _snippet_for(
     if row is None:
       return ("", None, None)
     text = (row["summary"] if hasattr(row, "keys") else row[0]) or ""
-    sender = (row["participants"] if hasattr(row, "keys") else row[1]) or None
+    raw_participants = (
+      row["participants"] if hasattr(row, "keys") else row[1]
+    ) or None
     ts = (row["start_timestamp"] if hasattr(row, "keys") else row[2]) or None
-  else:
-    row = conn.execute(
-      "SELECT content, sender, timestamp FROM items WHERE id = ?",
-      (result_id,),
-    ).fetchone()
-    if row is None:
-      return ("", None, None)
-    text = (row["content"] if hasattr(row, "keys") else row[0]) or ""
-    sender = (row["sender"] if hasattr(row, "keys") else row[1]) or None
-    ts = (row["timestamp"] if hasattr(row, "keys") else row[2]) or None
+    snippet = render_consolidation_snippet(
+      str(text), multiline=True, max_chars=_SNIPPET_LEN
+    )
+    sender: str | None = None
+    if raw_participants:
+      try:
+        parsed = json.loads(raw_participants)
+        if isinstance(parsed, list):
+          sender = short_participants(parsed)
+        else:
+          sender = str(raw_participants)
+      except (TypeError, ValueError):
+        sender = str(raw_participants)
+    return (snippet, sender, ts)
+
+  row = conn.execute(
+    "SELECT content, sender, timestamp FROM items WHERE id = ?",
+    (result_id,),
+  ).fetchone()
+  if row is None:
+    return ("", None, None)
+  text = (row["content"] if hasattr(row, "keys") else row[0]) or ""
+  sender = (row["sender"] if hasattr(row, "keys") else row[1]) or None
+  ts = (row["timestamp"] if hasattr(row, "keys") else row[2]) or None
   snippet = " ".join(str(text).split())
   if len(snippet) > _SNIPPET_LEN:
     snippet = snippet[: _SNIPPET_LEN - 1] + "…"
@@ -635,7 +660,9 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
   footer_rows = 3 + (len(_HELP_LINES) if show_help else 0)
   body_height = max(1, height - body_top - footer_rows)
 
-  # Render each result as a 2-line block: header + wrapped snippet.
+  # Render each result as a block: header + wrapped snippet lines.
+  # Snippets may contain newlines (from render_consolidation_snippet);
+  # preserve them by wrapping each line independently.
   rendered: list[tuple[str, int]] = []  # (text, attr-flag: 0 normal, 1 dim, 2 bold)
   for r in item.results:
     cited = "★" if r.cited else " "
@@ -643,8 +670,13 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
     ts_short = (r.timestamp or "")[:10]
     header = f" {cited} {r.rank}. [{src}] {ts_short}  {r.sender or ''}".rstrip()
     rendered.append((header, 2))
-    for wrapped in textwrap.wrap(r.snippet or "(no snippet)", w - 4) or [""]:
-      rendered.append(("    " + wrapped, 1))
+    snippet_lines = (r.snippet or "(no snippet)").splitlines() or [""]
+    for snippet_line in snippet_lines:
+      wrapped_lines = textwrap.wrap(
+        snippet_line, w - 4, subsequent_indent="  "
+      ) or [""]
+      for wrapped in wrapped_lines:
+        rendered.append(("    " + wrapped, 1))
     rendered.append(("", 0))
 
   visible = rendered[scroll : scroll + body_height]

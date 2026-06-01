@@ -116,7 +116,8 @@ def assoc_show(entity: str, config_path: str, limit: int, as_json: bool) -> None
 @click.argument("to_entity")
 @config_option
 @click.option("--kind", default=None, help="Human label for the relation, e.g. located_at.")
-@click.option("--weight", default=0.8, show_default=True, type=float,
+@click.option("--weight", default=0.8, show_default=True,
+              type=click.FloatRange(min=0, max=1, min_open=True),
               help="Override association strength in (0, 1].")
 @click.option("--both", is_flag=True, help="Insert the relation in both directions.")
 @click.option("--json", "as_json", is_flag=True, help="Action envelope on stdout.")

@@ -441,6 +441,54 @@ def test_association_boost_surfaces_associated_doc_below_exact_match():
   assert ids[0] == exact.id, "exact entity match must outrank the associated doc"
 
 
+def test_association_exact_outranks_newer_associated_under_date_sort():
+  # Regression: a score multiply + (timestamp, -score) sort let a NEWER
+  # associated-only doc beat an older exact match. The exact-before-associated
+  # partition must hold even when the associated doc is more recent.
+  from yaams.retrieve.associate import expand_query_entities
+
+  conn = _open_db()
+  conn.execute("INSERT INTO entities (canonical_name, entity_type) VALUES ('fdep','org')")
+  conn.execute("INSERT INTO entities (canonical_name, entity_type) VALUES ('langkaia','place')")
+  fdep = conn.execute("SELECT id FROM entities WHERE canonical_name='fdep'").fetchone()["id"]
+  langkaia = conn.execute(
+    "SELECT id FROM entities WHERE canonical_name='langkaia'"
+  ).fetchone()["id"]
+  conn.execute(
+    "INSERT INTO entity_relations (from_entity, to_entity, weight, suppress) "
+    "VALUES (?, ?, 0.6, 0)",
+    (fdep, langkaia),
+  )
+
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  exact = _make_item(thread_id="exact", content="shared-topic", ts=base, msg_id="1")
+  newer_related = _make_item(
+    thread_id="related", content="shared-topic", ts=base + timedelta(days=10), msg_id="2"
+  )
+  store_items(conn, [exact, newer_related], [b"\x00" * 16] * 2, [[]] * 2)
+  conn.execute(
+    "INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'test')",
+    (exact.id, fdep),
+  )
+  conn.execute(
+    "INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'test')",
+    (newer_related.id, langkaia),
+  )
+  conn.commit()
+
+  expanded, weights = expand_query_entities(conn, ["fdep"])
+  cfg = HybridQueryConfig(
+    entity_filter=expanded, assoc_weights=weights, sort="desc",
+    include_consolidations=False,
+  )
+  results = query(conn, "shared-topic", config=cfg)
+  ids = [r.id for r in results]
+  assert newer_related.id in ids
+  assert ids[0] == exact.id, (
+    "exact entity match must rank above a newer associated-only doc"
+  )
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

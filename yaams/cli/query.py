@@ -121,6 +121,12 @@ def _resolve_source_filter(
   help="Skip dense vector search; FTS-only (faster, no embedder load)",
 )
 @click.option(
+  "--no-synonyms",
+  is_flag=True,
+  help="Disable entity-alias synonym expansion of the FTS query "
+       "(e.g. don't expand 'nc' to also match 'Norconsult')",
+)
+@click.option(
   "--no-consolidations",
   is_flag=True,
   help="Search raw items only (skip session consolidations)",
@@ -166,6 +172,7 @@ def query_cmd(
   until: str | None,
   sort: str | None,
   no_vector: bool,
+  no_synonyms: bool,
   no_consolidations: bool,
   output_format: str,
   as_json: bool,
@@ -240,6 +247,7 @@ def query_cmd(
         until=parse_iso_datetime(until) if until else None,
         sort=sort_map[sort] if sort else "relevance",
         include_consolidations=not no_consolidations,
+        expand_synonyms=not no_synonyms,
       )
       if parsed is not None:
         qcfg = route_parsed(

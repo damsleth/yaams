@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Sequence
 
+from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.time import ensure_utc
 
 DEFAULT_TOP_K = 20
@@ -45,6 +46,8 @@ class HybridQueryConfig:
   sort: str = "relevance"
   high_quality: bool = False
   entity_filter: list[str] | None = None
+  expand_synonyms: bool = True
+  synonyms: dict[str, list[str]] | None = None
 
 
 @dataclass
@@ -81,6 +84,9 @@ def query(
   cfg = config or HybridQueryConfig()
   if not text or not text.strip():
     return []
+
+  if cfg.expand_synonyms and cfg.synonyms is None:
+    cfg.synonyms = load_synonym_groups(conn)
 
   fetch_k = cfg.per_index_k
   if cfg.high_quality:
@@ -183,7 +189,7 @@ def _fts_search_items(
   text: str,
   cfg: HybridQueryConfig,
 ) -> list[tuple[str, str, int, float]]:
-  match = _fts_query(text)
+  match = _fts_query(text, cfg.synonyms)
   if not match:
     return []
   rows = conn.execute(
@@ -212,7 +218,7 @@ def _fts_search_consolidations(
   text: str,
   cfg: HybridQueryConfig,
 ) -> list[tuple[str, str, int, float]]:
-  match = _fts_query(text)
+  match = _fts_query(text, cfg.synonyms)
   if not match:
     return []
   rows = conn.execute(
@@ -288,10 +294,12 @@ def _vec_search_consolidations(
   ]
 
 
-def _fts_query(text: str) -> str:
+def _fts_query(text: str, synonyms: dict[str, list[str]] | None = None) -> str:
   tokens = [t for t in text.replace('"', " ").split() if t]
   if not tokens:
     return ""
+  if synonyms:
+    tokens = expand_fts_tokens(tokens, synonyms)
   return " OR ".join(f'"{t}"' for t in tokens)
 
 

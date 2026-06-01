@@ -48,6 +48,11 @@ class HybridQueryConfig:
   entity_filter: list[str] | None = None
   expand_synonyms: bool = True
   synonyms: dict[str, list[str]] | None = None
+  # Map of lowercased canonical entity name -> association weight in (0, 1].
+  # Query entities sit at 1.0; associated entities carry their merged weight.
+  # When set, hydrated scores are multiplied by the result's best weight so
+  # associated-only documents are surfaced but never outrank exact matches.
+  assoc_weights: dict[str, float] | None = None
 
 
 @dataclass
@@ -129,6 +134,12 @@ def query(
   )
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
+  if cfg.assoc_weights:
+    item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
+    for r in hydrated:
+      weight = (item_w if r.kind == "item" else cons_w).get(r.id, 1.0)
+      if weight != 1.0:
+        r.score *= weight
   if cfg.sort == "asc":
     hydrated.sort(key=lambda r: (r.timestamp, -r.score))
   elif cfg.sort == "desc":
@@ -182,6 +193,61 @@ def _resolve_entity_allowlist(
       r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
     }
   return item_ids, cons_ids
+
+
+def _assoc_weight_maps(
+  conn: sqlite3.Connection,
+  assoc_weights: dict[str, float],
+) -> tuple[dict[str, float], dict[str, float]]:
+  """Map item ids and consolidation ids to the best association weight of any
+  entity they carry. Used to multiply hydrated scores: a document tagged with
+  a query entity keeps weight 1.0, one tagged only with an associated entity
+  is scaled down by that association's weight."""
+  names_lower = list(assoc_weights.keys())
+  if not names_lower:
+    return {}, {}
+  ph = ",".join("?" * len(names_lower))
+  id_weight: dict[int, float] = {}
+  for row in conn.execute(
+    f"SELECT id, lower(canonical_name) AS nm FROM entities "
+    f"WHERE lower(canonical_name) IN ({ph})",
+    tuple(names_lower),
+  ):
+    eid = row[0] if not hasattr(row, "keys") else row["id"]
+    nm = row[1] if not hasattr(row, "keys") else row["nm"]
+    id_weight[eid] = assoc_weights[nm]
+  if not id_weight:
+    return {}, {}
+
+  ent_ph = ",".join("?" * len(id_weight))
+  item_w: dict[str, float] = {}
+  for row in conn.execute(
+    f"SELECT item_id, entity_id FROM item_entities WHERE entity_id IN ({ent_ph})",
+    tuple(id_weight.keys()),
+  ):
+    iid = row[0] if not hasattr(row, "keys") else row["item_id"]
+    eid = row[1] if not hasattr(row, "keys") else row["entity_id"]
+    weight = id_weight[eid]
+    if weight > item_w.get(iid, 0.0):
+      item_w[iid] = weight
+
+  cons_w: dict[str, float] = {}
+  if item_w:
+    item_ph = ",".join("?" * len(item_w))
+    for row in conn.execute(
+      f"""
+      SELECT c.id AS cid, j.value AS iid
+      FROM consolidations c, json_each(c.raw_item_ids) j
+      WHERE j.value IN ({item_ph})
+      """,
+      tuple(item_w.keys()),
+    ):
+      cid = row[0] if not hasattr(row, "keys") else row["cid"]
+      iid = row[1] if not hasattr(row, "keys") else row["iid"]
+      weight = item_w.get(iid, 0.0)
+      if weight > cons_w.get(cid, 0.0):
+        cons_w[cid] = weight
+  return item_w, cons_w
 
 
 def _fts_search_items(

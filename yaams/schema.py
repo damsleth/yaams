@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_EMBEDDING_DIM = 1024
 
 
@@ -77,6 +77,43 @@ def init_schema(
 
       CREATE INDEX IF NOT EXISTS idx_item_entities_entity
         ON item_entities(entity_id);
+
+      -- Learned entity associations: how strongly two entities co-occur,
+      -- beyond chance. Materialized from item_entities by the cooccurrence
+      -- builder. Stored in BOTH directions (a,b) and (b,a) with identical
+      -- score/cooccur so retrieval can look up by query entity in O(1).
+      -- `score` is normalized PMI in (0, 1]; 1.0 means "always together".
+      CREATE TABLE IF NOT EXISTS entity_assoc (
+        entity_a INTEGER NOT NULL,
+        entity_b INTEGER NOT NULL,
+        score REAL NOT NULL,
+        cooccur INTEGER NOT NULL,
+        PRIMARY KEY (entity_a, entity_b),
+        FOREIGN KEY (entity_a) REFERENCES entities(id),
+        FOREIGN KEY (entity_b) REFERENCES entities(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entity_assoc_a ON entity_assoc(entity_a);
+
+      -- Manual entity relations: human-asserted overrides on top of the
+      -- learned table. A row either boosts a link (suppress=0, weight is the
+      -- override strength) or blocks one (suppress=1, hides any learned
+      -- association for this directed pair). Directional: insert both
+      -- directions to make a relation symmetric.
+      CREATE TABLE IF NOT EXISTS entity_relations (
+        from_entity INTEGER NOT NULL,
+        to_entity INTEGER NOT NULL,
+        kind TEXT,
+        weight REAL NOT NULL DEFAULT 1.0,
+        suppress INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT,
+        PRIMARY KEY (from_entity, to_entity),
+        FOREIGN KEY (from_entity) REFERENCES entities(id),
+        FOREIGN KEY (to_entity) REFERENCES entities(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entity_relations_from
+        ON entity_relations(from_entity);
 
       CREATE TABLE IF NOT EXISTS watermarks (
         source TEXT PRIMARY KEY,

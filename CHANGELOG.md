@@ -23,6 +23,10 @@ surface; pin to a specific version if you need stability.
 - Ingest skips already-stored items before embedding and entity-tagging, so a
   run that re-sees only known items does no embedding work and never loads the
   embedding model. A no-op full ingest drops from ~10s to ~3s.
+- Teams ingest lists chats newest-message-first (`$orderby` on
+  `lastMessagePreview/createdDateTime`) and stops paging at the first chat
+  older than the cutoff, instead of enumerating every chat each run. Falls
+  back to the unordered listing if a tenant rejects the ordering.
 
 ### Fixed
 

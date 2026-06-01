@@ -247,6 +247,64 @@ def test_teams_adapter_stops_walking_chat_when_messages_predate_cutoff():
   assert items[0].source_id.endswith(":recent")
 
 
+class _OrderedFakeGraphClient(_FakeGraphClient):
+  """Adds the get()-based ordered chat listing the real client exposes.
+
+  Returns chats newest-first across two pages and records which chats had
+  their messages fetched, so a test can prove the early-break stopped paging.
+  """
+
+  def __init__(self, pages, messages_by_chat, members_by_chat):
+    super().__init__([], messages_by_chat, members_by_chat)
+    self._pages = pages
+    self.fetched_message_chats: list[str] = []
+
+  def get(self, url: str, params: dict | None = None):
+    if url == "/me/chats":
+      assert params and "lastMessagePreview/createdDateTime desc" in params.get("$orderby", "")
+      return self._pages[0]
+    return self._pages[1]  # the @odata.nextLink page
+
+  def paginate(self, url: str, params: dict | None = None):
+    if url.startswith("/me/chats/") and url.endswith("/messages"):
+      chat_id = url[len("/me/chats/"):-len("/messages")]
+      self.fetched_message_chats.append(chat_id)
+    yield from super().paginate(url, params=params)
+
+
+def test_teams_adapter_breaks_early_on_ordered_chats():
+  def chat_with_preview(chat_id, last_msg_created):
+    return {**_make_chat(chat_id=chat_id),
+            "lastMessagePreview": {"createdDateTime": last_msg_created}}
+
+  # Page 1: one fresh chat, then a stale one (newest-message-first order).
+  page1 = {
+    "value": [
+      chat_with_preview("fresh", "2026-04-25T10:00:00Z"),
+      chat_with_preview("stale", "2024-01-01T10:00:00Z"),
+    ],
+    "@odata.nextLink": "/me/chats?$skiptoken=2",
+  }
+  # Page 2 would be reached only if the break failed.
+  page2 = {"value": [chat_with_preview("older", "2023-01-01T10:00:00Z")]}
+
+  fresh_msg = _make_user_message(message_id="f1", chat_id="fresh", created="2026-04-25T10:00:00Z")
+  fake = _OrderedFakeGraphClient(
+    pages=[page1, page2],
+    messages_by_chat={"fresh": [fresh_msg]},
+    members_by_chat={"fresh": _make_members()},
+  )
+
+  adapter = TeamsAdapter(profile="work", graph_client=fake)
+  items = list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
+
+  assert adapter._chats_ordered is True
+  assert len(items) == 1
+  assert items[0].source_id.endswith(":f1")
+  # Broke at "stale": never fetched its messages, never paged to "older".
+  assert fake.fetched_message_chats == ["fresh"]
+
+
 def test_teams_adapter_skips_chats_with_no_recent_activity():
   recent_chat = _make_chat(chat_id="recent")
   stale_chat = {**_make_chat(chat_id="stale"), "lastUpdatedDateTime": "2024-01-01T00:00:00Z"}

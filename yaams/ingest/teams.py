@@ -252,6 +252,9 @@ class TeamsAdapter:
   skipped_bots: int = field(default=0, init=False)
   skipped_system: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
+  # Set True once Graph honors the lastMessagePreview ordering, which lets
+  # extract() stop paging chats at the first one older than the cutoff.
+  _chats_ordered: bool = field(default=False, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
@@ -260,21 +263,57 @@ class TeamsAdapter:
     cutoff = ensure_utc(since)
 
     for chat in self._iter_chats():
-      last_updated = chat.get("lastUpdatedDateTime")
-      if last_updated:
-        last_updated_ts = parse_graph_datetime(last_updated)
-        if last_updated_ts < cutoff:
-          continue
+      newest = self._chat_newest_ts(chat)
+      if newest is not None and newest < cutoff:
+        if self._chats_ordered:
+          # Chats arrive newest-message-first, so everything past here is
+          # older too — stop fetching further pages.
+          break
+        continue
       yield from self._iter_chat_messages(chat, cutoff)
 
+  @staticmethod
+  def _chat_newest_ts(chat: dict) -> datetime | None:
+    """Timestamp of the chat's most recent activity.
+
+    Prefers the last message's createdDateTime (the field we order by);
+    falls back to lastUpdatedDateTime when no message preview is present.
+    """
+    preview = chat.get("lastMessagePreview") or {}
+    created = preview.get("createdDateTime") or chat.get("lastUpdatedDateTime")
+    return parse_graph_datetime(created) if created else None
+
   def _iter_chats(self) -> Iterator[dict]:
-    yield from self.graph_client.paginate(
-      "/me/chats",
-      params={
-        "$top": str(self.page_size),
-        "$select": "id,topic,chatType,lastUpdatedDateTime,createdDateTime",
-      },
-    )
+    """Yield chats newest-message-first so extract() can break early.
+
+    Graph's /me/chats supports ordering by lastMessagePreview's
+    createdDateTime; if a tenant rejects the $orderby (400) we fall back to
+    the default order and disable the early-break.
+    """
+    base_select = "id,topic,chatType,lastUpdatedDateTime,createdDateTime"
+    ordered_params = {
+      "$top": str(self.page_size),
+      "$select": base_select,
+      "$expand": "lastMessagePreview",
+      "$orderby": "lastMessagePreview/createdDateTime desc",
+    }
+    try:
+      first = self.graph_client.get("/me/chats", params=ordered_params)
+    except Exception:
+      self._chats_ordered = False
+      yield from self.graph_client.paginate(
+        "/me/chats",
+        params={"$top": str(self.page_size), "$select": base_select},
+      )
+      return
+    # Ordering accepted: replay the probed first page, then follow nextLinks.
+    self._chats_ordered = True
+    yield from first.get("value", [])
+    next_url: str | None = first.get("@odata.nextLink")
+    while next_url:
+      data = self.graph_client.get(next_url)
+      yield from data.get("value", [])
+      next_url = data.get("@odata.nextLink")
 
   def _iter_chat_messages(self, chat: dict, cutoff: datetime) -> Iterator[Item]:
     chat_id = chat.get("id")

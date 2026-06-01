@@ -116,3 +116,27 @@ def test_merge_unknown_entity_is_user_error(tmp_path: Path):
   result = _run(cfg, "entities", "merge", "Crayon", "Ghost", "--json")
   assert result.exit_code != 0
   assert json.loads(result.output)["ok"] is False
+
+
+def test_dedupe_rejects_json(tmp_path: Path):
+  cfg = _config(tmp_path)
+  result = _run(cfg, "entities", "dedupe", "--json")
+  assert result.exit_code != 0
+  assert "interactive" in result.output.lower()
+
+
+def test_dedupe_no_candidates_message(tmp_path: Path):
+  # Only one entity, nothing to group -> reports cleanly without entering curses.
+  cfg = _config(tmp_path)
+  result = _run(cfg, "entities", "dedupe", "--min-items", "0")
+  assert result.exit_code == 0, result.output
+  assert "No merge candidates" in result.output
+
+
+def test_dedupe_refuses_without_tty(tmp_path: Path):
+  # With candidates but no TTY (CliRunner), it must refuse, not crash in curses.
+  cfg = _config(tmp_path)
+  _add_ner_entity(cfg, "Crayon AS")
+  result = _run(cfg, "entities", "dedupe", "--min-items", "0")
+  assert result.exit_code != 0
+  assert "interactive" in result.output.lower()

@@ -49,6 +49,26 @@ def test_route_first_occurrence_sets_asc_sort():
   assert cfg.sort == "asc"
 
 
+def test_route_last_occurrence_sets_desc_sort():
+  base = HybridQueryConfig()
+  cfg = route(_parsed(shape="last_occurrence", sort="desc"), base)
+  assert cfg.sort == "desc"
+
+
+def test_route_explicit_sort_wins_over_shape_inference():
+  # User asked for oldest-first; a last_occurrence shape must not flip it.
+  base = HybridQueryConfig(sort="asc")
+  cfg = route(_parsed(shape="last_occurrence", sort="desc"), base, explicit_sort=True)
+  assert cfg.sort == "asc"
+
+
+def test_route_explicit_relevance_blocks_parsed_sort():
+  # --sort relevance is authoritative even when the parser inferred desc.
+  base = HybridQueryConfig(sort="relevance")
+  cfg = route(_parsed(shape="last_occurrence", sort="desc"), base, explicit_sort=True)
+  assert cfg.sort == "relevance"
+
+
 def test_route_event_anchored_boosts_consolidations():
   base = HybridQueryConfig(top_k=20)
   cfg = route(_parsed(shape="event_anchored"), base)

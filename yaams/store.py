@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from array import array
 from dataclasses import dataclass
@@ -234,6 +235,102 @@ def merge_entities(
       stats["victims"] += 1
 
   return stats
+
+
+_EDGE_PUNCT = re.compile(r"^\W+|\W+$", re.UNICODE)
+
+
+def canonical_norm(name: str) -> str:
+  """Strict normalization for detecting punctuation-only entity variants:
+  collapse internal whitespace and strip leading/trailing non-word characters.
+  Case and internal punctuation are preserved (mirrors the NER normalizer's
+  edge-stripping, minus the title-casing)."""
+  collapsed = re.sub(r"\s+", " ", name).strip()
+  return _EDGE_PUNCT.sub("", collapsed)
+
+
+def normalize_entities(
+  conn: sqlite3.Connection,
+  *,
+  dry_run: bool = False,
+) -> dict:
+  """Auto-merge entities that differ only by leading/trailing punctuation or
+  whitespace (e.g. "Hamas" / "Hamas'", "`Saksnavn" / "Saksnavn`").
+
+  Entities are grouped by their case-folded :func:`canonical_norm`. Within a
+  group the survivor is the member already equal to the clean form, else the
+  most-linked member is renamed to it; the rest are merged in. Denied
+  entities are left alone. Durability comes from the NER normalizer now
+  emitting clean forms, so this is a pure DB cleanup (no config promotion).
+
+  Returns ``{"merged": n, "renamed": n, "groups": [{survivor, victims}]}``.
+  With ``dry_run`` nothing is written; the planned groups are still returned.
+  """
+  rows = conn.execute(
+    """
+    SELECT e.id AS id, e.canonical_name AS name, COUNT(ie.item_id) AS cnt
+    FROM entities e
+    LEFT JOIN item_entities ie ON ie.entity_id = e.id
+    WHERE e.pending_review != 2
+    GROUP BY e.id
+    """
+  ).fetchall()
+
+  groups: dict[str, list[tuple[int, str, int]]] = {}
+  for row in rows:
+    name = row["name"]
+    norm = canonical_norm(name)
+    if not norm:
+      continue
+    groups.setdefault(norm.casefold(), []).append((row["id"], name, int(row["cnt"])))
+
+  merged = 0
+  renamed = 0
+  planned: list[dict] = []
+  for members in groups.values():
+    members.sort(key=lambda m: (-m[2], len(m[1])))
+    clean = canonical_norm(members[0][1])
+    if len(members) == 1 and members[0][1] == clean:
+      continue  # already clean and alone — nothing to do
+
+    survivor_id = next((eid for eid, name, _ in members if name == clean), None)
+    member_ids = {m[0] for m in members}
+    will_rename = False
+    if survivor_id is None:
+      existing = resolve_entity_id(conn, clean)
+      if existing is not None and existing not in member_ids:
+        survivor_id = existing
+      else:
+        survivor_id = members[0][0]
+        will_rename = members[0][1] != clean
+
+    victim_ids = [m[0] for m in members if m[0] != survivor_id]
+    if not victim_ids and not will_rename:
+      continue
+    planned.append({
+      "survivor": clean,
+      "victims": [m[1] for m in members if m[0] != survivor_id],
+    })
+    if dry_run:
+      continue
+
+    if will_rename:
+      try:
+        with conn:
+          conn.execute(
+            "UPDATE entities SET canonical_name = ? WHERE id = ?",
+            (clean, survivor_id),
+          )
+        renamed += 1
+      except sqlite3.IntegrityError:
+        # `clean` already exists as another entity — merge into it instead.
+        survivor_id = resolve_entity_id(conn, clean) or survivor_id
+        victim_ids = [m[0] for m in members if m[0] != survivor_id]
+    if victim_ids:
+      merge_entities(conn, survivor_id, victim_ids)
+      merged += len(victim_ids)
+
+  return {"merged": merged, "renamed": renamed, "groups": planned}
 
 
 def prune_entity(conn: sqlite3.Connection, entity_id: int) -> dict[str, int]:

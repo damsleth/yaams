@@ -24,6 +24,7 @@ from yaams.time import ensure_utc, parse_iso_datetime, utc_now
 SHAPES = (
   "factual",
   "first_occurrence",
+  "last_occurrence",
   "temporal_range",
   "synthesis",
   "event_anchored",
@@ -72,7 +73,7 @@ Today is {today}.
 
 Schema:
 {{
-  "shape": one of "factual" | "first_occurrence" | "temporal_range" | "synthesis" | "event_anchored",
+  "shape": one of "factual" | "first_occurrence" | "last_occurrence" | "temporal_range" | "synthesis" | "event_anchored",
   "entities": list of canonical entity names from the dictionary below; pick only matches you are confident about,
   "date_range": [start_iso_or_null, end_iso_or_null],
   "topic_terms": short list of content keywords (no entity names, no stopwords),
@@ -83,7 +84,8 @@ Schema:
 
 Shape guide:
 - factual: simple lookup ("what is X", "who said Y").
-- first_occurrence: when did something first happen ("when did I first hear about X").
+- first_occurrence: when did something first happen ("when did I first hear about X"). Use sort "asc".
+- last_occurrence: the most recent time something happened ("when did I last speak with X", "what's the latest on Y", "most recent message from Z"). Use sort "desc".
 - temporal_range: scoped to a time window ("in April", "last week", "Q1 2026").
 - synthesis: requires aggregating many sources ("what's my position on X", "summarize Y").
 - event_anchored: tied to a specific meeting / event entity.
@@ -94,6 +96,9 @@ Known entities (resolve aliases to canonical names; do NOT invent):
 Examples:
 Q: "When did I first hear about Project Atlas?"
 A: {{"shape":"first_occurrence","entities":["Project Atlas"],"date_range":[null,null],"topic_terms":[],"sort":"asc","prefer_tier":null,"high_quality":false}}
+
+Q: "When did I last speak with Alice?"
+A: {{"shape":"last_occurrence","entities":["Alice"],"date_range":[null,null],"topic_terms":[],"sort":"desc","prefer_tier":null,"high_quality":false}}
 
 Q: "What did Alice say about the spec review in April?"
 A: {{"shape":"temporal_range","entities":["Alice"],"date_range":["{year}-04-01T00:00:00+00:00","{year}-04-30T23:59:59+00:00"],"topic_terms":["spec review"],"sort":"relevance","prefer_tier":null,"high_quality":false}}

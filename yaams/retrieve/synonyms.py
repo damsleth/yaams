@@ -31,8 +31,9 @@ def load_synonym_groups(conn: sqlite3.Connection) -> dict[str, list[str]]:
   """
   groups: dict[str, list[str]] = {}
   try:
+    # Skip denied entities (pending_review = 2) so pruned junk does not expand.
     rows = conn.execute(
-      "SELECT canonical_name, aliases FROM entities"
+      "SELECT canonical_name, aliases FROM entities WHERE pending_review != 2"
     ).fetchall()
   except sqlite3.DatabaseError:
     return groups

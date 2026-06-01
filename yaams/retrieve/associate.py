@@ -42,8 +42,13 @@ def build_cooccurrence(
   chance scores ~0.0. Writes both directed rows per pair. Replaces the whole
   table. Returns the number of unordered pairs stored.
   """
+  # Denied entities (pending_review = 2) are excluded everywhere so pruned
+  # junk does not pollute co-occurrence.
   total = conn.execute(
-    "SELECT COUNT(DISTINCT item_id) FROM item_entities"
+    """
+    SELECT COUNT(DISTINCT ie.item_id) FROM item_entities ie
+    JOIN entities e ON e.id = ie.entity_id AND e.pending_review != 2
+    """
   ).fetchone()[0]
   if not total:
     with conn:
@@ -53,7 +58,11 @@ def build_cooccurrence(
   counts = {
     row[0]: row[1]
     for row in conn.execute(
-      "SELECT entity_id, COUNT(DISTINCT item_id) FROM item_entities GROUP BY entity_id"
+      """
+      SELECT ie.entity_id, COUNT(DISTINCT ie.item_id) FROM item_entities ie
+      JOIN entities e ON e.id = ie.entity_id AND e.pending_review != 2
+      GROUP BY ie.entity_id
+      """
     )
   }
 
@@ -63,6 +72,8 @@ def build_cooccurrence(
     FROM item_entities a
     JOIN item_entities b
       ON a.item_id = b.item_id AND a.entity_id < b.entity_id
+    JOIN entities ea ON ea.id = a.entity_id AND ea.pending_review != 2
+    JOIN entities eb ON eb.id = b.entity_id AND eb.pending_review != 2
     GROUP BY a.entity_id, b.entity_id
     HAVING c >= ?
     """,

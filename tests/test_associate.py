@@ -156,6 +156,25 @@ def test_expand_query_entities_adds_weighted_names():
   assert weights["langkaia"] == 0.8
 
 
+def test_resolve_associations_fail_soft_on_premigration_db():
+  # A pre-v5 DB has the entities table but not entity_assoc / entity_relations.
+  # Read paths (assoc show, query --assoc) must not crash.
+  conn = sqlite3.connect(":memory:")
+  conn.row_factory = sqlite3.Row
+  conn.execute(
+    "CREATE TABLE entities (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "canonical_name TEXT NOT NULL UNIQUE, entity_type TEXT NOT NULL, "
+    "aliases TEXT, pending_review INTEGER NOT NULL DEFAULT 0)"
+  )
+  conn.execute("INSERT INTO entities (canonical_name, entity_type) VALUES ('Alpha','org')")
+  conn.commit()
+  aid = conn.execute("SELECT id FROM entities WHERE canonical_name='Alpha'").fetchone()["id"]
+  assert resolve_associations(conn, [aid]) == {}
+  expanded, weights = expand_query_entities(conn, ["Alpha"])
+  assert expanded == ["Alpha"]
+  assert weights == {"alpha": 1.0}
+
+
 def test_expand_query_entities_noop_when_no_associations():
   conn = _open_db()
   _add_entity(conn, "Lonely")

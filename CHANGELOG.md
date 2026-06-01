@@ -10,7 +10,7 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
-## [0.1.13] - 2026-05-31
+## [0.1.13] - 2026-06-01
 
 ### Changed
 

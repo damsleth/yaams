@@ -143,6 +143,127 @@ def get_entity_meta(conn: sqlite3.Connection, entity_id: int) -> dict[str, str]:
   }
 
 
+def merge_entities(
+  conn: sqlite3.Connection,
+  survivor_id: int,
+  victim_ids: Iterable[int],
+) -> dict[str, int]:
+  """Repoint every reference from each victim entity to the survivor, then
+  delete the victim rows. Transactional. Caller is responsible for first
+  folding victim names/aliases into the survivor's config dictionary entry
+  and reseeding, so the merge survives future NER re-tagging.
+
+  Reassigns: item_entities (max-confidence on conflict), entity_tags,
+  entity_meta (survivor's existing values win), entity_relations (dedupe +
+  drop self-loops), promotion_candidates (matched by canonical name). Drops
+  the victims' learned entity_assoc rows (rebuild with `assoc build`).
+  """
+  victims = [v for v in victim_ids if v != survivor_id]
+  stats = {"victims": 0, "item_links": 0, "tags": 0, "meta": 0, "relations": 0}
+  if not victims:
+    return stats
+
+  srow = conn.execute(
+    "SELECT canonical_name FROM entities WHERE id = ?", (survivor_id,)
+  ).fetchone()
+  if srow is None:
+    raise ValueError(f"survivor entity id {survivor_id} does not exist")
+  survivor_name = srow[0] if not hasattr(srow, "keys") else srow["canonical_name"]
+
+  with conn:
+    for vid in victims:
+      vrow = conn.execute(
+        "SELECT canonical_name FROM entities WHERE id = ?", (vid,)
+      ).fetchone()
+      if vrow is None:
+        continue
+      vname = vrow[0] if not hasattr(vrow, "keys") else vrow["canonical_name"]
+
+      stats["item_links"] += conn.execute(
+        "SELECT COUNT(*) FROM item_entities WHERE entity_id = ?", (vid,)
+      ).fetchone()[0]
+      conn.execute(
+        """
+        INSERT INTO item_entities (item_id, entity_id, confidence, source)
+        SELECT item_id, ?, confidence, source FROM item_entities WHERE entity_id = ?
+        ON CONFLICT(item_id, entity_id)
+          DO UPDATE SET confidence = MAX(item_entities.confidence, excluded.confidence)
+        """,
+        (survivor_id, vid),
+      )
+      conn.execute("DELETE FROM item_entities WHERE entity_id = ?", (vid,))
+
+      conn.execute(
+        "INSERT OR IGNORE INTO entity_tags (entity_id, tag) "
+        "SELECT ?, tag FROM entity_tags WHERE entity_id = ?",
+        (survivor_id, vid),
+      )
+      conn.execute("DELETE FROM entity_tags WHERE entity_id = ?", (vid,))
+
+      conn.execute(
+        "INSERT OR IGNORE INTO entity_meta (entity_id, key, value) "
+        "SELECT ?, key, value FROM entity_meta WHERE entity_id = ?",
+        (survivor_id, vid),
+      )
+      conn.execute("DELETE FROM entity_meta WHERE entity_id = ?", (vid,))
+
+      conn.execute(
+        "UPDATE OR IGNORE entity_relations SET from_entity = ? WHERE from_entity = ?",
+        (survivor_id, vid),
+      )
+      conn.execute(
+        "UPDATE OR IGNORE entity_relations SET to_entity = ? WHERE to_entity = ?",
+        (survivor_id, vid),
+      )
+      conn.execute(
+        "DELETE FROM entity_relations WHERE from_entity = ? OR to_entity = ?",
+        (vid, vid),
+      )
+      conn.execute(
+        "DELETE FROM entity_relations WHERE from_entity = to_entity"
+      )
+
+      conn.execute(
+        "DELETE FROM entity_assoc WHERE entity_a = ? OR entity_b = ?", (vid, vid)
+      )
+      conn.execute(
+        "UPDATE promotion_candidates SET entity = ? WHERE entity = ?",
+        (survivor_name, vname),
+      )
+      conn.execute("DELETE FROM entities WHERE id = ?", (vid,))
+      stats["victims"] += 1
+
+  return stats
+
+
+def prune_entity(conn: sqlite3.Connection, entity_id: int) -> dict[str, int]:
+  """Mark an entity as denied (pending_review=2) and strip its derived data
+  and links. Denial persists across re-ingest (the row is kept so NER's
+  INSERT OR IGNORE cannot revive it as a fresh candidate), and the cleared
+  links/associations keep junk out of retrieval until any future re-tag."""
+  stats = {
+    "item_links": conn.execute(
+      "SELECT COUNT(*) FROM item_entities WHERE entity_id = ?", (entity_id,)
+    ).fetchone()[0],
+  }
+  with conn:
+    conn.execute(
+      "UPDATE entities SET pending_review = 2 WHERE id = ?", (entity_id,)
+    )
+    conn.execute("DELETE FROM item_entities WHERE entity_id = ?", (entity_id,))
+    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?", (entity_id,))
+    conn.execute("DELETE FROM entity_meta WHERE entity_id = ?", (entity_id,))
+    conn.execute(
+      "DELETE FROM entity_relations WHERE from_entity = ? OR to_entity = ?",
+      (entity_id, entity_id),
+    )
+    conn.execute(
+      "DELETE FROM entity_assoc WHERE entity_a = ? OR entity_b = ?",
+      (entity_id, entity_id),
+    )
+  return stats
+
+
 def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> int:
   """Upgrade item_entities.source from 'ner' to 'dictionary' for entities now in the dictionary.
 

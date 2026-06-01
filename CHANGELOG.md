@@ -10,6 +10,22 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-01
+
+### Added
+
+- Entity junk detector: `yaams entities suggest-prune` flags NER false
+  positives (stopwords, all-lowercase fragments, very-short non-acronyms,
+  numerics, symbol-heavy strings) with reasons and item counts for review.
+  Curated and denied entities are excluded; nothing is auto-pruned.
+- Entity cleanup pass: `entities merge`, `entities prune`, and merge
+  suggestions, plus an interactive dedupe TUI for reviewing merge candidates.
+- Auto-normalization of punctuation-only entity variants.
+- Custom entity metadata: free-form tags and key/value attributes.
+- Retrieval entity association layer: learned co-occurrence plus manual links.
+- Synonym expansion of FTS queries from entity aliases.
+- First-class date sorting for temporal-locator queries.
+
 ## [0.1.13] - 2026-06-01
 
 ### Changed

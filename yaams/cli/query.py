@@ -24,6 +24,7 @@ from yaams.retrieve import (
   query as run_query,
 )
 from yaams.retrieve.associate import expand_query_entities
+from yaams.retrieve.metadata import entities_matching
 from yaams.retrieve import (
   route as route_parsed,
 )
@@ -48,6 +49,19 @@ def _cli_provenance() -> str | None:
   if os.environ.get("HUGR_PASSTHROUGH"):
     return "hugr"
   return "cli"
+
+
+def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
+  """Parse --meta KEY=VALUE flags into a dict. Pairs without '=' or with an
+  empty key are skipped (silently tolerant; the resolver AND-s what remains)."""
+  out: dict[str, str] = {}
+  for raw in meta:
+    if "=" not in raw:
+      continue
+    key, value = raw.split("=", 1)
+    if key.strip():
+      out[key.strip()] = value
+  return out
 
 
 def _resolve_source_filter(
@@ -136,6 +150,29 @@ def _resolve_source_filter(
        "'yaams assoc build'.",
 )
 @click.option(
+  "--tag",
+  "tags",
+  multiple=True,
+  help="Restrict/boost to documents whose entities carry this tag "
+       "(repeatable; entities must carry ALL given tags). "
+       "Set tags with 'yaams entities tag'.",
+)
+@click.option(
+  "--meta",
+  "meta",
+  multiple=True,
+  help="Restrict/boost by entity attribute KEY=VALUE (repeatable; AND-ed). "
+       "Set with 'yaams entities set'.",
+)
+@click.option(
+  "--tag-mode",
+  type=click.Choice(["filter", "boost"]),
+  default="filter",
+  show_default=True,
+  help="filter: hard-restrict to matching-metadata entities. "
+       "boost: keep all results but lift matching ones in ranking.",
+)
+@click.option(
   "--no-consolidations",
   is_flag=True,
   help="Search raw items only (skip session consolidations)",
@@ -183,6 +220,9 @@ def query_cmd(
   no_vector: bool,
   no_synonyms: bool,
   assoc: bool,
+  tags: tuple[str, ...],
+  meta: tuple[str, ...],
+  tag_mode: str,
   no_consolidations: bool,
   output_format: str,
   as_json: bool,
@@ -278,11 +318,29 @@ def query_cmd(
         expanded, weights = expand_query_entities(conn_ro, qcfg.entity_filter)
         qcfg.entity_filter = expanded
         qcfg.assoc_weights = weights
+      # Entity-metadata constraints (--tag / --meta) resolve to a set of
+      # qualifying entities, then reuse the entity machinery: filter mode
+      # restricts the allowlist, boost mode lifts matching docs in ranking.
+      tag_filter_no_match = False
+      if tags or meta:
+        meta_dict = _parse_meta_pairs(meta)
+        matched = entities_matching(conn_ro, tags=list(tags), meta=meta_dict)
+        if tag_mode == "filter":
+          if matched:
+            qcfg.entity_filter = matched
+          else:
+            tag_filter_no_match = True
+        elif matched:
+          qcfg.boost_entities = matched
+
       fts_text = query_text
       if parsed is not None and parsed.topic_terms:
         fts_text = " ".join(parsed.topic_terms)
-      results = run_query(conn_ro, fts_text, embedding=embedding, config=qcfg)
-      if parsed is not None and qcfg.entity_filter:
+      if tag_filter_no_match:
+        results = []  # no entity carries the requested metadata
+      else:
+        results = run_query(conn_ro, fts_text, embedding=embedding, config=qcfg)
+      if not tag_filter_no_match and parsed is not None and qcfg.entity_filter:
         results = filter_results_by_entities(results, conn_ro, qcfg.entity_filter)
       if tier_raw_exclude:
         results = [r for r in results if r.source != _LEDGER_SOURCE_ID]

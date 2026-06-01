@@ -54,6 +54,95 @@ def seed_entities(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> None:
         )
 
 
+def resolve_entity_id(conn: sqlite3.Connection, name: str) -> int | None:
+  row = conn.execute(
+    "SELECT id FROM entities WHERE lower(canonical_name) = lower(?)",
+    (name.strip(),),
+  ).fetchone()
+  if row is None:
+    return None
+  return row[0] if not hasattr(row, "keys") else row["id"]
+
+
+def add_entity_tags(conn: sqlite3.Connection, entity_id: int, tags: Iterable[str]) -> int:
+  """Attach lowercased membership tags to an entity. Idempotent. Returns the
+  number of tags newly inserted."""
+  added = 0
+  with conn:
+    for tag in tags:
+      norm = tag.strip().lower()
+      if not norm:
+        continue
+      cur = conn.execute(
+        "INSERT OR IGNORE INTO entity_tags (entity_id, tag) VALUES (?, ?)",
+        (entity_id, norm),
+      )
+      added += cur.rowcount
+  return added
+
+
+def remove_entity_tags(conn: sqlite3.Connection, entity_id: int, tags: Iterable[str]) -> int:
+  removed = 0
+  with conn:
+    for tag in tags:
+      norm = tag.strip().lower()
+      if not norm:
+        continue
+      cur = conn.execute(
+        "DELETE FROM entity_tags WHERE entity_id = ? AND tag = ?",
+        (entity_id, norm),
+      )
+      removed += cur.rowcount
+  return removed
+
+
+def set_entity_meta(conn: sqlite3.Connection, entity_id: int, key: str, value: str) -> None:
+  """Set a key/value attribute on an entity (lowercased key, verbatim value).
+  Upserts: setting an existing key overwrites its value."""
+  norm_key = key.strip().lower()
+  with conn:
+    conn.execute(
+      """
+      INSERT INTO entity_meta (entity_id, key, value) VALUES (?, ?, ?)
+      ON CONFLICT(entity_id, key) DO UPDATE SET value = excluded.value
+      """,
+      (entity_id, norm_key, value),
+    )
+
+
+def remove_entity_meta(conn: sqlite3.Connection, entity_id: int, keys: Iterable[str]) -> int:
+  removed = 0
+  with conn:
+    for key in keys:
+      norm = key.strip().lower()
+      if not norm:
+        continue
+      cur = conn.execute(
+        "DELETE FROM entity_meta WHERE entity_id = ? AND key = ?",
+        (entity_id, norm),
+      )
+      removed += cur.rowcount
+  return removed
+
+
+def get_entity_tags(conn: sqlite3.Connection, entity_id: int) -> list[str]:
+  return [
+    (r[0] if not hasattr(r, "keys") else r["tag"])
+    for r in conn.execute(
+      "SELECT tag FROM entity_tags WHERE entity_id = ? ORDER BY tag", (entity_id,)
+    )
+  ]
+
+
+def get_entity_meta(conn: sqlite3.Connection, entity_id: int) -> dict[str, str]:
+  return {
+    (r[0] if not hasattr(r, "keys") else r["key"]): (r[1] if not hasattr(r, "keys") else r["value"])
+    for r in conn.execute(
+      "SELECT key, value FROM entity_meta WHERE entity_id = ? ORDER BY key", (entity_id,)
+    )
+  }
+
+
 def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> int:
   """Upgrade item_entities.source from 'ner' to 'dictionary' for entities now in the dictionary.
 

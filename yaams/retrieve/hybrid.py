@@ -53,6 +53,10 @@ class HybridQueryConfig:
   # When set, hydrated scores are multiplied by the result's best weight so
   # associated-only documents are surfaced but never outrank exact matches.
   assoc_weights: dict[str, float] | None = None
+  # Soft metadata boost: documents linked to any of these entities have their
+  # score multiplied by boost_factor (does not filter the candidate set).
+  boost_entities: list[str] | None = None
+  boost_factor: float = 1.5
 
 
 @dataclass
@@ -138,6 +142,13 @@ def query(
   )
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
+  if cfg.boost_entities:
+    # Soft metadata boost: lift documents tagged with a matching entity
+    # without removing anything else from the result set.
+    item_b, cons_b = _resolve_entity_allowlist(conn, cfg.boost_entities)
+    for r in hydrated:
+      if r.id in (item_b if r.kind == "item" else cons_b):
+        r.score *= cfg.boost_factor
   if cfg.assoc_weights:
     item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
     for r in hydrated:

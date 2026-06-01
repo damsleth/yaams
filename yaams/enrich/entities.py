@@ -146,6 +146,11 @@ def _tag_rank(tag: EntityTag) -> tuple[int, float]:
 
 def normalize_ner_canonical(value: str, entity_type: str) -> str:
   normalized = re.sub(r"\s+", " ", value).strip()
+  # Strip leading/trailing non-word characters so genitive apostrophes,
+  # stray backticks, commas and bidi marks don't fork an entity into
+  # variants ("Hamas" vs "Hamas'", "`Saksnavn" vs "Saksnavn`"). Internal
+  # punctuation (O'Brien, AT&T) is preserved.
+  normalized = re.sub(r"^\W+|\W+$", "", normalized, flags=re.UNICODE)
   if entity_type in {"person", "place"}:
     return normalized.casefold().title()
   return normalized

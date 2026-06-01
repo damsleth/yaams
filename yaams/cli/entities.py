@@ -17,7 +17,17 @@ from yaams.conventions import (
 )
 from yaams.db import open_db
 from yaams.schema import init_schema
-from yaams.store import backfill_entity_sources, seed_entities
+from yaams.store import (
+  add_entity_tags,
+  backfill_entity_sources,
+  get_entity_meta,
+  get_entity_tags,
+  remove_entity_meta,
+  remove_entity_tags,
+  resolve_entity_id,
+  seed_entities,
+  set_entity_meta,
+)
 
 
 def _reject_interactive_json(command: str, alt_hint: str) -> None:
@@ -490,3 +500,169 @@ def entities_manage(config_path: str, as_json: bool) -> None:
 
   finally:
     conn.close()
+
+
+def _open_for_entity(config_path: str, command: str, name: str, as_json: bool, *, readonly: bool):
+  """Open the DB and resolve an entity by canonical name, emitting the proper
+  envelope and exiting on failure. Returns (conn, entity_id)."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=readonly)
+  if not readonly:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+  eid = resolve_entity_id(conn, name)
+  if eid is None:
+    conn.close()
+    msg = f"No entity named {name!r}"
+    if as_json:
+      emit_data_error(data_error(command=command, code="unknown_entity", message=msg,
+                                 hint="List entities with: yaams entities list"))
+    else:
+      click.echo(msg + ".", err=True)
+    sys.exit(EXIT_USER_ERROR)
+  return conn, eid
+
+
+def _parse_kv(pairs: tuple[str, ...], command: str, as_json: bool) -> list[tuple[str, str]]:
+  out: list[tuple[str, str]] = []
+  for raw in pairs:
+    if "=" not in raw:
+      msg = f"Expected KEY=VALUE, got {raw!r}"
+      if as_json:
+        emit_data_error(data_error(command=command, code="bad_attribute", message=msg,
+                                   hint="Use: yaams entities set <name> sector=public"))
+      else:
+        click.echo(msg + ".", err=True)
+      sys.exit(EXIT_USER_ERROR)
+    key, value = raw.split("=", 1)
+    if not key.strip():
+      msg = f"Empty attribute key in {raw!r}"
+      if as_json:
+        emit_data_error(data_error(command=command, code="bad_attribute", message=msg))
+      else:
+        click.echo(msg + ".", err=True)
+      sys.exit(EXIT_USER_ERROR)
+    out.append((key, value))
+  return out
+
+
+@entities_group.command("tag")
+@click.argument("name")
+@click.argument("tags", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_tag(name: str, tags: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Attach membership TAGS to an entity (e.g. customer defense-sector)."""
+  conn, eid = _open_for_entity(config_path, "entities tag", name, as_json, readonly=False)
+  try:
+    added = add_entity_tags(conn, eid, tags)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities tag", ok=True,
+                                stats={"entity": name, "added": added}))
+    return
+  click.echo(f"Tagged '{name}' (+{added} new): {', '.join(t.lower() for t in tags)}")
+
+
+@entities_group.command("untag")
+@click.argument("name")
+@click.argument("tags", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_untag(name: str, tags: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Remove membership TAGS from an entity."""
+  conn, eid = _open_for_entity(config_path, "entities untag", name, as_json, readonly=False)
+  try:
+    removed = remove_entity_tags(conn, eid, tags)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities untag", ok=True,
+                                stats={"entity": name, "removed": removed}))
+    return
+  click.echo(f"Untagged '{name}' (-{removed}).")
+
+
+@entities_group.command("set")
+@click.argument("name")
+@click.argument("attrs", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_set(name: str, attrs: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Set KEY=VALUE attribute(s) on an entity (e.g. sector=public region=oslo)."""
+  pairs = _parse_kv(attrs, "entities set", as_json)
+  conn, eid = _open_for_entity(config_path, "entities set", name, as_json, readonly=False)
+  try:
+    for key, value in pairs:
+      set_entity_meta(conn, eid, key, value)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities set", ok=True,
+                                stats={"entity": name, "set": len(pairs)}))
+    return
+  click.echo(f"Set on '{name}': " + ", ".join(f"{k.lower()}={v}" for k, v in pairs))
+
+
+@entities_group.command("unset")
+@click.argument("name")
+@click.argument("keys", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_unset(name: str, keys: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Remove attribute KEY(s) from an entity."""
+  conn, eid = _open_for_entity(config_path, "entities unset", name, as_json, readonly=False)
+  try:
+    removed = remove_entity_meta(conn, eid, keys)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities unset", ok=True,
+                                stats={"entity": name, "removed": removed}))
+    return
+  click.echo(f"Unset on '{name}' (-{removed}).")
+
+
+@entities_group.command("show")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True, help="Raw entity document on stdout.")
+@config_option
+def entities_show(name: str, as_json: bool, config_path: str) -> None:
+  """Show an entity's type, aliases, tags, attributes, and item count."""
+  import json as _json
+
+  conn, eid = _open_for_entity(config_path, "entities show", name, as_json, readonly=True)
+  try:
+    row = conn.execute(
+      "SELECT canonical_name, entity_type, aliases FROM entities WHERE id = ?", (eid,)
+    ).fetchone()
+    canonical = row["canonical_name"]
+    etype = row["entity_type"]
+    try:
+      aliases = _json.loads(row["aliases"]) if row["aliases"] else []
+    except (TypeError, ValueError):
+      aliases = []
+    tags = get_entity_tags(conn, eid)
+    meta = get_entity_meta(conn, eid)
+    items = conn.execute(
+      "SELECT count(*) FROM item_entities WHERE entity_id = ?", (eid,)
+    ).fetchone()[0]
+  finally:
+    conn.close()
+  if as_json:
+    click.echo(_json.dumps({
+      "canonical": canonical, "type": etype, "aliases": aliases,
+      "tags": tags, "meta": meta, "items": int(items),
+    }, ensure_ascii=False))
+    return
+  click.echo(f"{canonical}  ({etype})")
+  click.echo(f"  items:   {items}")
+  click.echo(f"  aliases: {', '.join(aliases) if aliases else '-'}")
+  click.echo(f"  tags:    {', '.join(tags) if tags else '-'}")
+  if meta:
+    click.echo("  meta:")
+    for k, v in meta.items():
+      click.echo(f"    {k} = {v}")
+  else:
+    click.echo("  meta:    -")

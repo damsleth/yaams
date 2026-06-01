@@ -489,6 +489,37 @@ def test_association_exact_outranks_newer_associated_under_date_sort():
   )
 
 
+def test_metadata_boost_lifts_tagged_entity_without_filtering():
+  from yaams.store import add_entity_tags, resolve_entity_id
+
+  conn = _open_db()
+  conn.execute("INSERT INTO entities (canonical_name, entity_type) VALUES ('Acme','org')")
+  acme = resolve_entity_id(conn, "Acme")
+  add_entity_tags(conn, acme, ["customer"])
+
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  tagged = _make_item(thread_id="t1", content="shared-topic", ts=base, msg_id="1")
+  untagged = _make_item(
+    thread_id="t2", content="shared-topic shared-topic", ts=base, msg_id="2"
+  )  # stronger raw match
+  store_items(conn, [tagged, untagged], [b"\x00" * 16] * 2, [[]] * 2)
+  conn.execute(
+    "INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'test')",
+    (tagged.id, acme),
+  )
+  conn.commit()
+
+  # Boost mode keeps BOTH docs but lifts the customer-tagged one.
+  matched = ["Acme"]
+  boosted = HybridQueryConfig(
+    boost_entities=matched, boost_factor=5.0, include_consolidations=False
+  )
+  results = query(conn, "shared-topic", config=boosted)
+  ids = [r.id for r in results]
+  assert set(ids) == {tagged.id, untagged.id}  # nothing filtered out
+  assert ids[0] == tagged.id  # tagged doc lifted to the top
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

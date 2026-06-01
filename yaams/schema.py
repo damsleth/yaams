@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_EMBEDDING_DIM = 1024
 
 
@@ -114,6 +114,29 @@ def init_schema(
 
       CREATE INDEX IF NOT EXISTS idx_entity_relations_from
         ON entity_relations(from_entity);
+
+      -- Free-form membership tags per entity (e.g. customer, defense-sector).
+      -- Tags are stored lowercased for case-insensitive matching.
+      CREATE TABLE IF NOT EXISTS entity_tags (
+        entity_id INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        PRIMARY KEY (entity_id, tag),
+        FOREIGN KEY (entity_id) REFERENCES entities(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entity_tags_tag ON entity_tags(tag);
+
+      -- Structured key/value attributes per entity (e.g. sector=public,
+      -- region=oslo). Keys are stored lowercased; values are kept verbatim.
+      CREATE TABLE IF NOT EXISTS entity_meta (
+        entity_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (entity_id, key),
+        FOREIGN KEY (entity_id) REFERENCES entities(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entity_meta_kv ON entity_meta(key, value);
 
       CREATE TABLE IF NOT EXISTS watermarks (
         source TEXT PRIMARY KEY,

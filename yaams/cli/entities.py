@@ -699,6 +699,88 @@ def _dedupe_ci(values, *, exclude: set[str] | None = None) -> list[str]:
   return out
 
 
+def _apply_merge(conn, config_path: str, survivor_id: int, victim_ids: list[int]):
+  """Fold victim names+aliases into the survivor's config-dictionary entry,
+  reseed, then repoint and delete the victims. Shared by the `merge` command
+  and the interactive dedupe TUI. Returns (survivor_name, stats, aliases)."""
+  cfg = load_config(config_path)
+  survivor_name, survivor_type, survivor_aliases = _entity_row(conn, survivor_id)
+  folded = list(survivor_aliases)
+  victim_names: list[str] = []
+  for vid in victim_ids:
+    vname, _vtype, valiases = _entity_row(conn, vid)
+    victim_names.append(vname)
+    folded.append(vname)
+    folded.extend(valiases)
+  merged_aliases = _dedupe_ci(folded, exclude={survivor_name.casefold()})
+
+  entities_cfg = dict(cfg.get("entities") or {})
+  dictionary = list(entities_cfg.get("dictionary") or [])
+  victim_lc = {n.casefold() for n in victim_names}
+  survivor_entry = None
+  for entry in dictionary:
+    if str(entry.get("canonical", "")).casefold() == survivor_name.casefold():
+      survivor_entry = entry
+      break
+  if survivor_entry is None:
+    survivor_entry = {"canonical": survivor_name, "type": survivor_type}
+    dictionary.append(survivor_entry)
+  survivor_entry["aliases"] = _dedupe_ci(
+    list(survivor_entry.get("aliases") or []) + merged_aliases,
+    exclude={survivor_name.casefold()},
+  )
+  dictionary = [
+    e for e in dictionary if str(e.get("canonical", "")).casefold() not in victim_lc
+  ]
+  entities_cfg["dictionary"] = dictionary
+  _save_entities(config_path, entities_cfg)
+
+  fresh_dict = load_config(config_path).get("entities", {}).get("dictionary", [])
+  seed_entities(conn, fresh_dict)
+  survivor_id = resolve_entity_id(conn, survivor_name)
+  stats = merge_entities(conn, survivor_id, victim_ids)
+  return survivor_name, stats, merged_aliases
+
+
+def _build_merge_suggestions(conn, min_items: int) -> list[dict]:
+  """Group entities whose names collapse to the same normalized key into
+  merge candidates. Each suggestion: {key, survivor, victims, members}.
+  Survivor is the member with the most item links (ties: shortest name)."""
+  rows = conn.execute(
+    """
+    SELECT e.canonical_name AS name, COUNT(ie.item_id) AS cnt
+    FROM entities e
+    LEFT JOIN item_entities ie ON ie.entity_id = e.id
+    WHERE e.pending_review != 2
+    GROUP BY e.id
+    """
+  ).fetchall()
+
+  groups: dict[str, list[tuple[str, int]]] = {}
+  for row in rows:
+    name, cnt = row["name"], int(row["cnt"])
+    if cnt < min_items:
+      continue
+    key = _norm_merge_key(name)
+    if not key:
+      continue
+    groups.setdefault(key, []).append((name, cnt))
+
+  suggestions: list[dict] = []
+  for key, members in groups.items():
+    if len(members) < 2:
+      continue
+    members.sort(key=lambda m: (-m[1], len(m[0])))
+    suggestions.append({
+      "key": key,
+      "survivor": members[0][0],
+      "victims": [m[0] for m in members[1:]],
+      "members": [{"name": n, "items": c} for n, c in members],
+    })
+  suggestions.sort(key=lambda s: -sum(m["items"] for m in s["members"]))
+  return suggestions
+
+
 @entities_group.command("merge")
 @click.argument("survivor")
 @click.argument("victims", nargs=-1, required=True)
@@ -743,42 +825,9 @@ def entities_merge(survivor: str, victims: tuple[str, ...], as_json: bool, confi
       click.echo("Nothing to merge (victims resolved to the survivor).")
       return
 
-    survivor_name, survivor_type, survivor_aliases = _entity_row(conn, survivor_id)
-    folded = list(survivor_aliases)
-    for vid in victim_ids:
-      vname, _vtype, valiases = _entity_row(conn, vid)
-      victim_names.append(vname)
-      folded.append(vname)
-      folded.extend(valiases)
-    merged_aliases = _dedupe_ci(folded, exclude={survivor_name.casefold()})
-
-    # Durably fold into the config dictionary: ensure the survivor entry
-    # carries the victim names as aliases, and drop victim entries.
-    entities_cfg = dict(cfg.get("entities") or {})
-    dictionary = list(entities_cfg.get("dictionary") or [])
-    victim_lc = {n.casefold() for n in victim_names}
-    survivor_entry = None
-    for entry in dictionary:
-      if str(entry.get("canonical", "")).casefold() == survivor_name.casefold():
-        survivor_entry = entry
-        break
-    if survivor_entry is None:
-      survivor_entry = {"canonical": survivor_name, "type": survivor_type}
-      dictionary.append(survivor_entry)
-    existing_cfg_aliases = list(survivor_entry.get("aliases") or [])
-    survivor_entry["aliases"] = _dedupe_ci(
-      existing_cfg_aliases + merged_aliases, exclude={survivor_name.casefold()}
+    survivor_name, stats, merged_aliases = _apply_merge(
+      conn, config_path, survivor_id, victim_ids
     )
-    dictionary = [
-      e for e in dictionary if str(e.get("canonical", "")).casefold() not in victim_lc
-    ]
-    entities_cfg["dictionary"] = dictionary
-    _save_entities(config_path, entities_cfg)
-
-    fresh_dict = load_config(config_path).get("entities", {}).get("dictionary", [])
-    seed_entities(conn, fresh_dict)
-    survivor_id = resolve_entity_id(conn, survivor_name)
-    stats = merge_entities(conn, survivor_id, victim_ids)
   finally:
     conn.close()
   if as_json:
@@ -871,51 +920,201 @@ def entities_suggest_merges(config_path: str, min_items: int, as_json: bool) -> 
   db_path = get_db_path(cfg)
   conn = open_db(db_path, readonly=True)
   try:
-    rows = conn.execute(
-      """
-      SELECT e.canonical_name AS name, COUNT(ie.item_id) AS cnt
-      FROM entities e
-      LEFT JOIN item_entities ie ON ie.entity_id = e.id
-      WHERE e.pending_review != 2
-      GROUP BY e.id
-      """
-    ).fetchall()
+    suggestions = _build_merge_suggestions(conn, min_items)
   finally:
     conn.close()
 
-  groups: dict[str, list[tuple[str, int]]] = {}
-  for row in rows:
-    name, cnt = row["name"], int(row["cnt"])
-    if cnt < min_items:
-      continue
-    key = _norm_merge_key(name)
-    if not key:
-      continue
-    groups.setdefault(key, []).append((name, cnt))
-
-  suggestions = []
-  for key, members in groups.items():
-    if len(members) < 2:
-      continue
-    members.sort(key=lambda m: (-m[1], len(m[0])))  # survivor = most items, then shortest
-    survivor = members[0][0]
-    victims = [m[0] for m in members[1:]]
-    suggestions.append({
-      "key": key, "survivor": survivor, "victims": victims,
-      "members": [{"name": n, "items": c} for n, c in members],
-      "command": "yaams entities merge "
-                 + " ".join(_json.dumps(x, ensure_ascii=False) for x in [survivor, *victims]),
-    })
-  suggestions.sort(key=lambda s: -sum(m["items"] for m in s["members"]))
+  for s in suggestions:
+    s["command"] = "yaams entities merge " + " ".join(
+      _json.dumps(x, ensure_ascii=False) for x in [s["survivor"], *s["victims"]]
+    )
 
   if as_json:
     click.echo(_json.dumps({"suggestions": suggestions}, ensure_ascii=False))
     return
   if not suggestions:
-    click.echo("No merge candidates found.")
+    click.echo("No merge candidates found. For an interactive review run: "
+               "yaams entities dedupe")
     return
-  click.echo(f"{len(suggestions)} merge candidate group(s):\n")
+  click.echo(f"{len(suggestions)} merge candidate group(s) "
+             "(interactive: yaams entities dedupe):\n")
   for s in suggestions:
     members = ", ".join(f"{m['name']} ({m['items']})" for m in s["members"])
     click.echo(f"  • {members}")
     click.echo(f"    -> {s['command']}\n")
+
+
+@entities_group.command("dedupe")
+@config_option
+@click.option("--min-items", default=1, show_default=True, type=int,
+              help="Ignore entities with fewer than N item links.")
+@click.option("--json", "as_json", is_flag=True,
+              help="(Rejected - dedupe is interactive; use 'entities suggest-merges --json'.)")
+def entities_dedupe(config_path: str, min_items: int, as_json: bool) -> None:
+  """Interactively review entity-merge suggestions (curses TUI).
+
+  Up/Down to move, [s] to change which entity survives, [m]/Enter to merge a
+  group, [n] to skip (do-not-merge), [q] to quit. Merges are applied and made
+  durable immediately."""
+  if as_json:
+    _reject_interactive_json(
+      "entities dedupe",
+      "Use `yaams entities suggest-merges --json` for the candidate list.",
+    )
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    suggestions = _build_merge_suggestions(conn, min_items)
+    if not suggestions:
+      click.echo("No merge candidates found.")
+      return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+      click.echo(
+        f"{len(suggestions)} merge candidate(s). dedupe is interactive - run it "
+        "in a terminal, or use `yaams entities suggest-merges` + "
+        "`yaams entities merge`.",
+        err=True,
+      )
+      sys.exit(EXIT_USER_ERROR)
+    try:
+      summary = _run_dedupe_tui(conn, config_path, suggestions)
+    except RuntimeError as exc:
+      click.echo(str(exc), err=True)
+      sys.exit(EXIT_USER_ERROR)
+  finally:
+    conn.close()
+  click.echo(f"Done. Merged {summary['merged']}, skipped {summary['skipped']}.")
+  if summary["merged"]:
+    click.echo("Next: 'yaams assoc build' to refresh associations.")
+
+
+def _run_dedupe_tui(conn, config_path: str, suggestions: list[dict]) -> dict:
+  """Drive merge suggestions interactively in curses. Applies each accepted
+  merge immediately (config + DB). Returns {merged, skipped}."""
+  try:
+    import curses
+  except ImportError as exc:  # pragma: no cover - platform dependent
+    raise RuntimeError(
+      "The dedupe TUI requires the stdlib 'curses' module, which is "
+      "unavailable here. Use `yaams entities suggest-merges` + "
+      "`yaams entities merge` instead."
+    ) from exc
+
+  state = {
+    "groups": [
+      {"members": list(s["members"]), "survivor_idx": 0} for s in suggestions
+    ],
+    "idx": 0,
+    "merged": 0,
+    "skipped": 0,
+    "flash": "",
+  }
+
+  def _loop(stdscr):  # pragma: no cover - curses UI
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    try:
+      curses.start_color()
+      curses.use_default_colors()
+      stdscr.bkgd(" ", curses.color_pair(0))
+    except curses.error:
+      pass
+
+    while state["groups"]:
+      state["idx"] = max(0, min(state["idx"], len(state["groups"]) - 1))
+      _draw_dedupe(stdscr, state)
+      ch = stdscr.getch()
+      state["flash"] = ""
+
+      if ch == curses.KEY_RESIZE:
+        continue
+      if ch in (ord("q"), 27):  # q / Esc
+        break
+      if ch in (curses.KEY_DOWN, ord("j"), ord("J")):
+        state["idx"] = min(len(state["groups"]) - 1, state["idx"] + 1)
+        continue
+      if ch in (curses.KEY_UP, ord("k"), ord("K")):
+        state["idx"] = max(0, state["idx"] - 1)
+        continue
+
+      g = state["groups"][state["idx"]]
+      if ch in (ord("s"), ord("S"), curses.KEY_RIGHT, ord("\t")):
+        g["survivor_idx"] = (g["survivor_idx"] + 1) % len(g["members"])
+        continue
+      if ch in (ord("n"), ord("N"), ord("x"), ord("X")):
+        state["groups"].pop(state["idx"])
+        state["skipped"] += 1
+        state["flash"] = "skipped"
+        continue
+      if ch in (ord("m"), ord("M"), 10, 13):  # m / Enter
+        members = g["members"]
+        si = g["survivor_idx"]
+        survivor = members[si]["name"]
+        victims = [m["name"] for i, m in enumerate(members) if i != si]
+        sid = resolve_entity_id(conn, survivor)
+        vids = [resolve_entity_id(conn, v) for v in victims]
+        vids = [v for v in vids if v is not None and v != sid]
+        try:
+          if sid is not None and vids:
+            _n, stats, _a = _apply_merge(conn, config_path, sid, vids)
+            state["merged"] += 1
+            state["flash"] = (
+              f"merged {stats['victims']} into '{survivor}' "
+              f"({stats['item_links']} links)"
+            )
+          else:
+            state["flash"] = "nothing to merge (entities no longer present)"
+        except Exception as exc:  # keep the TUI alive on a failed merge
+          state["flash"] = f"merge failed: {exc}"
+        state["groups"].pop(state["idx"])
+        continue
+
+  try:
+    curses.wrapper(_loop)
+  except KeyboardInterrupt:  # pragma: no cover
+    pass
+  return {"merged": state["merged"], "skipped": state["skipped"]}
+
+
+def _draw_dedupe(stdscr, state):  # pragma: no cover - curses UI
+  import curses
+
+  stdscr.erase()
+  h, w = stdscr.getmaxyx()
+  groups, idx = state["groups"], state["idx"]
+
+  def line(y, text, attr=curses.A_NORMAL):
+    if 0 <= y < h:
+      try:
+        stdscr.addstr(y, 0, text[: max(0, w - 1)], attr)
+      except curses.error:
+        pass
+
+  line(0, f"yaams entities dedupe   {len(groups)} left · "
+          f"{state['merged']} merged · {state['skipped']} skipped", curses.A_BOLD)
+  line(1, "↑/↓ move · [s] change survivor · [m]/enter merge · [n] skip · [q] quit",
+       curses.A_DIM)
+
+  top = 3
+  rows_per = 3
+  per_page = max(1, (h - top - 1) // rows_per)
+  page_start = (idx // per_page) * per_page
+  y = top
+  for gi in range(page_start, min(len(groups), page_start + per_page)):
+    g = groups[gi]
+    members, si = g["members"], g["survivor_idx"]
+    survivor = members[si]
+    victims = [m for i, m in enumerate(members) if i != si]
+    selected = gi == idx
+    marker = "➤ " if selected else "  "
+    line(y, f"{marker}★ {survivor['name']} ({survivor['items']})",
+         curses.A_REVERSE if selected else curses.A_BOLD)
+    vtext = "      ← " + ", ".join(f"{v['name']} ({v['items']})" for v in victims)
+    line(y + 1, vtext, curses.A_DIM)
+    y += rows_per
+
+  if state["flash"]:
+    line(h - 1, state["flash"], curses.A_REVERSE)
+  stdscr.refresh()

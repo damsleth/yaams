@@ -351,6 +351,47 @@ def test_high_quality_increases_per_index_fetch():
   assert len(hq_results) == 20
 
 
+def test_synonym_expansion_reaches_alias_only_document():
+  import json as _json
+
+  conn = _open_db()
+  conn.execute(
+    "INSERT INTO entities (canonical_name, entity_type, aliases) VALUES (?, ?, ?)",
+    ("Norconsult", "org", _json.dumps(["nc", "NC"])),
+  )
+  conn.commit()
+  items = [
+    _make_item(content="Norconsult signed the new framework agreement", msg_id="1"),
+    _make_item(content="totally unrelated lunch plans", msg_id="2"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  # Query the short alias; expansion should OR in "Norconsult" and hit doc 1.
+  results = query(conn, "nc", config=HybridQueryConfig(include_consolidations=False))
+  assert any("Norconsult" in r.content for r in results), (
+    "synonym expansion should let 'nc' reach the Norconsult document"
+  )
+
+
+def test_synonym_expansion_disabled_misses_alias_only_document():
+  import json as _json
+
+  conn = _open_db()
+  conn.execute(
+    "INSERT INTO entities (canonical_name, entity_type, aliases) VALUES (?, ?, ?)",
+    ("Norconsult", "org", _json.dumps(["nc", "NC"])),
+  )
+  conn.commit()
+  items = [_make_item(content="Norconsult signed the agreement", msg_id="1")]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(include_consolidations=False, expand_synonyms=False)
+  results = query(conn, "nc", config=cfg)
+  assert not any("Norconsult" in r.content for r in results), (
+    "with expansion off, literal FTS for 'nc' must not reach 'Norconsult'"
+  )
+
+
 def test_score_components_record_fts_rank():
   conn = _open_db()
   items = [

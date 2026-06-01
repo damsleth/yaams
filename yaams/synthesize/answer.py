@@ -16,6 +16,18 @@ _GAPS_HEADER_RE = re.compile(r"(?im)^\s*GAPS\s*:\s*")
 _VALID_CONFIDENCE = {"high", "medium", "low"}
 
 
+_DATE_LEAD_RULE = {
+  "first_occurrence": (
+    "- This asks WHEN something FIRST happened. The SOURCES are ordered "
+    "oldest-first, so [1] is the earliest. Open your answer with that date."
+  ),
+  "last_occurrence": (
+    "- This asks WHEN something LAST happened. The SOURCES are ordered "
+    "newest-first, so [1] is the most recent. Open your answer with that date."
+  ),
+}
+
+
 SYNTH_PROMPT_TEMPLATE = """You are answering a question using ONLY the SOURCES below. Each source is numbered.
 
 Rules:
@@ -24,7 +36,7 @@ Rules:
 - If the SOURCES do not contain enough information, say so explicitly. Do not invent.
 - Keep the answer brief - 1-3 short paragraphs unless the question demands more.
 - Quote selectively. Do not echo whole sources.
-- Match the language of the question.
+- Match the language of the question.{date_lead}
 - Output exactly the three sections below, in order, using the headers verbatim.
 
 Output format:
@@ -62,11 +74,18 @@ class AnswerResult:
   raw_response: LLMResponse | None = None
 
 
-def build_synthesis_prompt(question: str, results: Sequence[HybridResult]) -> str:
+def build_synthesis_prompt(
+  question: str,
+  results: Sequence[HybridResult],
+  *,
+  shape: str | None = None,
+) -> str:
   blocks = [_render_source(rank, r) for rank, r in enumerate(results, 1)]
+  date_lead = _DATE_LEAD_RULE.get(shape or "", "")
   return SYNTH_PROMPT_TEMPLATE.format(
     question=question.strip(),
     sources="\n\n".join(blocks) if blocks else "(no sources retrieved)",
+    date_lead=("\n" + date_lead) if date_lead else "",
   )
 
 
@@ -190,10 +209,11 @@ def synthesize_answer(
   results: Sequence[HybridResult],
   adapter: LLMAdapter,
   *,
+  shape: str | None = None,
   max_tokens: int = 600,
   temperature: float = 0.0,
 ) -> AnswerResult:
-  prompt = build_synthesis_prompt(question, results)
+  prompt = build_synthesis_prompt(question, results, shape=shape)
   response = adapter.complete(prompt, max_tokens=max_tokens, temperature=temperature)
   body, confidence, confidence_reason, gaps = parse_structured_answer(response.text)
   ranks, ids = parse_citation_ids(response.text, results)

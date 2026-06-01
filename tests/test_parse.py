@@ -97,6 +97,24 @@ def test_parse_query_first_occurrence_with_iso_dates():
   assert parsed.sort == "asc"
 
 
+def test_parse_query_last_occurrence_sets_desc_sort():
+  adapter = _ScriptedAdapter([
+    json.dumps({
+      "shape": "last_occurrence",
+      "entities": [],
+      "date_range": [None, None],
+      "topic_terms": [],
+      "sort": "desc",
+      "prefer_tier": None,
+      "high_quality": False,
+    })
+  ])
+  parsed = parse_query("when did I last speak with Alice", adapter)
+  assert parsed.shape == "last_occurrence"
+  assert parsed.sort == "desc"
+  assert parsed.fallback_used is False
+
+
 def test_parse_query_resolves_alias_to_canonical():
   conn = _seed_db_with_entity("Bob Smith", ["Bob", "TN"])
   adapter = _ScriptedAdapter([

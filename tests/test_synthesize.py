@@ -50,6 +50,26 @@ def test_build_synthesis_prompt_handles_empty_results():
   assert "(no sources retrieved)" in prompt
 
 
+def test_build_synthesis_prompt_adds_date_lead_for_last_occurrence():
+  results = [_make_result("r1", "latest message")]
+  prompt = build_synthesis_prompt("when did I last", results, shape="last_occurrence")
+  assert "most recent" in prompt
+  assert "Open your answer with that date" in prompt
+
+
+def test_build_synthesis_prompt_adds_date_lead_for_first_occurrence():
+  results = [_make_result("r1", "earliest message")]
+  prompt = build_synthesis_prompt("when did I first", results, shape="first_occurrence")
+  assert "earliest" in prompt
+  assert "Open your answer with that date" in prompt
+
+
+def test_build_synthesis_prompt_no_date_lead_for_factual():
+  results = [_make_result("r1", "a message")]
+  prompt = build_synthesis_prompt("who said what", results, shape="factual")
+  assert "Open your answer with that date" not in prompt
+
+
 def test_build_synthesis_prompt_truncates_huge_content():
   results = [_make_result("r1", "x" * 5000)]
   prompt = build_synthesis_prompt("q", results)

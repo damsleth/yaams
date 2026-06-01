@@ -117,10 +117,15 @@ def resolve_associations(
   placeholders = ",".join("?" * len(entity_ids))
 
   weights: dict[int, float] = {}
-  for row in conn.execute(
-    f"SELECT entity_b, score FROM entity_assoc WHERE entity_a IN ({placeholders})",
-    tuple(entity_ids),
-  ):
+  try:
+    learned = conn.execute(
+      f"SELECT entity_b, score FROM entity_assoc WHERE entity_a IN ({placeholders})",
+      tuple(entity_ids),
+    ).fetchall()
+  except sqlite3.OperationalError:
+    # Pre-v5 DB not yet migrated (table absent) - fail soft, no learned edges.
+    learned = []
+  for row in learned:
     target, score = row[0], float(row[1])
     if target in query_set or score < min_score:
       continue
@@ -131,11 +136,15 @@ def resolve_associations(
   # Manual overrides: suppress wins absolutely; otherwise set the weight.
   suppressed: set[int] = set()
   manual: dict[int, float] = {}
-  for row in conn.execute(
-    f"SELECT to_entity, weight, suppress FROM entity_relations "
-    f"WHERE from_entity IN ({placeholders})",
-    tuple(entity_ids),
-  ):
+  try:
+    relations = conn.execute(
+      f"SELECT to_entity, weight, suppress FROM entity_relations "
+      f"WHERE from_entity IN ({placeholders})",
+      tuple(entity_ids),
+    ).fetchall()
+  except sqlite3.OperationalError:
+    relations = []
+  for row in relations:
     target, weight, suppress = row[0], float(row[1]), int(row[2])
     if target in query_set:
       continue

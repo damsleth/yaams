@@ -23,6 +23,7 @@ from yaams.retrieve import (
 from yaams.retrieve import (
   query as run_query,
 )
+from yaams.retrieve.associate import expand_query_entities
 from yaams.retrieve import (
   route as route_parsed,
 )
@@ -127,6 +128,14 @@ def _resolve_source_filter(
        "(e.g. don't expand 'nc' to also match 'Norconsult')",
 )
 @click.option(
+  "--assoc",
+  is_flag=True,
+  help="Widen entity-filtered results with associated entities "
+       "(e.g. a query about 'fdep' also surfaces 'langkaia'), ranked below "
+       "exact matches. Requires a resolved query entity; build edges with "
+       "'yaams assoc build'.",
+)
+@click.option(
   "--no-consolidations",
   is_flag=True,
   help="Search raw items only (skip session consolidations)",
@@ -173,6 +182,7 @@ def query_cmd(
   sort: str | None,
   no_vector: bool,
   no_synonyms: bool,
+  assoc: bool,
   no_consolidations: bool,
   output_format: str,
   as_json: bool,
@@ -261,6 +271,13 @@ def query_cmd(
         qcfg = base_cfg
       if high_quality:
         qcfg.high_quality = True
+      if assoc and qcfg.entity_filter:
+        # Widen the entity allowlist with associated entities and carry their
+        # weights so associated-only documents surface but rank below exact
+        # matches. Keeps the hard entity filter; just makes it fuzzy-aware.
+        expanded, weights = expand_query_entities(conn_ro, qcfg.entity_filter)
+        qcfg.entity_filter = expanded
+        qcfg.assoc_weights = weights
       fts_text = query_text
       if parsed is not None and parsed.topic_terms:
         fts_text = " ".join(parsed.topic_terms)

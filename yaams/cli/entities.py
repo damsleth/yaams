@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import time
 
@@ -22,6 +23,8 @@ from yaams.store import (
   backfill_entity_sources,
   get_entity_meta,
   get_entity_tags,
+  merge_entities,
+  prune_entity,
   remove_entity_meta,
   remove_entity_tags,
   resolve_entity_id,
@@ -666,3 +669,253 @@ def entities_show(name: str, as_json: bool, config_path: str) -> None:
       click.echo(f"    {k} = {v}")
   else:
     click.echo("  meta:    -")
+
+
+def _entity_row(conn, eid: int):
+  """Return (canonical_name, entity_type, aliases_list) for an entity id."""
+  import json as _json
+  row = conn.execute(
+    "SELECT canonical_name, entity_type, aliases FROM entities WHERE id = ?", (eid,)
+  ).fetchone()
+  try:
+    aliases = _json.loads(row["aliases"]) if row["aliases"] else []
+  except (TypeError, ValueError):
+    aliases = []
+  return row["canonical_name"], row["entity_type"], [a for a in aliases if isinstance(a, str)]
+
+
+def _dedupe_ci(values, *, exclude: set[str] | None = None) -> list[str]:
+  """Case-insensitive de-dupe preserving first-seen order, dropping any value
+  whose casefold is in `exclude`."""
+  seen = set(exclude or set())
+  out: list[str] = []
+  for v in values:
+    if not v:
+      continue
+    key = v.casefold()
+    if key not in seen:
+      seen.add(key)
+      out.append(v)
+  return out
+
+
+@entities_group.command("merge")
+@click.argument("survivor")
+@click.argument("victims", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_merge(survivor: str, victims: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Merge VICTIMS into SURVIVOR: fold their names+aliases into the survivor,
+  repoint all links/tags/meta/relations, and delete the victim entities.
+
+  The victim names become survivor aliases in your config dictionary, so the
+  merge is durable - future NER re-tagging resolves them to the survivor."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    survivor_id = resolve_entity_id(conn, survivor)
+    missing = [] if survivor_id is not None else [survivor]
+    victim_ids: list[int] = []
+    victim_names: list[str] = []
+    for v in victims:
+      vid = resolve_entity_id(conn, v)
+      if vid is None:
+        missing.append(v)
+      elif vid != survivor_id and vid not in victim_ids:
+        victim_ids.append(vid)
+    if missing:
+      conn.close()
+      msg = f"Unknown entit{'ies' if len(missing) > 1 else 'y'}: {', '.join(missing)}"
+      if as_json:
+        emit_data_error(data_error(command="entities merge", code="unknown_entity",
+                                   message=msg, hint="List entities with: yaams entities list"))
+      else:
+        click.echo(msg + ".", err=True)
+      sys.exit(EXIT_USER_ERROR)
+    if not victim_ids:
+      conn.close()
+      if as_json:
+        emit_action(action_envelope(command="entities merge", ok=True,
+                                    stats={"survivor": survivor, "victims": 0}))
+        return
+      click.echo("Nothing to merge (victims resolved to the survivor).")
+      return
+
+    survivor_name, survivor_type, survivor_aliases = _entity_row(conn, survivor_id)
+    folded = list(survivor_aliases)
+    for vid in victim_ids:
+      vname, _vtype, valiases = _entity_row(conn, vid)
+      victim_names.append(vname)
+      folded.append(vname)
+      folded.extend(valiases)
+    merged_aliases = _dedupe_ci(folded, exclude={survivor_name.casefold()})
+
+    # Durably fold into the config dictionary: ensure the survivor entry
+    # carries the victim names as aliases, and drop victim entries.
+    entities_cfg = dict(cfg.get("entities") or {})
+    dictionary = list(entities_cfg.get("dictionary") or [])
+    victim_lc = {n.casefold() for n in victim_names}
+    survivor_entry = None
+    for entry in dictionary:
+      if str(entry.get("canonical", "")).casefold() == survivor_name.casefold():
+        survivor_entry = entry
+        break
+    if survivor_entry is None:
+      survivor_entry = {"canonical": survivor_name, "type": survivor_type}
+      dictionary.append(survivor_entry)
+    existing_cfg_aliases = list(survivor_entry.get("aliases") or [])
+    survivor_entry["aliases"] = _dedupe_ci(
+      existing_cfg_aliases + merged_aliases, exclude={survivor_name.casefold()}
+    )
+    dictionary = [
+      e for e in dictionary if str(e.get("canonical", "")).casefold() not in victim_lc
+    ]
+    entities_cfg["dictionary"] = dictionary
+    _save_entities(config_path, entities_cfg)
+
+    fresh_dict = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh_dict)
+    survivor_id = resolve_entity_id(conn, survivor_name)
+    stats = merge_entities(conn, survivor_id, victim_ids)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities merge", ok=True, stats={
+      "survivor": survivor_name, "victims": stats["victims"],
+      "item_links": stats["item_links"], "aliases_added": len(merged_aliases),
+    }))
+    return
+  click.echo(f"Merged {stats['victims']} entit{'ies' if stats['victims'] != 1 else 'y'} "
+             f"into '{survivor_name}' ({stats['item_links']} item links repointed).")
+  click.echo(f"  aliases now: {', '.join(merged_aliases) if merged_aliases else '-'}")
+  click.echo("  Next: 'yaams assoc build' to refresh associations"
+             " (and 'yaams enrich retag' to relabel historical links).")
+
+
+@entities_group.command("prune")
+@click.argument("names", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_prune(names: tuple[str, ...], as_json: bool, config_path: str) -> None:
+  """Deny junk ENTITIES: mark them denied, strip their links/derived data, and
+  remove them from the config dictionary so re-ingest cannot revive them."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  pruned: list[str] = []
+  missing: list[str] = []
+  links = 0
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    for name in names:
+      eid = resolve_entity_id(conn, name)
+      if eid is None:
+        missing.append(name)
+        continue
+      stats = prune_entity(conn, eid)
+      links += stats["item_links"]
+      pruned.append(name)
+    # Drop pruned names from the config dictionary so seed_entities does not
+    # flip them back to pending_review=0 on the next reseed.
+    if pruned:
+      entities_cfg = dict(cfg.get("entities") or {})
+      dictionary = list(entities_cfg.get("dictionary") or [])
+      pruned_lc = {n.casefold() for n in pruned}
+      kept = [e for e in dictionary if str(e.get("canonical", "")).casefold() not in pruned_lc]
+      if len(kept) != len(dictionary):
+        entities_cfg["dictionary"] = kept
+        _save_entities(config_path, entities_cfg)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities prune", ok=True, stats={
+      "pruned": len(pruned), "item_links": links, "missing": missing,
+    }))
+    return
+  if pruned:
+    click.echo(f"Pruned {len(pruned)} entit{'ies' if len(pruned) != 1 else 'y'} "
+               f"({links} item links removed): {', '.join(pruned)}")
+  if missing:
+    click.echo(f"Not found: {', '.join(missing)}", err=True)
+
+
+_ORG_SUFFIX = re.compile(
+  r"\b(as|asa|ab|inc|llc|ltd|gmbh|group|gruppen|consulting|consult|holding|"
+  r"norge|company|co|corp)\b",
+  re.IGNORECASE,
+)
+
+
+def _norm_merge_key(name: str) -> str:
+  """Normalize a name for grouping near-duplicates: lowercase, strip
+  punctuation, drop common org suffixes, collapse whitespace."""
+  s = name.lower()
+  s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+  s = _ORG_SUFFIX.sub(" ", s)
+  return re.sub(r"\s+", " ", s).strip()
+
+
+@entities_group.command("suggest-merges")
+@config_option
+@click.option("--min-items", default=1, show_default=True, type=int,
+              help="Ignore entities with fewer than N item links.")
+@click.option("--json", "as_json", is_flag=True, help="Raw suggestions document on stdout.")
+def entities_suggest_merges(config_path: str, min_items: int, as_json: bool) -> None:
+  """Suggest entity-merge groups: entities whose names collapse to the same
+  normalized key (e.g. Crayon / Crayon AS / Crayon Group)."""
+  import json as _json
+
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    rows = conn.execute(
+      """
+      SELECT e.canonical_name AS name, COUNT(ie.item_id) AS cnt
+      FROM entities e
+      LEFT JOIN item_entities ie ON ie.entity_id = e.id
+      WHERE e.pending_review != 2
+      GROUP BY e.id
+      """
+    ).fetchall()
+  finally:
+    conn.close()
+
+  groups: dict[str, list[tuple[str, int]]] = {}
+  for row in rows:
+    name, cnt = row["name"], int(row["cnt"])
+    if cnt < min_items:
+      continue
+    key = _norm_merge_key(name)
+    if not key:
+      continue
+    groups.setdefault(key, []).append((name, cnt))
+
+  suggestions = []
+  for key, members in groups.items():
+    if len(members) < 2:
+      continue
+    members.sort(key=lambda m: (-m[1], len(m[0])))  # survivor = most items, then shortest
+    survivor = members[0][0]
+    victims = [m[0] for m in members[1:]]
+    suggestions.append({
+      "key": key, "survivor": survivor, "victims": victims,
+      "members": [{"name": n, "items": c} for n, c in members],
+      "command": "yaams entities merge "
+                 + " ".join(_json.dumps(x, ensure_ascii=False) for x in [survivor, *victims]),
+    })
+  suggestions.sort(key=lambda s: -sum(m["items"] for m in s["members"]))
+
+  if as_json:
+    click.echo(_json.dumps({"suggestions": suggestions}, ensure_ascii=False))
+    return
+  if not suggestions:
+    click.echo("No merge candidates found.")
+    return
+  click.echo(f"{len(suggestions)} merge candidate group(s):\n")
+  for s in suggestions:
+    members = ", ".join(f"{m['name']} ({m['items']})" for m in s["members"])
+    click.echo(f"  • {members}")
+    click.echo(f"    -> {s['command']}\n")

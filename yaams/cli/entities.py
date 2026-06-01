@@ -34,6 +34,85 @@ from yaams.store import (
 )
 
 
+# Function words, greetings and time terms that NER routinely mis-tags as
+# entities. Shared by `discover` (skip as candidates) and the junk detector.
+_NOISE_WORDS = {
+  # pronouns / function words (NO)
+  "var", "hvordan", "ikke", "men", "inn", "deg", "meg", "jeg", "oss",
+  "noe", "det", "den", "han", "hun", "her", "der", "fra", "til", "via",
+  "ved", "som", "for", "alle", "noen", "hva", "når", "hvor", "også",
+  "så", "må", "får", "gjør", "kom", "kommer", "mine", "annen", "ingenting",
+  # greetings / interjections (NO + EN)
+  "ja", "nei", "ok", "okay", "hei", "hade", "takk", "natta", "sorry",
+  "argh", "åja", "yes", "no", "nice", "flink",
+  # pronouns / function words (EN)
+  "eta", "faks", "unett",
+  # temporal terms (NO + EN) - not useful as entities
+  "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday",
+  "thursday", "friday", "saturday", "sunday",
+  "januar", "februar", "mars", "april", "mai", "juni",
+  "juli", "august", "september", "oktober", "november", "desember",
+  "january", "february", "march", "june", "july", "october",
+  "november", "december",
+  "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag",
+  "igår", "idag", "imorgen", "uke", "måned", "år", "week", "month", "year",
+  "morning", "evening", "night", "afternoon",
+}
+
+
+def _junk_reasons(name: str) -> list[str]:
+  """Heuristic signals that an entity is an NER false positive (a common
+  word, fragment, or symbol soup) rather than a real entity. Empty list means
+  nothing looks off. Reasons are advisory — the caller surfaces them for human
+  review, never auto-prunes."""
+  stripped = name.strip()
+  if not stripped:
+    return ["empty"]
+  reasons: list[str] = []
+  nonspace = stripped.replace(" ", "")
+  letters = sum(1 for c in stripped if c.isalpha())
+
+  if stripped.casefold() in _NOISE_WORDS:
+    reasons.append("stopword")
+  if any(c.isalpha() for c in stripped) and stripped == stripped.lower():
+    # NER capitalizes real proper nouns; an all-lowercase canonical is almost
+    # always a common word or sentence fragment.
+    reasons.append("all-lowercase")
+  if len(stripped) <= 2 and not stripped.isupper():
+    # keep short acronyms (EU, FN) which are uppercase
+    reasons.append("very-short")
+  if stripped.isdigit():
+    reasons.append("numeric")
+  if nonspace and letters / len(nonspace) < 0.5:
+    reasons.append("symbol-heavy")
+  return reasons
+
+
+def _build_prune_candidates(conn, *, max_items: int | None = None) -> list[dict]:
+  """Return NER entities that look like junk, with reasons and item counts.
+  Curated (pending_review=0) and already-denied (2) entities are excluded.
+  Sorted least-used first (safest to prune)."""
+  rows = conn.execute(
+    """
+    SELECT e.canonical_name AS name, COUNT(ie.item_id) AS cnt
+    FROM entities e
+    LEFT JOIN item_entities ie ON ie.entity_id = e.id
+    WHERE e.pending_review = 1
+    GROUP BY e.id
+    """
+  ).fetchall()
+  out: list[dict] = []
+  for row in rows:
+    name, cnt = row["name"], int(row["cnt"])
+    if max_items is not None and cnt > max_items:
+      continue
+    reasons = _junk_reasons(name)
+    if reasons:
+      out.append({"name": name, "items": cnt, "reasons": reasons})
+  out.sort(key=lambda c: (c["items"], -len(c["reasons"]), c["name"].lower()))
+  return out
+
+
 def _reject_interactive_json(command: str, alt_hint: str) -> None:
   click.echo(
     f"{command} is an interactive command; --json is rejected. {alt_hint}",
@@ -251,28 +330,10 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
       (min_count, limit * 3),
     ).fetchall()
 
-    _NOISE = {
-      # pronouns / function words (NO)
-      "var", "hvordan", "ikke", "men", "inn", "deg", "meg", "jeg", "oss",
-      "noe", "det", "den", "han", "hun", "her", "der", "fra", "til", "via",
-      "ved", "som", "for", "alle", "noen", "hva", "når", "hvor", "også",
-      # pronouns / function words (EN)
-      "nice", "eta", "faks", "unett",
-      # temporal terms (NO + EN) - not useful as entities
-      "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday",
-      "thursday", "friday", "saturday", "sunday",
-      "januar", "februar", "mars", "april", "mai", "juni",
-      "juli", "august", "september", "oktober", "november", "desember",
-      "january", "february", "march", "june", "july", "october",
-      "november", "december",
-      "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag",
-      "igår", "idag", "imorgen", "uke", "måned", "år", "week", "month", "year",
-      "morning", "evening", "night", "afternoon",
-    }
     candidates = [
       r for r in rows
       if r["canonical_name"].lower() not in known
-      and r["canonical_name"].lower() not in _NOISE
+      and r["canonical_name"].lower() not in _NOISE_WORDS
       and not r["canonical_name"].islower()
       and len(r["canonical_name"]) > 2
       and not r["canonical_name"].isdigit()
@@ -889,6 +950,43 @@ def entities_prune(names: tuple[str, ...], as_json: bool, config_path: str) -> N
                f"({links} item links removed): {', '.join(pruned)}")
   if missing:
     click.echo(f"Not found: {', '.join(missing)}", err=True)
+
+
+@entities_group.command("suggest-prune")
+@config_option
+@click.option("--max-items", default=None, type=int,
+              help="Only flag entities with at most N item links (focus on low-traffic junk).")
+@click.option("--limit", default=60, show_default=True, type=int, help="Max candidates to show.")
+@click.option("--json", "as_json", is_flag=True, help="Raw candidates document on stdout.")
+def entities_suggest_prune(config_path: str, max_items: int | None, limit: int, as_json: bool) -> None:
+  """List NER entities that look like junk (common words, fragments, symbols)
+  with the reasons they were flagged. Review, then remove with 'entities
+  prune'. Nothing is changed."""
+  import json as _json
+
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path, readonly=True)
+  try:
+    candidates = _build_prune_candidates(conn, max_items=max_items)
+  finally:
+    conn.close()
+  candidates = candidates[:limit]
+
+  if as_json:
+    click.echo(_json.dumps({"candidates": candidates}, ensure_ascii=False))
+    return
+  if not candidates:
+    click.echo("No junk candidates found.")
+    return
+  click.echo(f"{len(candidates)} likely-junk entit{'ies' if len(candidates) != 1 else 'y'} "
+             "(review, then: yaams entities prune ...):\n")
+  for c in candidates:
+    click.echo(f"  {c['name']!r}  ({c['items']} items)  [{', '.join(c['reasons'])}]")
+  cmd = "yaams entities prune " + " ".join(
+    _json.dumps(c["name"], ensure_ascii=False) for c in candidates
+  )
+  click.echo(f"\nPrune all shown:\n  {cmd}")
 
 
 _ORG_SUFFIX = re.compile(

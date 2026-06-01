@@ -78,6 +78,10 @@ class HybridResult:
   components: ScoreComponents = field(default_factory=ScoreComponents)
   participants: list[str] = field(default_factory=list)
   item_count: int = 1
+  # Association weight in (0, 1]: 1.0 for an exact entity match, < 1.0 for a
+  # result reached only through an associated entity. Drives the exact-before-
+  # associated partition so associated docs never outrank exact ones.
+  assoc_weight: float = 1.0
 
 
 def query(
@@ -138,6 +142,7 @@ def query(
     item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
     for r in hydrated:
       weight = (item_w if r.kind == "item" else cons_w).get(r.id, 1.0)
+      r.assoc_weight = weight
       if weight != 1.0:
         r.score *= weight
   if cfg.sort == "asc":
@@ -146,6 +151,12 @@ def query(
     hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=True)
   else:
     hydrated.sort(key=lambda r: r.score, reverse=True)
+  if cfg.assoc_weights:
+    # Stable partition AFTER the chosen ordering: exact entity matches
+    # (weight 1.0) always sit above associated-only results, whatever their
+    # score or recency. This enforces the "never outrank exact matches"
+    # contract that a plain score multiply + timestamp sort cannot.
+    hydrated.sort(key=lambda r: r.assoc_weight < 1.0)
   return hydrated[: cfg.top_k]
 
 

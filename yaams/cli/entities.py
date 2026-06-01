@@ -24,6 +24,7 @@ from yaams.store import (
   get_entity_meta,
   get_entity_tags,
   merge_entities,
+  normalize_entities,
   prune_entity,
   remove_entity_meta,
   remove_entity_tags,
@@ -944,13 +945,55 @@ def entities_suggest_merges(config_path: str, min_items: int, as_json: bool) -> 
     click.echo(f"    -> {s['command']}\n")
 
 
+@entities_group.command("normalize")
+@config_option
+@click.option("--dry-run", is_flag=True, help="Show what would be merged without changing anything.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+def entities_normalize(config_path: str, dry_run: bool, as_json: bool) -> None:
+  """Auto-merge entities that differ only by edge punctuation/whitespace
+  (e.g. Hamas / Hamas', `Saksnavn / Saksnavn`). No review needed - these are
+  unambiguously the same entity."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    result = normalize_entities(conn, dry_run=dry_run)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities normalize", ok=True, stats={
+      "merged": result["merged"], "renamed": result["renamed"],
+      "groups": len(result["groups"]), "dry_run": dry_run,
+    }))
+    return
+  if not result["groups"]:
+    click.echo("Nothing to normalize — no punctuation-only variants found.")
+    return
+  verb = "Would merge" if dry_run else "Merged"
+  for g in result["groups"]:
+    if g["victims"]:
+      click.echo(f"  {verb} {', '.join(g['victims'])} → '{g['survivor']}'")
+    elif dry_run:
+      click.echo(f"  Would clean '{g['survivor']}'")
+  if dry_run:
+    click.echo(f"\n{len(result['groups'])} group(s) would be normalized. "
+               "Run without --dry-run to apply.")
+  else:
+    click.echo(f"\nNormalized {len(result['groups'])} group(s) "
+               f"({result['merged']} merged, {result['renamed']} renamed). "
+               "Run 'yaams assoc build' to refresh associations.")
+
+
 @entities_group.command("dedupe")
 @config_option
 @click.option("--min-items", default=1, show_default=True, type=int,
               help="Ignore entities with fewer than N item links.")
+@click.option("--no-normalize", is_flag=True,
+              help="Skip the automatic punctuation-variant merge done first.")
 @click.option("--json", "as_json", is_flag=True,
               help="(Rejected - dedupe is interactive; use 'entities suggest-merges --json'.)")
-def entities_dedupe(config_path: str, min_items: int, as_json: bool) -> None:
+def entities_dedupe(config_path: str, min_items: int, no_normalize: bool, as_json: bool) -> None:
   """Interactively review entity-merge suggestions (curses TUI).
 
   Up/Down to move, [s] to change which entity survives, [m]/Enter to merge a
@@ -964,11 +1007,20 @@ def entities_dedupe(config_path: str, min_items: int, as_json: bool) -> None:
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
   conn = open_db(db_path)
+  auto = {"merged": 0, "renamed": 0}
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    # Punctuation-only variants are unambiguous — merge them up front so the
+    # interactive review only sees genuine judgment calls.
+    if not no_normalize:
+      auto = normalize_entities(conn)
     suggestions = _build_merge_suggestions(conn, min_items)
     if not suggestions:
-      click.echo("No merge candidates found.")
+      if auto["merged"] or auto["renamed"]:
+        click.echo(f"Auto-normalized {auto['merged'] + auto['renamed']} "
+                   "punctuation-only variant(s). No further candidates.")
+      else:
+        click.echo("No merge candidates found.")
       return
     if not sys.stdin.isatty() or not sys.stdout.isatty():
       click.echo(
@@ -985,8 +1037,10 @@ def entities_dedupe(config_path: str, min_items: int, as_json: bool) -> None:
       sys.exit(EXIT_USER_ERROR)
   finally:
     conn.close()
-  click.echo(f"Done. Merged {summary['merged']}, skipped {summary['skipped']}.")
-  if summary["merged"]:
+  auto_n = auto["merged"] + auto["renamed"]
+  prefix = f"Auto-normalized {auto_n} punctuation variant(s). " if auto_n else ""
+  click.echo(f"{prefix}Done. Merged {summary['merged']}, skipped {summary['skipped']}.")
+  if summary["merged"] or auto_n:
     click.echo("Next: 'yaams assoc build' to refresh associations.")
 
 

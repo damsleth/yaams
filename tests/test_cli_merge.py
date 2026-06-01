@@ -140,3 +140,28 @@ def test_dedupe_refuses_without_tty(tmp_path: Path):
   result = _run(cfg, "entities", "dedupe", "--min-items", "0")
   assert result.exit_code != 0
   assert "interactive" in result.output.lower()
+
+
+def test_normalize_dry_run_then_apply(tmp_path: Path):
+  cfg = _config(tmp_path)
+  _add_ner_entity(cfg, "Hamas")
+  _add_ner_entity(cfg, "Hamas'")
+
+  dry = _run(cfg, "entities", "normalize", "--dry-run", "--json")
+  assert dry.exit_code == 0, dry.output
+  assert json.loads(dry.output)["stats"]["merged"] == 0
+  # still present after dry run
+  conn = open_db(get_db_path(load_config(str(cfg))), readonly=True)
+  try:
+    assert resolve_entity_id(conn, "Hamas'") is not None
+  finally:
+    conn.close()
+
+  applied = _run(cfg, "entities", "normalize", "--json")
+  assert json.loads(applied.output)["stats"]["merged"] == 1
+  conn = open_db(get_db_path(load_config(str(cfg))), readonly=True)
+  try:
+    assert resolve_entity_id(conn, "Hamas'") is None
+    assert resolve_entity_id(conn, "Hamas") is not None
+  finally:
+    conn.close()

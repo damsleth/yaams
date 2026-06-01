@@ -144,6 +144,10 @@ yaams <command> [options]
 Bare `yaams` lists commands. Global flags: `--version`, `--help`.
 Per-command help: `yaams <command> --help`.
 
+For the full feature walkthrough — every command, the entity-curation
+workflow, query flags, and best practices — see the
+**[User Guide](docs/user-guide.md)**.
+
 | command | what it does |
 | --- | --- |
 | `init-db` | create the SQLite schema (idempotent) |
@@ -260,6 +264,17 @@ See [SECURITY.md](SECURITY.md) for the full threat model, data
 classification, and vulnerability disclosure flow. See
 [docs/privacy-security.md](docs/privacy-security.md) for the operational
 detail on what is written, what is not, and how to scrub.
+
+## Documentation
+
+- **[User Guide](docs/user-guide.md)** - the end-to-end manual: every
+  feature, the entity-curation workflow, query power-flags, best practices,
+  and troubleshooting.
+- [Implementation status](docs/implementation-status.md) - architecture and
+  what's shipped.
+- [Scheduling](docs/scheduling.md) - unattended nightly ingest via `launchd`.
+- [Privacy and security](docs/privacy-security.md) - what's written, what
+  isn't, and how to scrub.
 
 ## Contributing
 

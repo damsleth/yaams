@@ -26,6 +26,7 @@ def route(
   *,
   explicit_since: bool = False,
   explicit_until: bool = False,
+  explicit_sort: bool = False,
 ) -> HybridQueryConfig:
   cfg = replace(base)
 
@@ -44,8 +45,10 @@ def route(
     cfg.prefer_consolidations = True
     cfg.top_k = max(cfg.top_k, SYNTHESIS_TOP_K)
     cfg.high_quality = True
-  elif parsed.shape == "first_occurrence":
+  elif parsed.shape == "first_occurrence" and not explicit_sort:
     cfg.sort = "asc"
+  elif parsed.shape == "last_occurrence" and not explicit_sort:
+    cfg.sort = "desc"
   elif parsed.shape == "event_anchored":
     cfg.top_k = min(cfg.top_k, EVENT_TOP_K) if cfg.top_k > EVENT_TOP_K else cfg.top_k
     cfg.consolidation_boost = max(cfg.consolidation_boost, EVENT_CONS_BOOST)
@@ -53,7 +56,7 @@ def route(
   if parsed.high_quality:
     cfg.high_quality = True
 
-  if parsed.sort != "relevance" and cfg.sort == "relevance":
+  if parsed.sort != "relevance" and cfg.sort == "relevance" and not explicit_sort:
     cfg.sort = parsed.sort
 
   cfg.entity_filter = list(parsed.entities) if parsed.entities else None

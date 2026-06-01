@@ -106,6 +106,16 @@ def _resolve_source_filter(
 @click.option("--since", default=None, help="ISO timestamp lower bound, e.g. 2026-01-01")
 @click.option("--until", default=None, help="ISO timestamp upper bound")
 @click.option(
+  "--sort",
+  "sort",
+  type=click.Choice(["relevance", "newest", "oldest"]),
+  default=None,
+  help=(
+    "Order results by relevance (default), newest-first, or oldest-first. "
+    "Explicit --sort overrides the parser's shape-based inference."
+  ),
+)
+@click.option(
   "--no-vector",
   is_flag=True,
   help="Skip dense vector search; FTS-only (faster, no embedder load)",
@@ -154,6 +164,7 @@ def query_cmd(
   tier: str | None,
   since: str | None,
   until: str | None,
+  sort: str | None,
   no_vector: bool,
   no_consolidations: bool,
   output_format: str,
@@ -221,11 +232,13 @@ def query_cmd(
         embedder = Embedder(**_embed_config(cfg), quiet=_quiet_embedder(output_format))
         embedding = embedder.embed_batch([query_text])[0]
 
+      sort_map = {"newest": "desc", "oldest": "asc", "relevance": "relevance"}
       base_cfg = HybridQueryConfig(
         top_k=top_k,
         source_filter=list(resolved_sources) if resolved_sources else None,
         since=parse_iso_datetime(since) if since else None,
         until=parse_iso_datetime(until) if until else None,
+        sort=sort_map[sort] if sort else "relevance",
         include_consolidations=not no_consolidations,
       )
       if parsed is not None:
@@ -234,6 +247,7 @@ def query_cmd(
           base_cfg,
           explicit_since=since is not None,
           explicit_until=until is not None,
+          explicit_sort=sort is not None,
         )
       else:
         qcfg = base_cfg
@@ -257,7 +271,10 @@ def query_cmd(
       synth_start = _time.perf_counter()
       try:
         adapter = llm_adapter_from_config(cfg)
-        answer_result = synthesize_answer(query_text, results, adapter)
+        answer_result = synthesize_answer(
+          query_text, results, adapter,
+          shape=parsed.shape if parsed is not None else None,
+        )
       except Exception as exc:
         click.echo(f"warning: synthesis backend failed: {exc}", err=True)
         answer_result = None

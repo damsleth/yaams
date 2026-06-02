@@ -105,7 +105,7 @@ def test_extract_yields_items_with_event_id_as_source_id():
   assert item.source_id == "event:42"
   assert item.sender == "me"
   assert item.thread_id == "me/proj"
-  assert "Pushed 1 commit(s)" in item.subject
+  assert item.subject is not None and "Pushed 1 commit(s)" in item.subject
   assert "fix" in item.content
 
 

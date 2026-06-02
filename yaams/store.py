@@ -5,7 +5,7 @@ import re
 import sqlite3
 from array import array
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, cast
 
 from yaams.consolidate.session import Consolidation
 from yaams.ingest.base import Item
@@ -609,7 +609,7 @@ def _embedding_to_blob(embedding: object) -> bytes:
     return embedding.astype("float32").tobytes()  # type: ignore[attr-defined]
   if isinstance(embedding, bytes):
     return embedding
-  return array("f", [float(value) for value in embedding]).tobytes()
+  return array("f", [float(value) for value in cast(Iterable[float], embedding)]).tobytes()
 
 
 def store_consolidations(

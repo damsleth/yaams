@@ -15,7 +15,7 @@ import sqlite3
 from array import array
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Sequence
+from typing import Iterable, Sequence, cast
 
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.time import ensure_utc
@@ -427,7 +427,7 @@ def _embedding_to_blob(embedding: object) -> bytes:
     return embedding.astype("float32").tobytes()  # type: ignore[attr-defined]
   if isinstance(embedding, bytes):
     return embedding
-  return array("f", [float(v) for v in embedding]).tobytes()
+  return array("f", [float(v) for v in cast(Iterable[float], embedding)]).tobytes()
 
 
 def _fuse(

@@ -7,6 +7,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -222,9 +223,11 @@ def ingest(
         continue
       # Reached only when src_error stayed None, i.e. ingest_source returned.
       assert source_stats is not None
-      run_stats[src]["seen"] += source_stats["seen"]
-      run_stats[src]["new"] += source_stats["new"]
-      run_stats[src]["skipped"] += source_stats["skipped"]
+      run_stats[src]["seen"] = cast(int, run_stats[src]["seen"]) + cast(int, source_stats["seen"])
+      run_stats[src]["new"] = cast(int, run_stats[src]["new"]) + cast(int, source_stats["new"])
+      run_stats[src]["skipped"] = (
+        cast(int, run_stats[src]["skipped"]) + cast(int, source_stats["skipped"])
+      )
       run_stats[src]["files_walked"] = (
         int(run_stats[src].get("files_walked", 0) or 0)
         + int(source_stats.get("files_walked", 0) or 0)
@@ -883,8 +886,9 @@ def _print_sources(run_stats: dict[str, dict[str, object]]) -> None:
     since = run_stats[source].get("since", "n/a")
     paths = run_stats[source].get("paths", [])
     click.echo(f"    {source} since {since}:")
-    for path in paths:
-      click.echo(f"      - {path}")
+    if isinstance(paths, (list, tuple)):
+      for path in paths:
+        click.echo(f"      - {path}")
 
 
 def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:

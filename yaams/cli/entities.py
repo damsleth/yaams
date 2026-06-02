@@ -17,6 +17,7 @@ from yaams.conventions import (
   emit_data_error,
 )
 from yaams.db import open_db
+from yaams.entities_store import save_dictionary
 from yaams.people_import import (
   fetch_people,
   merge_into_dictionary,
@@ -126,18 +127,15 @@ def _reject_interactive_json(command: str, alt_hint: str) -> None:
 
 
 def _save_entities(config_path: str | None, entities_cfg: dict) -> None:
-  import re
+  """Persist the entity dictionary to the JSON store next to the database.
 
-  import yaml
-
-  from yaams.config import resolve_config_path
-  p = resolve_config_path(config_path)
-  text = p.read_text(encoding="utf-8")
-  block = yaml.dump({"entities": entities_cfg}, default_flow_style=False, allow_unicode=True, sort_keys=False)
-  new_text = re.sub(r"^entities:.*?(?=^\S|\Z)", block, text, flags=re.MULTILINE | re.DOTALL)
-  if new_text == text:
-    new_text = text.rstrip() + "\n\n" + block
-  p.write_text(new_text, encoding="utf-8")
+  The dictionary used to be spliced back into config.yaml as a YAML block,
+  which appended duplicate ``entities:`` blocks over time. It now lives in its
+  own JSON file (see yaams/entities_store.py); ``spacy_model`` and other knobs
+  stay in config.yaml and are not touched here.
+  """
+  cfg = load_config(config_path)
+  save_dictionary(cfg, list(entities_cfg.get("dictionary") or []))
 
 
 @cli.group("entities")

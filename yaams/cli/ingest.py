@@ -273,6 +273,11 @@ def ingest(
           error=None,
         )
         conn.commit()
+    # Cleanup: keep the entity dictionary store tidy. Collapses any
+    # case-insensitive duplicate canonicals that crept in (e.g. via
+    # `entities discover` / `import-people`) and de-dupes aliases. Skipped on
+    # dry runs and when there is no JSON store (legacy inline dictionaries).
+    entity_cleanup = None if dry_run else _cleanup_entity_dictionary(cfg)
     total_duration_ms = (time.perf_counter() - total_start) * 1000
     if as_json:
       envelope, exit_code = _build_ingest_envelope(
@@ -283,6 +288,7 @@ def ingest(
         dry_run=dry_run,
         total_duration_ms=total_duration_ms,
         strict=strict,
+        entity_cleanup=entity_cleanup,
       )
       stream_result(envelope)
       conn.close()
@@ -293,6 +299,7 @@ def ingest(
       run_stats,
       dry_run=dry_run,
       total_duration_ms=total_duration_ms,
+      entity_cleanup=entity_cleanup,
     )
   finally:
     if conn is not None:
@@ -300,6 +307,29 @@ def ingest(
         conn.close()
       except Exception:
         pass
+
+
+def _cleanup_entity_dictionary(cfg: dict) -> dict | None:
+  """Dedupe the JSON entity store after an ingest run.
+
+  Returns the dedupe stats ({"dropped", "aliases_merged"}), or None when there
+  is no JSON store yet (legacy inline dictionaries are left alone). Only
+  rewrites the file when something actually changed.
+  """
+  from yaams.entities_store import (
+    dedupe_dictionary,
+    load_dictionary,
+    save_dictionary,
+    store_path,
+  )
+
+  if not store_path(cfg).is_file():
+    return None
+  current = load_dictionary(cfg)
+  deduped, stats = dedupe_dictionary(current)
+  if stats["dropped"] or stats["aliases_merged"] or len(deduped) != len(current):
+    save_dictionary(cfg, deduped)
+  return stats
 
 
 def _build_ingest_envelope(
@@ -311,6 +341,7 @@ def _build_ingest_envelope(
   dry_run: bool,
   total_duration_ms: float,
   strict: bool,
+  entity_cleanup: dict | None = None,
 ) -> tuple[dict, int]:
   """Return (envelope, exit_code) following the partial-success rules.
 
@@ -331,6 +362,8 @@ def _build_ingest_envelope(
     "sources": per_source,
     "totals": totals,
   }
+  if entity_cleanup is not None:
+    stats["entity_cleanup"] = entity_cleanup
   warnings: list[str] = []
   if not sources_planned:
     warnings.append("No sources enabled in config.yaml")
@@ -646,6 +679,7 @@ def print_stats(
   *,
   dry_run: bool,
   total_duration_ms: float | None = None,
+  entity_cleanup: dict | None = None,
 ) -> None:
   stats = database_stats(conn)
   if dry_run:
@@ -667,6 +701,11 @@ def print_stats(
     f"  Entities in DB: {stats['entities']:,} unique, "
     f"{stats['entity_links']:,} links"
   )
+  if entity_cleanup and (entity_cleanup.get("dropped") or entity_cleanup.get("aliases_merged")):
+    click.echo(
+      f"  Entity dictionary: deduped {entity_cleanup['dropped']} duplicate(s), "
+      f"merged {entity_cleanup['aliases_merged']} alias(es)"
+    )
   if db_path.exists():
     click.echo(f"  Storage: {_size_mb(db_path):.1f} MB")
   if total_duration_ms is not None:

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator
@@ -35,6 +36,14 @@ from yaams.time import ensure_utc, parse_iso_datetime
 
 logger = logging.getLogger("yaams.ingest.teams_channels")
 
+# Channel ingestion fans out one owa-teams call per team + per channel, which
+# bursts enough requests to trip chatsvc's rate limiter. owa-teams surfaces a
+# 429 as a non-zero exit rather than honoring Retry-After itself, so the
+# adapter retries rate-limited verbs with exponential backoff (1, 2, 4, … s).
+DEFAULT_MAX_RETRIES = 5
+_BACKOFF_BASE_SEC = 1.0
+_BACKOFF_CAP_SEC = 30.0
+
 
 @dataclass
 class TeamsChannelsAdapter:
@@ -42,12 +51,15 @@ class TeamsChannelsAdapter:
   teams: tuple[str, ...] = ()      # team-id allowlist; empty = all joined teams
   limit_pages: int = 4             # owa-teams --limit (pages of ~50)
   skip_bots: bool = True
+  max_retries: int = DEFAULT_MAX_RETRIES  # retries per owa-teams verb on 429
   skipped_bots: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
+  rate_limit_retries: int = field(default=0, init=False)  # 429 backoffs this run
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
     self.skipped_empty = 0
+    self.rate_limit_retries = 0
     cutoff = ensure_utc(since)
     for team_id, team_name in self._teams():
       for ch_id, ch_name in self._channels(team_id):
@@ -114,29 +126,52 @@ class TeamsChannelsAdapter:
 
     Mirrors the calendar/mail adapters: check ``returncode``, tolerate empty
     output and non-JSON, never raise on a single failed verb (return ``[]``).
+    Rate-limit (429) failures are retried with exponential backoff; the fan-out
+    bursts enough calls to trip chatsvc's limiter and owa-teams exits non-zero
+    rather than waiting itself, so without this a single 429 silently drops a
+    whole team's channels.
     """
     verb = args[0] if args else "?"
-    result = subprocess.run(
-      ["owa-teams", *args, "--profile", self.profile],
-      capture_output=True, text=True,
-    )
-    if result.returncode != 0:
+    cmd = ["owa-teams", *args, "--profile", self.profile]
+    attempts = max(self.max_retries, 0) + 1
+    for attempt in range(attempts):
+      result = subprocess.run(cmd, capture_output=True, text=True)
+      if result.returncode == 0:
+        return _parse_rows(result.stdout, verb, self.profile)
+      if _is_rate_limited(result) and attempt + 1 < attempts:
+        delay = min(_BACKOFF_BASE_SEC * 2 ** attempt, _BACKOFF_CAP_SEC)
+        self.rate_limit_retries += 1
+        logger.warning(
+          "owa-teams %s rate-limited (429); backing off %.1fs "
+          "(retry %d/%d, profile=%s)",
+          verb, delay, attempt + 1, self.max_retries, self.profile,
+        )
+        time.sleep(delay)
+        continue
       logger.warning(
         "owa-teams %s failed (profile=%s rc=%d): %s",
         verb, self.profile, result.returncode,
         (result.stderr or "").strip() or "no stderr",
       )
       return []
-    if not result.stdout.strip():
-      return []
-    try:
-      data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-      logger.warning(
-        "owa-teams %s returned non-JSON (profile=%s)", verb, self.profile,
-      )
-      return []
-    return data if isinstance(data, list) else []
+    return []  # unreachable (loop always returns), keeps the function total
+
+
+def _parse_rows(stdout: str, verb: str, profile: str) -> list[dict]:
+  if not stdout.strip():
+    return []
+  try:
+    data = json.loads(stdout)
+  except json.JSONDecodeError:
+    logger.warning("owa-teams %s returned non-JSON (profile=%s)", verb, profile)
+    return []
+  return data if isinstance(data, list) else []
+
+
+def _is_rate_limited(result: subprocess.CompletedProcess) -> bool:
+  """A 429 from chatsvc; owa-teams prints e.g. ``ERROR: rate limited (429)``."""
+  blob = f"{result.stdout or ''} {result.stderr or ''}".lower()
+  return "429" in blob or "rate limit" in blob
 
 
 def _is_bot_row(row: dict) -> bool:

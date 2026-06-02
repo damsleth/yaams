@@ -82,6 +82,10 @@ ingest:
     # owa-teams `--limit`: pages of ~50 messages per channel, newest-first.
     limit_pages: 4
     skip_bots: true
+    # Retries per owa-teams call when chatsvc rate-limits (429). The fan-out
+    # bursts calls, so retries use exponential backoff (1, 2, 4, … capped 30s).
+    # 0 disables retrying. A tighter `teams` allowlist is the better lever.
+    max_retries: 5
 
   # owa-mail-backed inbox + sent ingestion. One source per profile.
   # `folders` defaults to [Inbox, SentItems] — add Archive/etc. if wanted.

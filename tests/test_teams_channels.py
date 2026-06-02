@@ -322,6 +322,61 @@ def test_adapter_tolerates_failed_owa_teams(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _run — rate-limit (429) backoff.
+# ---------------------------------------------------------------------------
+
+
+def _seq_run(monkeypatch, responses):
+  """Patch subprocess.run to return `responses` in order (repeat the last),
+  and time.sleep to record delays without sleeping. Returns (calls, slept)."""
+  import yaams.ingest.teams_channels as mod
+  calls: list[list[str]] = []
+  slept: list[float] = []
+
+  def run(cmd, capture_output=True, text=True):  # noqa: ARG001
+    calls.append(cmd)
+    return responses[min(len(calls) - 1, len(responses) - 1)]
+
+  monkeypatch.setattr(mod.subprocess, "run", run)
+  monkeypatch.setattr(mod.time, "sleep", lambda d: slept.append(d))
+  return calls, slept
+
+
+def test_run_retries_on_rate_limit_then_succeeds(monkeypatch):
+  ok = _FakeProc(stdout=json.dumps([{"id": "t1", "displayName": "Marketing"}]))
+  rl = _FakeProc(stdout="", returncode=1, stderr="ERROR: rate limited (429)")
+  calls, slept = _seq_run(monkeypatch, [rl, rl, ok])
+  adapter = TeamsChannelsAdapter(profile="work")
+  out = adapter._run(["teams"])
+  assert out == [{"id": "t1", "displayName": "Marketing"}]
+  assert len(calls) == 3                 # two 429s, then success
+  assert slept == [1.0, 2.0]             # exponential backoff
+  assert adapter.rate_limit_retries == 2
+
+
+def test_run_gives_up_after_max_retries(monkeypatch):
+  rl = _FakeProc(stdout="", returncode=1, stderr="rate limited (429)")
+  calls, slept = _seq_run(monkeypatch, [rl])  # always 429
+  adapter = TeamsChannelsAdapter(profile="work", max_retries=2)
+  out = adapter._run(["channels", "--team", "t1"])
+  assert out == []
+  assert len(calls) == 3                 # initial try + 2 retries
+  assert slept == [1.0, 2.0]
+  assert adapter.rate_limit_retries == 2
+
+
+def test_run_does_not_retry_non_rate_limit_error(monkeypatch):
+  err = _FakeProc(stdout="", returncode=1, stderr="auth blew up")
+  calls, slept = _seq_run(monkeypatch, [err])
+  adapter = TeamsChannelsAdapter(profile="work")
+  out = adapter._run(["teams"])
+  assert out == []
+  assert len(calls) == 1                 # no retry on a non-429 failure
+  assert slept == []
+  assert adapter.rate_limit_retries == 0
+
+
+# ---------------------------------------------------------------------------
 # CLI routing — the teams_channels_ branch must win over teams_.
 # ---------------------------------------------------------------------------
 
@@ -337,6 +392,7 @@ def test_get_adapter_routes_to_channels_adapter():
   assert adapter.teams == ("team-1",)
   assert adapter.limit_pages == 6
   assert adapter.skip_bots is False
+  assert adapter.max_retries == 5         # default when cfg omits it
 
 
 def test_config_section_maps_channels():

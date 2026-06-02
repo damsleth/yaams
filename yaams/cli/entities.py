@@ -17,6 +17,11 @@ from yaams.conventions import (
   emit_data_error,
 )
 from yaams.db import open_db
+from yaams.people_import import (
+  fetch_people,
+  merge_into_dictionary,
+  people_to_entries,
+)
 from yaams.schema import init_schema
 from yaams.store import (
   add_entity_tags,
@@ -32,7 +37,6 @@ from yaams.store import (
   seed_entities,
   set_entity_meta,
 )
-
 
 # Function words, greetings and time terms that NER routinely mis-tags as
 # entities. Shared by `discover` (skip as candidates) and the junk detector.
@@ -251,6 +255,132 @@ def entities_add(
     ))
     return
   click.echo(f"Added '{canonical}' ({etype}).")
+
+
+@entities_group.command("import-people")
+@config_option
+@click.option("--profile", default=None, help="owa-piggy profile (default: owa-people's configured default).")
+@click.option("--query", "queries", multiple=True, help="Directory search term to pull colleagues (repeatable).")
+@click.option("--find", "finds", multiple=True, help="/me/people relevance search term (repeatable).")
+@click.option("--contacts/--no-contacts", "contacts", default=True, show_default=True,
+              help="Include personal contacts (skipped with a warning if the scope is denied).")
+@click.option("--me/--no-me", "include_me", default=True, show_default=True,
+              help="Include the authenticated user.")
+@click.option("--limit", default=50, show_default=True, type=int, help="Per-query page size.")
+@click.option("--type", "etype", default="person", show_default=True, help="Entity type for imported people.")
+@click.option("--tag", "tags", multiple=True, help="Tag attached to every imported entity (repeatable).")
+@click.option("--dry-run", is_flag=True, help="Preview entries without writing config or seeding the DB.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+def entities_import_people(
+  config_path: str,
+  profile: str | None,
+  queries: tuple[str, ...],
+  finds: tuple[str, ...],
+  contacts: bool,
+  include_me: bool,
+  limit: int,
+  etype: str,
+  tags: tuple[str, ...],
+  dry_run: bool,
+  as_json: bool,
+) -> None:
+  """Import M365 people (via owa-people) into the entity dictionary.
+
+  Pulls the authenticated user, personal contacts, and any --query/--find
+  search results, maps each person to a {canonical, type, aliases: [email]}
+  dictionary entry, and seeds them so NER/tagging resolves colleagues across
+  every source. Existing entries gain new email aliases; nothing is removed.
+  Each owa-people surface is independent; a denied scope (e.g. contacts)
+  becomes a warning, not a failure, as long as another surface returns people.
+  """
+  t0 = time.monotonic()
+  people, warnings = fetch_people(
+    profile=profile,
+    include_me=include_me,
+    include_contacts=contacts,
+    queries=queries,
+    finds=finds,
+    limit=limit,
+  )
+  entries = people_to_entries(people, etype=etype)
+  fetched = len(people)
+
+  # Every attempted surface failed and we have nothing to import: surface it
+  # as an error so automation notices, mirroring ingest's all-sources-failed.
+  if fetched == 0 and warnings:
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities import-people", ok=False,
+        error={"code": "all_sources_failed",
+               "message": "owa-people returned no people from any surface"},
+        warnings=warnings, duration_ms=duration_ms,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    click.echo("No people imported - every owa-people surface failed:", err=True)
+    for w in warnings:
+      click.echo(f"  - {w}", err=True)
+    sys.exit(EXIT_USER_ERROR)
+
+  cfg = load_config(config_path)
+  entities_cfg = dict(cfg.get("entities") or {})
+  dictionary = list(entities_cfg.get("dictionary") or [])
+  merged, stats = merge_into_dictionary(dictionary, entries)
+  changed = bool(stats["added"] or stats["updated"])
+
+  if dry_run:
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities import-people", ok=True,
+        stats={"fetched": fetched, "entries": len(entries), "dry_run": True, **stats},
+        warnings=warnings, duration_ms=duration_ms,
+      ))
+      return
+    click.echo(f"[dry-run] {fetched} people fetched, {len(entries)} unique; "
+               f"would add {stats['added']}, update {stats['updated']} "
+               f"(+{stats['aliases_added']} aliases).")
+    for w in warnings:
+      click.echo(f"  warning: {w}", err=True)
+    return
+
+  if changed:
+    entities_cfg["dictionary"] = merged
+    _save_entities(config_path, entities_cfg)
+
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  applied_tags = 0
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh)
+    backfill_entity_sources(conn, fresh)
+    if tags:
+      for entry in entries:
+        eid = resolve_entity_id(conn, entry["canonical"])
+        if eid is not None:
+          applied_tags += add_entity_tags(conn, eid, tags)
+  finally:
+    conn.close()
+
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="entities import-people", ok=True,
+      stats={"fetched": fetched, "entries": len(entries),
+             "tags_added": applied_tags, **stats},
+      warnings=warnings, duration_ms=duration_ms,
+    ))
+    return
+  click.echo(f"Imported {fetched} people -> {stats['added']} added, "
+             f"{stats['updated']} updated (+{stats['aliases_added']} aliases).")
+  if applied_tags:
+    click.echo(f"  tagged +{applied_tags}: {', '.join(t.lower() for t in tags)}")
+  for w in warnings:
+    click.echo(f"  warning: {w}", err=True)
+  if changed:
+    click.echo("  Next: 'yaams enrich retag' to relabel historical items with the new entities.")
 
 
 @entities_group.command("remove")

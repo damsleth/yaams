@@ -354,6 +354,32 @@ skipping obvious noise (stopwords, fragments). `add` seeds the DB
 immediately and writes the entity to your config dictionary so it survives
 re-ingest.
 
+### Import people from Microsoft 365
+
+Bootstrap the dictionary from your org instead of typing colleagues in by
+hand. `import-people` shells out to `owa-people` (the same owa-piggy auth as
+the calendar/mail/teams sources), maps each person to a `{canonical, person,
+aliases: [email]}` entry, and seeds them, so NER/tagging resolves colleagues
+across *every* source.
+
+```bash
+yaams entities import-people --dry-run            # preview; writes nothing
+yaams entities import-people                      # me + personal contacts
+yaams entities import-people --query "norconsult" --query "crayon"   # + directory search
+yaams entities import-people --find "vibeke" --tag une               # + relevance search, tagged
+yaams entities import-people --profile crayon --no-contacts
+```
+
+People are reference entities, not timestamped events, so they go in the
+dictionary, never the firehose `items` table. Each owa-people surface runs
+independently: a denied scope (personal `contacts` is often blocked by
+Conditional Access) becomes a warning, not a failure, as long as another
+surface returns people. A directory record with a different displayName but an
+email already in the dictionary folds into the existing entry instead of
+creating a duplicate; nothing is removed. Re-run it any time, it's idempotent.
+Follow with `yaams enrich retag` to relabel already-ingested items with the
+freshly imported entities.
+
 ### Merge duplicates
 
 The same real-world entity often shows up under several surface forms.

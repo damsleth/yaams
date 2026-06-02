@@ -10,6 +10,19 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-02
+
+### Added
+
+- Teams **channel** ingestion: a new `teams_channels_<profile>` source ingests
+  channel posts and threaded replies by shelling out to the `owa-teams` CLI —
+  the same thin-adapter pattern as `calendar` (owa-cal) and `mail` (owa-mail),
+  and distinct from the existing `teams_<profile>` chat source so routing and
+  watermarks separate channels from chats. Threads cluster a root with its
+  replies via owa-teams' `rootMessageId`. Off by default; enable per profile
+  under `ingest.teams_channels` (or the `yaams sources` TUI) and set a `teams`
+  allowlist to bound the per-team subprocess fan-out.
+
 ## [0.3.0] - 2026-06-02
 
 ### Added

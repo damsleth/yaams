@@ -145,6 +145,9 @@ A few keys that matter more than they look:
 - **`embed.offline: true`** means YAAMS only uses the locally cached model
   and never hits the network per run. Flip it to `false` the first time you
   change `embed.model`, then back to `true`.
+- **`embed.device: mps` (or `cuda`)** also enables fp16 embedding
+  automatically — ~10% faster, half the model memory, no quality loss; CPU
+  stays fp32. See [embedding-precision.md](embedding-precision.md).
 - **`email.user_addresses` / `mail.user_addresses`** — list every address you
   send from. Mail *from* these is never dropped as a newsletter even if the
   subject looks automated.

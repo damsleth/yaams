@@ -10,6 +10,17 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-02
+
+### Changed
+
+- Teams channel ingestion now retries `owa-teams` on a 429 rate limit with
+  exponential backoff (1, 2, 4, 8, 16s, capped 30s) instead of silently
+  dropping a team's channels. The fan-out bursts enough calls to trip chatsvc's
+  limiter, and `owa-teams` exits non-zero rather than waiting. Tune with
+  `ingest.teams_channels.max_retries` (default 5; `0` disables). A tighter
+  `teams` allowlist remains the best way to avoid 429s in the first place.
+
 ## [0.3.1] - 2026-06-02
 
 ### Added

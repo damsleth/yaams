@@ -606,6 +606,7 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       teams=tuple(cfg.get("teams") or ()),
       limit_pages=int(cfg.get("limit_pages", 4)),
       skip_bots=bool(cfg.get("skip_bots", True)),
+      max_retries=int(cfg.get("max_retries", 5)),
     )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]

@@ -110,6 +110,7 @@ _NUMERIC_KNOBS: tuple[tuple[str, type | tuple[type, ...], bool], ...] = (
   ("ingest.mail.page_size", int, True),
   ("ingest.teams.page_size", int, True),
   ("ingest.teams_channels.limit_pages", int, True),
+  ("ingest.teams_channels.max_retries", int, False),
   ("ingest.calendar.chunk_days", int, True),
 )
 

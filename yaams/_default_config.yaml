@@ -115,15 +115,14 @@ synth:
 
 entities:
   spacy_model: xx_ent_wiki_sm
-  dictionary:
-    # Known people, places, projects, and aliases for entity tagging.
-    # Surface form on the left, casual variants under aliases.
-    - canonical: Example Person
-      type: person
-      aliases:
-        - Ex
-        - E. Person
-    - canonical: Example Org
-      type: org
-      aliases:
-        - EX
+  # The entity dictionary (curated names + aliases used for tagging) lives in
+  # its own JSON file, not inline here — keeping a growing data list out of
+  # this hand-edited config. A relative path is resolved next to data.db; this
+  # value is also the default when the key is omitted. Manage entries with
+  # `yaams entities add|import-people|merge|discover` rather than editing by
+  # hand. Example entities.json:
+  #   [
+  #     {"canonical": "Example Person", "type": "person", "aliases": ["Ex", "E. Person"]},
+  #     {"canonical": "Example Org", "type": "org", "aliases": ["EX"]}
+  #   ]
+  dictionary_path: entities.json

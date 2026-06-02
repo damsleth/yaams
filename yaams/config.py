@@ -71,7 +71,31 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
     raise ValueError(f"Config file must contain a mapping: {config_path}")
   _apply_aliases(data)
   _validate_config(data, config_path)
+  _load_entity_store(data)
   return data
+
+
+def _load_entity_store(data: dict[str, Any]) -> None:
+  """Merge the JSON entity store into ``data["entities"]["dictionary"]``.
+
+  No-op unless a db_path is set and the store file actually exists, so configs
+  with an inline ``entities.dictionary`` (pre-migration / tests) are untouched
+  until the store is created. When the store exists it is the source of truth
+  and overrides any stale inline list.
+  """
+  if not data.get("db_path"):
+    return
+  # Lazy import: entities_store imports from this module, so importing it at
+  # module load would create a cycle.
+  from yaams.entities_store import load_dictionary, store_path
+
+  if not store_path(data).is_file():
+    return
+  entities = data.get("entities")
+  if not isinstance(entities, dict):
+    entities = {}
+    data["entities"] = entities
+  entities["dictionary"] = load_dictionary(data)
 
 
 # Numeric knobs that get coerced with int()/float() deep in the call stack.

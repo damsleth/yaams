@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
 from click.testing import CliRunner
 
 from yaams.cli import cli
 from yaams.config import get_db_path, load_config
 from yaams.db import open_db
+from yaams.entities_store import store_path
 from yaams.store import resolve_entity_id
 
 _CONFIG = """
@@ -77,10 +77,12 @@ def test_merge_is_durable_in_config_and_db(tmp_path: Path):
   finally:
     conn.close()
 
-  # ...and durably folded into the config dictionary as aliases, so a reseed
-  # (init-db / ingest) cannot resurrect them and NER will resolve them.
-  doc = yaml.safe_load(Path(cfg).read_text())
-  entries = {e["canonical"]: e for e in doc["entities"]["dictionary"]}
+  # ...and durably folded into the entity dictionary store (entities.json next
+  # to the DB) as aliases, so a reseed (init-db / ingest) cannot resurrect them
+  # and NER will resolve them. The dictionary now lives in JSON, not config.yaml.
+  store = store_path(load_config(str(cfg)))
+  assert store.is_file(), "merge should persist the dictionary to entities.json"
+  entries = {e["canonical"]: e for e in load_config(str(cfg))["entities"]["dictionary"]}
   assert "Crayon AS" not in entries and "Crayon Group" not in entries
   aliases = {a.lower() for a in entries["Crayon"].get("aliases", [])}
   assert {"crayon as", "crayon group"} <= aliases

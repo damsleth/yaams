@@ -606,7 +606,7 @@ def upsert_entity(
 
 def _embedding_to_blob(embedding: object) -> bytes:
   if hasattr(embedding, "astype") and hasattr(embedding, "tobytes"):
-    return embedding.astype("float32").tobytes()
+    return embedding.astype("float32").tobytes()  # type: ignore[attr-defined]
   if isinstance(embedding, bytes):
     return embedding
   return array("f", [float(value) for value in embedding]).tobytes()

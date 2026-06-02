@@ -27,7 +27,9 @@ def _ent(conn, name: str, etype: str = "org") -> int:
     "INSERT INTO entities (canonical_name, entity_type) VALUES (?, ?)", (name, etype)
   )
   conn.commit()
-  return resolve_entity_id(conn, name)
+  eid = resolve_entity_id(conn, name)
+  assert eid is not None
+  return eid
 
 
 def test_tags_crud_roundtrip():

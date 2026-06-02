@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import email
+import email.errors
 import email.utils
 import hashlib
 import mailbox
@@ -396,11 +397,11 @@ def _decode_message_part(message: Message) -> str:
       pass
 
   payload = message.get_payload(decode=True)
-  if payload is None:
+  if not isinstance(payload, (bytes, bytearray)):
     raw_payload = message.get_payload()
     return raw_payload if isinstance(raw_payload, str) else ""
   charset = message.get_content_charset() or "utf-8"
-  return payload.decode(charset, errors="replace")
+  return bytes(payload).decode(charset, errors="replace")
 
 
 def _addresses(values: list[str]) -> list[str]:

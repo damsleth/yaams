@@ -147,3 +147,51 @@ Other agents may be working in this repo at the same time as you - running A/B t
 4. Identify which subsystem you're touching (`ingest/`, `retrieve/`, `synthesize/`, `signals/`).
 5. Branch if the change is non-trivial. Use `.tmp/` for any scratch files.
 6. Stage by explicit path. Never `git add .`.
+
+## Cutting a release
+
+YAAMS ships to PyPI as `yaams` (a sibling of `hugr`, `cognitive-ledger`,
+`owa-tools`, and `owa-piggy`). The version lives in two places that must
+match: `pyproject.toml` `version` and `yaams/__init__.py` `__version__`.
+Pre-1.0, bump the minor for new features and the patch for fixes.
+
+1. Make sure `main` is green: `.venv/bin/pytest -q` and
+   `.venv/bin/ruff check yaams tests`.
+2. Bump the version in both `pyproject.toml` and `yaams/__init__.py`, and add
+   a dated section to `CHANGELOG.md` for the new version (move items out of
+   `[Unreleased]`). Keep the existing `[x.y.z]` sections; never rewrite a
+   shipped one.
+3. Commit as `chore(release): X.Y.Z` (version files + changelog only; land any
+   feature/infra commits separately first).
+4. Tag it annotated, matching the existing convention (message is the bare
+   version): `git tag -a vX.Y.Z -m "X.Y.Z"`.
+5. Publish the sdist + wheel to PyPI from the repo `.venv` using `uv`. The
+   PyPI API token lives in `UV_PUBLISH_TOKEN` in `./.env` at the repo root (do
+   NOT commit it; `.gitignore` already excludes it). `uv publish` reads that
+   exact env var name, so sourcing `.env` is enough:
+   ```
+   rm -rf dist build
+   uv build
+   set -a && . ./.env && set +a && uv publish dist/*
+   ```
+   Confirm success at `pypi.org/pypi/yaams/X.Y.Z/json` (200 = live). That JSON
+   index lags a few minutes, so a stale 404 right after a successful upload is
+   not a failure - do not re-tag or re-build to "fix" it.
+6. Push the commit and the tag: `git push origin main && git push origin
+   vX.Y.Z`. The tag push triggers `.github/workflows/publish.yml`, which
+   re-builds and publishes the same artifacts via the `UV_PUBLISH_TOKEN` repo
+   secret. It uses `skip-existing`, so after a local publish the CI run simply
+   skips the already-uploaded files - that is the standardised path; the local
+   publish above is the belt-and-suspenders fallback when CI is unavailable.
+7. Create the GitHub release to match prior tags:
+   `gh release create vX.Y.Z --title vX.Y.Z --notes "<changelog section>"`.
+
+CI secret: the `UV_PUBLISH_TOKEN` repo secret must hold the same PyPI token as
+`./.env`. Set or rotate it with
+`gh secret set UV_PUBLISH_TOKEN --repo damsleth/yaams` (reads the value from
+stdin or `--body`); never paste the token into a file or commit.
+
+If any step fails midway (tag push rejected, PyPI 4xx that is not "File
+already exists"), stop and surface the error. Do not force-push a published
+tag, and never bump the version a second time to work around an
+already-published file.

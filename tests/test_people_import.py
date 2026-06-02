@@ -57,6 +57,7 @@ def test_person_to_entry_omits_email_alias_equal_to_name():
   # display name is email-shaped -> skipped entirely
   assert entry is None
   entry = person_to_entry(_person("Kim", "kim"))
+  assert entry is not None
   assert "aliases" not in entry  # alias equal to canonical (ci) is dropped
 
 

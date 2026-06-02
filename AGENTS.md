@@ -178,18 +178,16 @@ Pre-1.0, bump the minor for new features and the patch for fixes.
    index lags a few minutes, so a stale 404 right after a successful upload is
    not a failure - do not re-tag or re-build to "fix" it.
 6. Push the commit and the tag: `git push origin main && git push origin
-   vX.Y.Z`. The tag push triggers `.github/workflows/publish.yml`, which
-   re-builds and publishes the same artifacts via the `UV_PUBLISH_TOKEN` repo
-   secret. It uses `skip-existing`, so after a local publish the CI run simply
-   skips the already-uploaded files - that is the standardised path; the local
-   publish above is the belt-and-suspenders fallback when CI is unavailable.
-7. Create the GitHub release to match prior tags:
-   `gh release create vX.Y.Z --title vX.Y.Z --notes "<changelog section>"`.
+   vX.Y.Z`. The tag push triggers `.github/workflows/release.yml`, which
+   re-runs the ci.yml gates (lint + tests), rebuilds the wheel + sdist with
+   `uv build`, and creates the GitHub Release at the tag with both artifacts
+   attached. It does **not** publish to PyPI - the local `uv publish` in
+   step 5 is the only thing that uploads there.
 
-CI secret: the `UV_PUBLISH_TOKEN` repo secret must hold the same PyPI token as
-`./.env`. Set or rotate it with
-`gh secret set UV_PUBLISH_TOKEN --repo damsleth/yaams` (reads the value from
-stdin or `--body`); never paste the token into a file or commit.
+CI no longer publishes to PyPI, so the `UV_PUBLISH_TOKEN` repo secret is no
+longer used by any workflow. Leave it or remove it with
+`gh secret delete UV_PUBLISH_TOKEN --repo damsleth/yaams`; either way, keep the
+token in `./.env` for the local `uv publish` in step 5.
 
 If any step fails midway (tag push rejected, PyPI 4xx that is not "File
 already exists"), stop and surface the error. Do not force-push a published

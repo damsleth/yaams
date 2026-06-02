@@ -929,8 +929,9 @@ def _apply_merge(conn, config_path: str, survivor_id: int, victim_ids: list[int]
 
   fresh_dict = load_config(config_path).get("entities", {}).get("dictionary", [])
   seed_entities(conn, fresh_dict)
-  survivor_id = resolve_entity_id(conn, survivor_name)
-  stats = merge_entities(conn, survivor_id, victim_ids)
+  reseeded_id = resolve_entity_id(conn, survivor_name)
+  assert reseeded_id is not None
+  stats = merge_entities(conn, reseeded_id, victim_ids)
   return survivor_name, stats, merged_aliases
 
 

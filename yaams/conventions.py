@@ -92,9 +92,9 @@ def _version() -> str:
 
 
 def _writeln(obj: Mapping[str, Any], stream: TextIO | None) -> None:
-  stream = stream if stream is not None else sys.stdout
-  stream.write(json.dumps(obj, ensure_ascii=False) + "\n")
-  stream.flush()
+  out = stream if stream is not None else sys.stdout
+  out.write(json.dumps(obj, ensure_ascii=False) + "\n")
+  out.flush()
 
 
 # --- Action envelope -------------------------------------------------------

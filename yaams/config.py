@@ -78,7 +78,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
 # Validating them up front turns an opaque ValueError/TypeError mid-ingest
 # into a clear "fix this key" message at load time. Each entry is
 # (dotted path, expected python type, must-be-positive).
-_NUMERIC_KNOBS: tuple[tuple[str, type, bool], ...] = (
+_NUMERIC_KNOBS: tuple[tuple[str, type | tuple[type, ...], bool], ...] = (
   ("embed.batch_size", int, True),
   ("embed.dimension", int, True),
   ("synth.timeout", (int, float), True),

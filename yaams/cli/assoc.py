@@ -184,6 +184,7 @@ def _resolve_pair(conn, from_entity: str, to_entity: str, both: bool,
     else:
       click.echo(msg + ".", err=True)
     sys.exit(EXIT_USER_ERROR)
+  assert fid is not None and tid is not None
   pairs = [(fid, tid)]
   if both:
     pairs.append((tid, fid))

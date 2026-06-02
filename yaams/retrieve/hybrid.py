@@ -424,7 +424,7 @@ def _vec_filter_params(cfg: HybridQueryConfig):
 
 def _embedding_to_blob(embedding: object) -> bytes:
   if hasattr(embedding, "astype") and hasattr(embedding, "tobytes"):
-    return embedding.astype("float32").tobytes()
+    return embedding.astype("float32").tobytes()  # type: ignore[attr-defined]
   if isinstance(embedding, bytes):
     return embedding
   return array("f", [float(v) for v in embedding]).tobytes()

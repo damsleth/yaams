@@ -220,6 +220,8 @@ def ingest(
           )
           conn.commit()
         continue
+      # Reached only when src_error stayed None, i.e. ingest_source returned.
+      assert source_stats is not None
       run_stats[src]["seen"] += source_stats["seen"]
       run_stats[src]["new"] += source_stats["new"]
       run_stats[src]["skipped"] += source_stats["skipped"]

@@ -63,6 +63,26 @@ ingest:
     skip_bots: true
     page_size: 50
 
+  # Teams *channel* posts (root + threaded replies), via `owa-teams`. Distinct
+  # from `teams` above, which ingests 1:1/group/meeting *chats*. One source per
+  # profile: teams_channels_<profile>.
+  #
+  # Cost: a run does 1 `owa-teams teams` + 1 `channels` call per team + 1
+  # `messages` call per channel — an N+1 subprocess fan-out (a 20-team tenant
+  # is ~300 spawns / minutes of wall-clock). Use the `teams` allowlist to
+  # ingest only the teams you care about; leaving it empty walks every joined
+  # team. Off by default for this reason.
+  teams_channels:
+    enabled: false
+    profiles:
+      - work
+    # Team-id allowlist. [] = every joined team (see cost note above). Get ids
+    # from `owa-teams teams --profile <p>`. An explicit list is recommended.
+    teams: []
+    # owa-teams `--limit`: pages of ~50 messages per channel, newest-first.
+    limit_pages: 4
+    skip_bots: true
+
   # owa-mail-backed inbox + sent ingestion. One source per profile.
   # `folders` defaults to [Inbox, SentItems] — add Archive/etc. if wanted.
   mail:

@@ -44,6 +44,7 @@ from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.signal import SignalAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
+from yaams.ingest.teams_channels import TeamsChannelsAdapter
 from yaams.ingest.teams_chatsvc import ChatsvcAdapter, ChatsvcClient
 from yaams.logsetup import setup_logging
 from yaams.schema import init_schema
@@ -66,8 +67,8 @@ from yaams.watermark import get_watermark, update_watermark
   show_default=True,
   help=(
     "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
-    "teams or teams_<profile>, calendar or calendar_<profile>, "
-    "mail or mail_<profile>"
+    "teams or teams_<profile>, teams-channels or teams_channels_<profile>, "
+    "calendar or calendar_<profile>, mail or mail_<profile>"
   ),
 )
 @click.option("--dry-run", is_flag=True)
@@ -595,6 +596,17 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       profile=profile,
       skip_free=bool(cfg.get("skip_free", True)),
     )
+  if source.startswith("teams_channels_"):
+    # Must precede the `teams_` branch: "teams_channels_work".startswith(
+    # "teams_") is True, so the chat branch would otherwise swallow it and
+    # mis-parse the profile as "channels_work".
+    profile = source[len("teams_channels_"):]
+    return TeamsChannelsAdapter(
+      profile=profile,
+      teams=tuple(cfg.get("teams") or ()),
+      limit_pages=int(cfg.get("limit_pages", 4)),
+      skip_bots=bool(cfg.get("skip_bots", True)),
+    )
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     engine = (cfg.get("engine_overrides") or {}).get(profile, "graph")
@@ -817,6 +829,8 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cfg = cfg or {}
   teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
   teams_sources = [f"teams_{p}" for p in teams_profiles if _teams_profile_active(p)]
+  tc_profiles = list((cfg.get("ingest", {}).get("teams_channels", {}) or {}).get("profiles", []))
+  tc_sources = [f"teams_channels_{p}" for p in tc_profiles if _teams_profile_active(p)]
   cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
   cal_sources = [f"calendar_{p}" for p in cal_profiles]
   mail_profiles = list((cfg.get("ingest", {}).get("mail", {}) or {}).get("profiles", []))
@@ -824,10 +838,12 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github", *teams_sources, *cal_sources, *mail_sources,
+      "github", *teams_sources, *tc_sources, *cal_sources, *mail_sources,
     ]
   if source == "teams":
     return teams_sources
+  if source in ("teams-channels", "teams_channels"):
+    return tc_sources
   if source == "calendar":
     return cal_sources
   if source == "mail":
@@ -847,6 +863,11 @@ def _teams_profile_active(profile: str) -> bool:
 
 
 def _config_section(source: str) -> str:
+  if (
+    source.startswith("teams_channels_")
+    or source in ("teams_channels", "teams-channels")
+  ):
+    return "teams_channels"
   if source.startswith("teams_") or source == "teams":
     return "teams"
   if source.startswith("calendar_") or source == "calendar":
@@ -858,7 +879,12 @@ def _config_section(source: str) -> str:
 
 def _source_enabled(cfg: dict, source: str) -> bool:
   section = _config_section(source)
-  if source.startswith("teams_") and not _teams_profile_active(source[len("teams_"):]):
+  # Check teams_channels_ first: it also startswith "teams_", and slicing the
+  # wrong prefix would feed "channels_<p>" to the profile-active check.
+  if source.startswith("teams_channels_"):
+    if not _teams_profile_active(source[len("teams_channels_"):]):
+      return False
+  elif source.startswith("teams_") and not _teams_profile_active(source[len("teams_"):]):
     return False
   return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
 
@@ -893,6 +919,12 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source.startswith("calendar_"):
     profile = source[len("calendar_"):]
     return [f"owa-cal profile: {profile}"]
+  if source.startswith("teams_channels_"):
+    profile = source[len("teams_channels_"):]
+    tc_cfg = cfg.get("ingest", {}).get("teams_channels", {}) or {}
+    allow = tc_cfg.get("teams") or []
+    scope = f"{len(allow)} team(s)" if allow else "all joined teams"
+    return [f"owa-teams channels ({scope}, owa-piggy profile): {profile}"]
   if source.startswith("teams_"):
     profile = source[len("teams_"):]
     teams_cfg = cfg.get("ingest", {}).get("teams", {}) or {}

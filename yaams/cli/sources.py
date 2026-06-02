@@ -46,7 +46,7 @@ ARROW = "▸"
 BULLET = "·"
 
 
-PROFILE_AWARE = {"teams", "calendar", "mail"}
+PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail"}
 PATH_LIST_SOURCES = {"email", "folders"}
 SINGLE_PATH_SOURCES = {"notes"}
 
@@ -82,6 +82,15 @@ _M365_BLOCK_TEMPLATES: dict[str, list[str]] = {
     "    profiles: []\n",
     "    skip_bots: true\n",
     "    page_size: 50\n",
+  ],
+  "teams_channels": [
+    "\n",
+    "  teams_channels:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    teams: []\n",
+    "    limit_pages: 4\n",
+    "    skip_bots: true\n",
   ],
 }
 
@@ -304,7 +313,8 @@ def _build_rows(cfg: dict) -> list[Row]:
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
           ))
-    elif key == "teams":
+    elif key in ("teams", "teams_channels"):
+      # Both share owa-piggy's profile list (same Graph/ic3 auth).
       configured = list(block.get("profiles") or [])
       available = discover_teams_profiles()
       seen = set()
@@ -358,7 +368,7 @@ def _append_synthetic_m365_rows(rows: list[Row]) -> None:
   piggy = [p for p in discover_teams_profiles() if p.get("enabled", True)]
   if not piggy:
     return
-  for source_name in ("mail", "calendar", "teams"):
+  for source_name in ("mail", "calendar", "teams", "teams_channels"):
     if source_name in configured:
       continue
     rows.append(SourceRow(
@@ -408,6 +418,11 @@ def _summary_for(key: str, block: dict) -> str:
   if key == "teams":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
+  if key == "teams_channels":
+    configured = block.get("profiles") or []
+    allow = block.get("teams") or []
+    scope = f"{len(allow)} team(s)" if allow else "all teams"
+    return f"{len(configured)} profile(s) active, {scope}"
   if key == "mail":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"

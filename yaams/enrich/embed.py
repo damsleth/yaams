@@ -49,6 +49,11 @@ class Embedder:
         raise
       self.model = SentenceTransformer(model, local_files_only=False, **kwargs)
     self.model.max_seq_length = 512
+    # fp16 halves the weights on device and runs ~10% faster on GPU backends;
+    # drift from fp32 is ~1e-4 cosine — negligible for normalized retrieval.
+    # CPU fp16 ops are poorly supported, so cast only on mps/cuda.
+    if device and device.split(":")[0] in ("mps", "cuda"):
+      self.model = self.model.half()
     self.batch_size = batch_size
     self.dim = self.model.get_embedding_dimension()
     if dimension is not None and self.dim != int(dimension):

@@ -51,7 +51,8 @@ through `pending_review`.
 ## Enrich
 
 - Embeddings via `BAAI/bge-m3` (configurable `embed.model`, `embed.device`,
-  `embed.models_dir`), offline after first download
+  `embed.models_dir`), offline after first download; fp16 on GPU backends
+  (see [embedding-precision.md](embedding-precision.md))
 - Entity tagging and retagging (`yaams enrich retag`)
 
 ## Retrieve and synthesize

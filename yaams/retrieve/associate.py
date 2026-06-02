@@ -21,8 +21,6 @@ from __future__ import annotations
 import math
 import sqlite3
 
-from yaams.time import utc_now
-
 # A pair seen fewer than this many times is too sparse to trust.
 MIN_COOCCUR = 3
 # Normalized-PMI floor for a learned edge to be stored / used.

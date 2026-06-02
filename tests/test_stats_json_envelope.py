@@ -8,12 +8,10 @@ envelope on stdout under --json.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from click.testing import CliRunner
 
 from yaams.cli import cli
-
 
 _VALID_MINIMAL = """\
 db_path: {db_path}

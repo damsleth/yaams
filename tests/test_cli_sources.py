@@ -19,7 +19,6 @@ from yaams.cli.sources import (
   _yaml_set_profile_enabled,
 )
 
-
 SAMPLE = """\
 db_path: ~/yaams/data.db
 

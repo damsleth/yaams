@@ -174,7 +174,6 @@ def init_cmd(dest_path: str | None, force: bool, as_json: bool) -> None:
   """
   import os
   from importlib import resources
-  from pathlib import Path
 
   from yaams.config import expand_path
 

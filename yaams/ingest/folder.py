@@ -275,7 +275,7 @@ def _image_content(path: Path, folder_parts: list[str], exif: dict) -> str:
 
 def _read_image_exif(path: Path) -> dict:
   try:
-    from PIL import Image, ExifTags
+    from PIL import ExifTags, Image
   except ImportError:
     return {}
   try:

@@ -18,7 +18,6 @@ from yaams.cli._shared import (
   _embedding_dim,
   _entity_dictionary,
   _format_duration,
-  _format_throughput,
   _size_mb,
   config_option,
 )

@@ -37,9 +37,9 @@ from typing import Iterator
 
 from yaams.ingest.base import Item, hash_id
 from yaams.ingest.teams import (
+  _BOT_LIKE_NAMES,
   MAX_TEAMS_CHARS,
   OwaPiggyTokenSource,
-  _BOT_LIKE_NAMES,
   clean_teams_body,
 )
 from yaams.time import ensure_utc

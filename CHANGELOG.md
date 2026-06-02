@@ -10,6 +10,24 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-02
+
+### Added
+
+- M365 people import: `yaams entities import-people` pulls the authenticated
+  user, personal contacts, and directory/relevance search results (via
+  owa-people) into the entity dictionary, mapping each person to a canonical
+  name plus email aliases so NER resolves colleagues across every source.
+  Existing entries gain new aliases; nothing is removed. A denied owa-people
+  scope degrades to a warning as long as another surface returns people.
+- End-user guide (`docs/user-guide.md`), linked from the README.
+
+### Changed
+
+- YAAMS now publishes to PyPI: `pipx install yaams` (or `uv pip install
+  yaams`). Releases publish automatically on a `v*` tag push via the `publish`
+  GitHub Actions workflow; the local release runbook lives in `AGENTS.md`.
+
 ## [0.2.0] - 2026-06-01
 
 ### Added

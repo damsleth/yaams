@@ -4,9 +4,8 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
 import pytest
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from yaams.ingest.signal import (
   CHROMIUM_SAFE_STORAGE_IV,

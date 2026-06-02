@@ -14,12 +14,9 @@ run flow under the hugr suite.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from yaams.config import resolve_config_path
-
 
 _MINIMAL = "db_path: /tmp/x.db\n"
 

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from yaams.cli import (  # noqa: F401
+  assoc,
+  enrich,
+  entities,
+  main,
+  promote,
+  query,
+  review,
+  signals,
+  sources,
+)
 from yaams.cli import consolidate as _consolidate_mod  # noqa: F401
-from yaams.cli import assoc, enrich, entities, main, promote, query, review, signals, sources  # noqa: F401
 from yaams.cli import ingest as _ingest_mod  # noqa: F401
 from yaams.cli._root import cli
 from yaams.cli._shared import _format_duration

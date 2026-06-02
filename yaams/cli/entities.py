@@ -992,7 +992,6 @@ def entities_merge(survivor: str, victims: tuple[str, ...], as_json: bool, confi
     survivor_id = resolve_entity_id(conn, survivor)
     missing = [] if survivor_id is not None else [survivor]
     victim_ids: list[int] = []
-    victim_names: list[str] = []
     for v in victims:
       vid = resolve_entity_id(conn, v)
       if vid is None:

@@ -23,11 +23,11 @@ from yaams.retrieve import (
 from yaams.retrieve import (
   query as run_query,
 )
-from yaams.retrieve.associate import expand_query_entities
-from yaams.retrieve.metadata import entities_matching
 from yaams.retrieve import (
   route as route_parsed,
 )
+from yaams.retrieve.associate import expand_query_entities
+from yaams.retrieve.metadata import entities_matching
 from yaams.schema import init_schema
 from yaams.signals import log_query, new_query_id
 from yaams.synthesize import llm_adapter_from_config, synthesize_answer

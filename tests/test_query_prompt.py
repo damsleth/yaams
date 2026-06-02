@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import click
 
 from yaams.cli.query import _prompt_feedback, _should_prompt
+from yaams.retrieve import HybridResult, ScoreComponents
 from yaams.schema import init_schema
 from yaams.signals import log_query
-from yaams.retrieve import HybridResult, ScoreComponents
 
 
 def _open_at(path: Path) -> sqlite3.Connection:

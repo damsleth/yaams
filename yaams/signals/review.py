@@ -21,7 +21,6 @@ from typing import Any
 
 from yaams.signals.logger import log_feedback
 
-
 VERDICT_KINDS = {"hit", "miss", "correction", "noise"}
 """Feedback kinds the review loop can emit.
 

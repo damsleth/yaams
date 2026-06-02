@@ -111,7 +111,7 @@ def test_normalize_picks_most_linked_as_survivor():
 
 def test_normalize_dry_run_changes_nothing():
   conn = _open_db()
-  clean = _ent(conn, "Hamas")
+  _ent(conn, "Hamas")
   _ent(conn, "Hamas'")
   result = normalize_entities(conn, dry_run=True)
   assert len(result["groups"]) == 1

@@ -32,8 +32,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Iterator
 
-logger = logging.getLogger("yaams.ingest.m365_mail")
-
 from yaams.ingest.base import Item, hash_id
 from yaams.ingest.email_mbox import (
   MAX_EMAIL_CHARS,
@@ -42,6 +40,8 @@ from yaams.ingest.email_mbox import (
   strip_html,
 )
 from yaams.time import ensure_utc, parse_iso_datetime
+
+logger = logging.getLogger("yaams.ingest.m365_mail")
 
 DEFAULT_FOLDERS = ("Inbox", "SentItems")
 DEFAULT_CHUNK_DAYS = 30

@@ -65,6 +65,12 @@ def init_schema(
         pending_review INTEGER NOT NULL DEFAULT 0
       );
 
+      -- expression index over the Unicode-aware lower() registered in
+      -- db.open_db; turns every lower(canonical_name) = lower(?) lookup
+      -- from a full scan into a seek
+      CREATE INDEX IF NOT EXISTS idx_entities_canonical_lower
+        ON entities(lower(canonical_name));
+
       CREATE TABLE IF NOT EXISTS item_entities (
         item_id TEXT,
         entity_id INTEGER,

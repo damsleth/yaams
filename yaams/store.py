@@ -361,6 +361,45 @@ def prune_entity(conn: sqlite3.Connection, entity_id: int) -> dict[str, int]:
   return stats
 
 
+def vacuum_orphan_entities(
+  conn: sqlite3.Connection,
+  *,
+  dry_run: bool = False,
+) -> dict[str, int]:
+  """Delete unreviewed NER entities (pending_review = 1) that nothing
+  references: no item links, tags, meta, relations, associations, and no
+  promotion candidate. These accumulate when a re-tag with a better model
+  or stricter filters stops producing links for old junk rows. Curated
+  (pending_review = 0) and denied (2) entities are never touched — denial
+  must persist so junk cannot resurface as a discover candidate."""
+  orphan_sql = """
+    SELECT e.id FROM entities e
+    WHERE e.pending_review = 1
+      AND NOT EXISTS (SELECT 1 FROM item_entities ie WHERE ie.entity_id = e.id)
+      AND NOT EXISTS (SELECT 1 FROM entity_tags t WHERE t.entity_id = e.id)
+      AND NOT EXISTS (SELECT 1 FROM entity_meta m WHERE m.entity_id = e.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM entity_relations r
+        WHERE r.from_entity = e.id OR r.to_entity = e.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM entity_assoc a
+        WHERE a.entity_a = e.id OR a.entity_b = e.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM promotion_candidates p
+        WHERE lower(p.entity) = lower(e.canonical_name)
+      )
+  """
+  count = conn.execute(
+    f"SELECT COUNT(*) FROM ({orphan_sql})"
+  ).fetchone()[0]
+  if not dry_run and count:
+    with conn:
+      conn.execute(f"DELETE FROM entities WHERE id IN ({orphan_sql})")
+  return {"deleted": 0 if dry_run else count, "orphans": count}
+
+
 def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]) -> int:
   """Upgrade item_entities.source from 'ner' to 'dictionary' for entities now in the dictionary.
 

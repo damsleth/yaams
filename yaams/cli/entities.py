@@ -37,32 +37,14 @@ from yaams.store import (
   resolve_entity_id,
   seed_entities,
   set_entity_meta,
+  vacuum_orphan_entities,
 )
 
 # Function words, greetings and time terms that NER routinely mis-tags as
-# entities. Shared by `discover` (skip as candidates) and the junk detector.
-_NOISE_WORDS = {
-  # pronouns / function words (NO)
-  "var", "hvordan", "ikke", "men", "inn", "deg", "meg", "jeg", "oss",
-  "noe", "det", "den", "han", "hun", "her", "der", "fra", "til", "via",
-  "ved", "som", "for", "alle", "noen", "hva", "når", "hvor", "også",
-  "så", "må", "får", "gjør", "kom", "kommer", "mine", "annen", "ingenting",
-  # greetings / interjections (NO + EN)
-  "ja", "nei", "ok", "okay", "hei", "hade", "takk", "natta", "sorry",
-  "argh", "åja", "yes", "no", "nice", "flink",
-  # pronouns / function words (EN)
-  "eta", "faks", "unett",
-  # temporal terms (NO + EN) - not useful as entities
-  "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday",
-  "thursday", "friday", "saturday", "sunday",
-  "januar", "februar", "mars", "april", "mai", "juni",
-  "juli", "august", "september", "oktober", "november", "desember",
-  "january", "february", "march", "june", "july", "october",
-  "november", "december",
-  "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag",
-  "igår", "idag", "imorgen", "uke", "måned", "år", "week", "month", "year",
-  "morning", "evening", "night", "afternoon",
-}
+# entities. Lives in yaams.enrich.entities so the tagger can also drop them
+# at tag time; reused here by `discover` (skip as candidates) and the junk
+# detector.
+from yaams.enrich.entities import NOISE_WORDS as _NOISE_WORDS
 
 
 def _junk_reasons(name: str) -> list[str]:
@@ -1209,6 +1191,39 @@ def entities_normalize(config_path: str, dry_run: bool, as_json: bool) -> None:
     click.echo(f"\nNormalized {len(result['groups'])} group(s) "
                f"({result['merged']} merged, {result['renamed']} renamed). "
                "Run 'yaams assoc build' to refresh associations.")
+
+
+@entities_group.command("vacuum")
+@config_option
+@click.option("--dry-run", is_flag=True, help="Count orphans without deleting.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+def entities_vacuum(config_path: str, dry_run: bool, as_json: bool) -> None:
+  """Delete unreviewed NER entities that nothing references anymore (no item
+  links, tags, meta, relations, associations, or promotion candidates).
+  These pile up when a re-tag with a better model stops linking old junk.
+  Curated and denied entities are never touched."""
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    result = vacuum_orphan_entities(conn, dry_run=dry_run)
+  finally:
+    conn.close()
+  if as_json:
+    emit_action(action_envelope(command="entities vacuum", ok=True, stats={
+      "orphans": result["orphans"], "deleted": result["deleted"],
+      "dry_run": dry_run,
+    }))
+    return
+  if not result["orphans"]:
+    click.echo("No orphaned NER entities found.")
+    return
+  if dry_run:
+    click.echo(f"{result['orphans']} orphaned NER entit(y/ies) would be deleted. "
+               "Run without --dry-run to apply.")
+  else:
+    click.echo(f"Deleted {result['deleted']} orphaned NER entit(y/ies).")
 
 
 @entities_group.command("dedupe")

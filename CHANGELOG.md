@@ -10,6 +10,61 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+
+- Norwegian-aware NER: a second spaCy model (`entities.spacy_model_nb`, e.g.
+  `nb_core_news_md`) handles Norwegian content. Items route to it when they
+  contain æ/ø/å or at least two distinctly Norwegian function words; other
+  content keeps using `entities.spacy_model`. Install with `yaams setup`.
+- `yaams entities vacuum`: deletes unreviewed NER entities that nothing
+  references anymore (no item links, tags, meta, relations, associations, or
+  promotion candidates). These pile up when a re-tag with a better model or
+  stricter filters stops linking old junk. Supports `--dry-run` and `--json`.
+- Expression index `idx_entities_canonical_lower` over the Unicode-aware
+  `lower()` (see Fixed), turning entity-name lookups from full scans into
+  seeks; a full `enrich retag` dropped from ~8 to ~3.5 minutes on a 61k-item
+  store.
+
+### Changed
+
+- NER input is sanitized before tagging: markdown links/images keep their
+  label but lose the target, raw URLs, e-mail addresses, and HTML tags are
+  stripped. Entities containing markup residue (`://`, `](`, quotes, etc.)
+  and 1-2 character fragments (except all-caps acronyms) are dropped.
+- The `_NOISE_WORDS` junk list moved from the CLI to
+  `yaams.enrich.entities.NOISE_WORDS` and is now applied **at tag time**, so
+  known false positives (function words, greetings, e-mail header tokens like
+  `cc`/`fwd`) never enter the entity table. Curated dictionary hits still
+  always win. The CLI `discover`/`suggest-prune` junk detector reuses the
+  same list.
+- All-lowercase NER org canonicals are capitalized (`google` -> `Google`) so
+  they fold into the properly-cased row instead of forking a duplicate.
+- The mail subject fallback for newsletter/automated detection now covers
+  Norwegian (`nyhetsbrev`, `avmeld`, `avregistrer`, `meld deg av`,
+  `ikke svar`, `skal ikke besvares`) in the owa-mail path.
+- The promotion draft prompt instructs the LLM to write title/statement/body
+  in the dominant language of the sources (Norwegian or English) instead of
+  drifting per draft; YAML keys and type values stay English.
+- NER models now load only the `tok2vec` + `ner` pipes (the tagger, parser,
+  lemmatizer etc. were dead weight since only `doc.ents` is consumed):
+  identical entity output, ~1.3-1.4x tagging throughput.
+- NER input normalization also folds exotic whitespace (nbsp, zero-width,
+  bidi marks) to plain spaces and strips emoji/pictographs, both of which
+  corrupt entity span boundaries ('Henrik\xa0Slettene', '🔹 Oppmøte').
+- Docs now recommend `en_core_web_md` over `xx_ent_wiki_sm` as the fallback
+  NER model for predominantly-English non-Norwegian content: on a 300-item
+  bench of real chat/mail the multilingual model found zero PERSON entities,
+  while `en_core_web_md` found 195. `xx_ent_wiki_sm` remains the shipped
+  default (it is the safe choice for arbitrary-language content).
+
+### Fixed
+
+- Entity de-duplication was ASCII-only: SQLite's built-in `lower()` does not
+  fold non-ASCII, so `HØYRE`/`Høyre` (and every other æ/ø/å name) forked into
+  separate entities. `db.open_db` now overrides SQL `lower()` with Python's
+  Unicode-aware `str.lower`, fixing every entity-name comparison in
+  store/retrieve/promote at once.
+
 ## [0.3.2] - 2026-06-02
 
 ### Changed

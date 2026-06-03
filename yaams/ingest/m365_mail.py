@@ -47,7 +47,10 @@ DEFAULT_FOLDERS = ("Inbox", "SentItems")
 DEFAULT_CHUNK_DAYS = 30
 
 _AUTOMATED_SUBJECT = re.compile(
-  r"(unsubscribe|newsletter|digest|weekly update|do not reply)",
+  r"(unsubscribe|newsletter|digest|weekly update|do not reply"
+  # Norwegian equivalents — most of the mailbox is Norwegian and the RFC
+  # headers are not always present on domestic senders
+  r"|nyhetsbrev|avmeld|avregistrer|meld deg av|ikke svar|skal ikke besvares)",
   re.IGNORECASE,
 )
 

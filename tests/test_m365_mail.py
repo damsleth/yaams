@@ -81,6 +81,15 @@ def test_is_owa_newsletter_detects_subject_keywords():
   assert not _is_owa_newsletter(_message(subject="Lunch tomorrow?"))
 
 
+def test_is_owa_newsletter_detects_norwegian_subjects():
+  assert _is_owa_newsletter(_message(subject="Nyhetsbrev uke 23 – Røde Kors"))
+  assert _is_owa_newsletter(_message(subject="IKKE SVAR: kvittering"))
+  assert _is_owa_newsletter(_message(subject="Denne e-posten skal ikke besvares"))
+  assert _is_owa_newsletter(_message(subject="Klikk her for å avmelde deg"))
+  assert not _is_owa_newsletter(_message(subject="Lunsj i morgen?"))
+  assert not _is_owa_newsletter(_message(subject="Referat fra lokalrådsmøtet"))
+
+
 def test_is_owa_newsletter_detects_list_unsubscribe_header():
   msg = _message(
     subject="Quarterly report",

@@ -139,6 +139,9 @@ synth:
 
 entities:
   spacy_model: xx_ent_wiki_sm
+  # Optional Norwegian-trained NER model; Norwegian-looking content routes to
+  # it instead. Uncomment and run `yaams setup` to install.
+  # spacy_model_nb: nb_core_news_md
   # The entity dictionary (curated names + aliases used for tagging) lives in
   # its own JSON file, not inline here — keeping a growing data list out of
   # this hand-edited config. A relative path is resolved next to data.db; this

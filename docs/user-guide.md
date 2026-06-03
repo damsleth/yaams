@@ -128,6 +128,9 @@ synth:
 
 entities:
   spacy_model: xx_ent_wiki_sm
+  # Optional Norwegian-trained model; content with æ/ø/å or common Norwegian
+  # function words routes here. Install with `yaams setup`.
+  # spacy_model_nb: nb_core_news_md
   dictionary:
     - canonical: Example Org
       type: org
@@ -337,6 +340,23 @@ promotion clustering. There are two populations:
 
 The curation tools turn the messy NER population into a clean graph.
 
+Two things keep the NER population manageable at the source. First, tagging
+sanitizes its input (URLs, markdown link targets, HTML are stripped) and
+drops known false positives — function words, greetings, e-mail header
+tokens, markup residue, 1-2 character fragments — before they ever become
+entities. Curated dictionary entries always win over these filters. Second,
+if your data is partly Norwegian, set `entities.spacy_model_nb`: the
+multilingual default is markedly noisier on Norwegian text, and the
+dedicated model both finds real people/orgs the default misses and stops
+inventing entities out of words like *ikke* and *til*. `nb_core_news_md` is
+the sweet spot; `nb_core_news_lg` adds a couple of F-points and slightly
+better multi-word person names at the same speed, if disk is no concern.
+Third, if your non-Norwegian content is predominantly English, set
+`spacy_model: en_core_web_md` — the multilingual `xx_ent_wiki_sm` is
+trained on Wikipedia and performs poorly on chat/mail (it can miss persons
+entirely). Run `yaams setup` after changing models, then
+`yaams enrich retag` to re-tag history.
+
 ### See what you have
 
 ```bash
@@ -428,6 +448,18 @@ command. `prune` is the destructive step: it marks the entities denied,
 strips their links and derived data, and removes them from the config
 dictionary so re-ingest can't revive them.
 
+### Vacuum orphaned NER entities
+
+```bash
+yaams entities vacuum --dry-run      # count what would go
+yaams entities vacuum                # delete
+```
+
+After a re-tag with a better model or stricter filters, old NER junk often
+ends up with zero references — no item links, tags, attributes, relations,
+associations, or promotion candidates. `vacuum` deletes exactly those rows.
+Curated and denied entities are never touched, so prune decisions stick.
+
 ### Add structure with tags and attributes
 
 ```bash
@@ -454,7 +486,8 @@ A good periodic cleanup, safest first:
 yaams entities normalize          # 1. auto-merge punctuation variants
 yaams entities suggest-merges     # 2. review and merge real duplicates
 yaams entities suggest-prune      # 3. review junk, then prune
-yaams entities discover           # 4. promote good NER candidates
+yaams entities vacuum             # 4. drop orphaned NER leftovers
+yaams entities discover           # 5. promote good NER candidates
 ```
 
 ---

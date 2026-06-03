@@ -75,7 +75,7 @@ Full spec: `.plans/yaams_architecture.md`, `.plans/yaams_phase_a_ingest.md`, `.p
 - Python 3.11+
 - SQLite (single file) + `sqlite-vec` extension + FTS5
 - Embeddings: `bge-m3` via `sentence-transformers` (multilingual, handles Norwegian)
-- NER: spaCy `xx_ent_wiki_sm` + dictionary-based entity resolution
+- NER: spaCy, two models routed by content language — fallback `entities.spacy_model` (shipped default `xx_ent_wiki_sm`; use `en_core_web_md` for mostly-English data) + optional Norwegian `entities.spacy_model_nb` (`nb_core_news_md`/`lg`) — plus dictionary-based entity resolution. Models load NER-only pipes.
 - CLI: `click`, config in YAML
 - Tests: `pytest`
 
@@ -138,6 +138,12 @@ Other agents may be working in this repo at the same time as you - running A/B t
 - Default to no comments. Only add one when the why is non-obvious.
 - Match the language the user initiates in. The dictionary, NER, and embeddings handle both Norwegian and English; assume mixed-language content throughout.
 - Research before editing. Never change code you haven't read.
+- **Update `CHANGELOG.md` and the docs with every meaningful change.** Add an
+  entry under `[Unreleased]` (Keep a Changelog categories: Added / Changed /
+  Fixed / Removed) in the same commit as the change, and update whatever
+  `docs/` pages and `config.yaml.example` describe the behavior you touched
+  (`docs/user-guide.md` for anything user-facing). A change without a
+  changelog entry and current docs is not done.
 
 ## Quick start for a new agent in this repo
 

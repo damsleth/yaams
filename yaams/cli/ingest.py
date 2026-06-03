@@ -243,6 +243,7 @@ def ingest(
       run_stats[src]["skipped_system"] = source_stats.get("skipped_system", 0)
       run_stats[src]["skipped_empty"] = source_stats.get("skipped_empty", 0)
       run_stats[src]["skipped_no_timestamp"] = source_stats.get("skipped_no_timestamp", 0)
+      run_stats[src]["rate_limit_retries"] = source_stats.get("rate_limit_retries", 0)
       run_stats[src]["decoded_attributed_body"] = source_stats[
         "decoded_attributed_body"
       ]
@@ -486,6 +487,7 @@ def ingest_source(
     "skipped_system": int(getattr(adapter, "skipped_system", 0)),
     "skipped_empty": int(getattr(adapter, "skipped_empty", 0)),
     "skipped_no_timestamp": int(getattr(adapter, "skipped_no_timestamp", 0)),
+    "rate_limit_retries": int(getattr(adapter, "rate_limit_retries", 0)),
     "decoded_attributed_body": int(getattr(adapter, "decoded_attributed_body", 0)),
     "skipped_attributed_body": int(getattr(adapter, "skipped_attributed_body", 0)),
     "since": since.isoformat(),
@@ -987,6 +989,12 @@ def _print_source_diagnostics(source: str, stats: dict[str, object]) -> None:
       click.echo(
         f"    skipped teams details: {skipped_bots:,} bots/automated, "
         f"{skipped_system:,} system events, {skipped_empty:,} empty/deleted"
+      )
+    rate_limit_retries = int(stats.get("rate_limit_retries", 0))
+    if rate_limit_retries:
+      click.echo(
+        f"    rate limiting: {rate_limit_retries:,} 429 backoff retries "
+        "(consider trimming the teams allowlist or lowering limit_pages)"
       )
   if source.startswith("mail_"):
     skipped_news = int(stats.get("skipped_newsletters", 0))

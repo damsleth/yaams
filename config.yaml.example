@@ -114,7 +114,16 @@ synth:
   backend: dummy
 
 entities:
+  # xx_ent_wiki_sm is the safe default for arbitrary-language content, but it
+  # is wiki-trained and weak on chat/mail. If your non-Norwegian content is
+  # predominantly English, prefer: spacy_model: en_core_web_md
   spacy_model: xx_ent_wiki_sm
+  # Optional second model for Norwegian content (trained on NorNE; far less
+  # noisy than the multilingual model on Norwegian text). Content is routed
+  # to it when it contains æ/ø/å or common Norwegian function words.
+  # md is the sweet spot; lg adds a little accuracy if disk is no concern.
+  # Install with `yaams setup` after configuring.
+  # spacy_model_nb: nb_core_news_md
   dictionary:
     # Known people, places, projects, and aliases for entity tagging.
     # Surface form on the left, casual variants under aliases.

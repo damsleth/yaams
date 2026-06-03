@@ -34,6 +34,8 @@ body: |
 
 Valid types: fact, preference, concept, goal.
 Only include what is directly supported by the sources. Be specific and concise.
+Write title, statement and body in the dominant language of the sources
+(Norwegian or English). Keep the YAML keys and type values in English.
 
 SOURCES:
 {sources}

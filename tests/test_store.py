@@ -186,3 +186,60 @@ def test_ner_entities_are_pending_review(tmp_path):
     ("Novel Org",),
   ).fetchone()
   assert row["pending_review"] == 1
+
+
+def test_upsert_entity_folds_unicode_case(tmp_path):
+  """SQLite's native lower() is ASCII-only; the override in open_db must
+  make 'HØYRE' and 'Høyre' resolve to the same entity row."""
+  from yaams.store import resolve_entity_id, upsert_entity
+
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+
+  with conn:
+    first = upsert_entity(conn, "Høyre", "org", "ner")
+    second = upsert_entity(conn, "HØYRE", "org", "ner")
+
+  assert first == second
+  assert resolve_entity_id(conn, "høyre") == first
+  # canonical keeps the first-seen surface form for NER-sourced entities
+  row = conn.execute(
+    "SELECT canonical_name FROM entities WHERE id = ?", (first,)
+  ).fetchone()
+  assert row["canonical_name"] == "Høyre"
+
+
+def test_vacuum_orphan_entities_spares_curated_denied_and_linked(tmp_path):
+  from yaams.store import upsert_entity, vacuum_orphan_entities
+
+  conn = open_db(tmp_path / "yaams.db")
+  init_schema(conn, use_vec=False)
+
+  with conn:
+    orphan = upsert_entity(conn, "Junk Fragment", "org", "ner")
+    curated = upsert_entity(conn, "Norconsult", "org", "dictionary")
+    linked = upsert_entity(conn, "Bærum", "place", "ner")
+    denied = upsert_entity(conn, "Hei", "place", "ner")
+    conn.execute("UPDATE entities SET pending_review = 2 WHERE id = ?", (denied,))
+    conn.execute(
+      """INSERT INTO items
+           (id, source, source_id, timestamp, sender, recipients, content,
+            ingested_at)
+         VALUES ('item-1', 'test', 'sid-1', '2025-01-01T00:00:00+00:00',
+                 'a@b.c', '[]', 'x', '2025-01-01T00:00:00+00:00')""",
+    )
+    conn.execute(
+      "INSERT INTO item_entities (item_id, entity_id) VALUES ('item-1', ?)",
+      (linked,),
+    )
+
+  dry = vacuum_orphan_entities(conn, dry_run=True)
+  assert dry == {"deleted": 0, "orphans": 1}
+
+  result = vacuum_orphan_entities(conn)
+  assert result == {"deleted": 1, "orphans": 1}
+  remaining = {
+    r["id"] for r in conn.execute("SELECT id FROM entities").fetchall()
+  }
+  assert remaining == {curated, linked, denied}
+  assert orphan not in remaining

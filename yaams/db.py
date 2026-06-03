@@ -22,6 +22,16 @@ def open_db(
     conn = sqlite3.connect(path)
 
   conn.row_factory = sqlite3.Row
+  # SQLite's built-in lower() only folds ASCII, so 'SÅ' and 'Så' compare as
+  # different entity names. Override it with Python's Unicode-aware lower()
+  # (deterministic, so it can back the idx_entities_canonical_lower
+  # expression index). str.lower (not casefold) to stay in lockstep with the
+  # Python-side .lower() comparisons throughout retrieve/ and cli/.
+  conn.create_function(
+    "lower", 1,
+    lambda s: s.lower() if isinstance(s, str) else s,
+    deterministic=True,
+  )
   conn.execute("PRAGMA foreign_keys = ON")
   if not readonly:
     conn.execute("PRAGMA journal_mode = WAL")

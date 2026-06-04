@@ -127,6 +127,17 @@ def run_doctor(config_path: str | None = None) -> DoctorPayload:
       # MUST NOT do.
     }
 
+  # --- Synth backend ------------------------------------------------------
+  synth_cfg = cfg.get("synth") or {}
+  synth_backend = (synth_cfg.get("backend") or "dummy").strip().lower()
+  if synth_backend == "dummy":
+    payload.findings.append(DoctorFinding(
+      id="synth_backend_dummy",
+      severity="warning",
+      message="LLM backend is 'dummy' — promote generate and query --answer will not work",
+      hint="Set synth.backend in config.yaml (claude, ollama, subprocess, ...)",
+    ))
+
   # --- Redaction sentinel smoke test -------------------------------------
   try:
     from yaams.conventions import redact

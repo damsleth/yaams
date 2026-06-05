@@ -1,9 +1,10 @@
-# Scheduling YAAMS ingestion
+# Scheduling YAAMS refresh
 
-YAAMS ingestion is run nightly via a launchd agent. The agent invokes a single
-`yaams ingest` command (no `--source` flag), which iterates every enabled source
-in one pass. All sources share one schedule by design - alignment is not a
-matter of multiple jobs but of one job that runs every adapter sequentially.
+YAAMS is refreshed nightly via a launchd agent. The agent invokes a single
+`yaams refresh` command, which runs ingest for every enabled source and then
+safe maintenance (`entities normalize`, `entities vacuum`, association
+rebuild). All sources share one schedule by design - alignment is not a matter
+of multiple jobs but of one job that runs every adapter and cleanup step.
 
 ## launchd plist
 
@@ -18,7 +19,7 @@ cp scripts/local.yaams.ingest.plist.example \
 launchctl load ~/Library/LaunchAgents/local.yaams.ingest.plist
 ```
 
-The agent runs `yaams ingest` at 02:00 daily. Logs:
+The agent runs `yaams refresh` at 02:00 daily. Logs:
 
 - stdout: `~/Library/Logs/yaams/ingest.log`
 - stderr: `~/Library/Logs/yaams/ingest.err`
@@ -76,8 +77,8 @@ be re-granted to the new binary.
 
 ## Verifying alignment
 
-The `ingest_runs` table records one row per (run_id, source) and exposes timing
-and status across the whole nightly run:
+The `ingest_runs` table still records one row per (run_id, source) and exposes
+timing and status for the ingest portion of the nightly refresh:
 
 ```sql
 SELECT

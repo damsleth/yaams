@@ -74,14 +74,15 @@ through `pending_review`.
 ## CLI surface
 
 `init` / `init-db` / `setup` / `reset-db` / `stats` / `version`, plus
-`ingest`, `query`, `feedback`, `signals`, `consolidate`,
+`ingest`, `refresh`, `curate`, `query`, `feedback`, `signals`, `consolidate`,
 `promote {generate,list,review}`, `entities {list,add,remove,discover,denied,manage}`,
-`enrich retag`, `sources` (TUI), and `doctor`. All commands emit
-byte-identical JSON envelopes under the hugr CLI contract.
+`enrich retag`, `sources` (TUI), and `doctor`. Machine-capable action
+commands emit byte-identical JSON envelopes under the hugr CLI contract;
+interactive commands reject `--json` with an actionable error.
 
 ## Operations
 
-- `launchd` scheduling for unattended nightly ingest (see
+- `launchd` scheduling for unattended nightly refresh (see
   [scheduling.md](scheduling.md))
 - `doctor` for environment and config diagnostics
 - Homebrew tap and PyPI/pipx distribution

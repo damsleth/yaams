@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template LaunchAgent for nightly YAAMS ingest.
+  Template LaunchAgent for nightly YAAMS refresh.
 
   1. Copy this file to ~/Library/LaunchAgents/local.yaams.ingest.plist
   2. Replace every "__USER__" with your macOS username (`whoami`).
@@ -21,7 +21,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/Users/__USER__/.local/bin/yaams</string>
-    <string>ingest</string>
+    <string>refresh</string>
   </array>
 
   <key>WorkingDirectory</key>

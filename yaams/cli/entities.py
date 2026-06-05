@@ -17,6 +17,7 @@ from yaams.conventions import (
   emit_data_error,
 )
 from yaams.db import open_db
+from yaams.enrich.entities import NOISE_WORDS as _NOISE_WORDS
 from yaams.entities_store import save_dictionary
 from yaams.people_import import (
   fetch_people,
@@ -39,12 +40,6 @@ from yaams.store import (
   set_entity_meta,
   vacuum_orphan_entities,
 )
-
-# Function words, greetings and time terms that NER routinely mis-tags as
-# entities. Lives in yaams.enrich.entities so the tagger can also drop them
-# at tag time; reused here by `discover` (skip as candidates) and the junk
-# detector.
-from yaams.enrich.entities import NOISE_WORDS as _NOISE_WORDS
 
 
 def _junk_reasons(name: str) -> list[str]:
@@ -118,6 +113,34 @@ def _save_entities(config_path: str | None, entities_cfg: dict) -> None:
   """
   cfg = load_config(config_path)
   save_dictionary(cfg, list(entities_cfg.get("dictionary") or []))
+
+
+def _add_or_update_dictionary_entry(
+  dictionary: list[dict],
+  canonical: str,
+  etype: str,
+  aliases: list[str],
+) -> tuple[list[dict], bool]:
+  out = [dict(entry) for entry in dictionary]
+  key = canonical.lower()
+  for entry in out:
+    if str(entry.get("canonical", "")).lower() != key:
+      continue
+    entry.setdefault("type", etype)
+    entry["aliases"] = _dedupe_ci(
+      list(entry.get("aliases") or []) + aliases,
+      exclude={canonical.casefold()},
+    )
+    if not entry["aliases"]:
+      entry.pop("aliases", None)
+    return out, False
+
+  entry: dict = {"canonical": canonical, "type": etype}
+  cleaned_aliases = _dedupe_ci(aliases, exclude={canonical.casefold()})
+  if cleaned_aliases:
+    entry["aliases"] = cleaned_aliases
+  out.append(entry)
+  return out, True
 
 
 @cli.group("entities")
@@ -427,7 +450,7 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
 
     rows = conn.execute(
       """
-      SELECT e.canonical_name, e.entity_type, count(*) AS cnt
+      SELECT e.id, e.canonical_name, e.entity_type, count(*) AS cnt
       FROM item_entities ie
       JOIN entities e ON e.id = ie.entity_id
       WHERE ie.source = 'ner'
@@ -456,6 +479,7 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
     click.echo(f"Found {len(candidates)} candidates.  [a]ccept  [e]dit  [d]eny  [q]uit\n")
 
     for i, row in enumerate(candidates, 1):
+      original_id = row["id"]
       canonical = row["canonical_name"]
       etype = row["entity_type"]
       cnt = row["cnt"]
@@ -466,11 +490,11 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
         FROM item_entities ie
         JOIN entities e ON e.id = ie.entity_id
         JOIN items i ON i.id = ie.item_id
-        WHERE e.canonical_name = ? AND ie.source = 'ner'
+        WHERE e.id = ? AND ie.source = 'ner'
         ORDER BY i.timestamp DESC
         LIMIT 2
         """,
-        (canonical,),
+        (original_id,),
       ).fetchall()
 
       click.echo(f"[{i}/{len(candidates)}] {canonical!r}  type={etype}  appearances={cnt}")
@@ -490,9 +514,9 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
             conn.execute(
               """
               UPDATE entities SET pending_review = 2
-              WHERE lower(canonical_name) = lower(?)
+              WHERE id = ?
               """,
-              (canonical,),
+              (original_id,),
             )
           break
 
@@ -508,21 +532,24 @@ def entities_discover(config_path: str, min_count: int, limit: int, as_json: boo
 
           entities_cfg = dict(cfg.get("entities") or {})
           dictionary = list(entities_cfg.get("dictionary") or [])
-          if any(e["canonical"].lower() == new_canonical.lower() for e in dictionary):
-            click.echo(f"  '{new_canonical}' already in dictionary.")
-            break
-          entry: dict = {"canonical": new_canonical, "type": new_type}
-          if aliases:
-            entry["aliases"] = aliases
-          dictionary.append(entry)
+          merge_aliases = list(aliases)
+          if canonical.lower() != new_canonical.lower():
+            merge_aliases.append(canonical)
+          dictionary, added = _add_or_update_dictionary_entry(
+            dictionary, new_canonical, new_type, merge_aliases
+          )
           entities_cfg["dictionary"] = dictionary
           _save_entities(config_path, entities_cfg)
           cfg = load_config(config_path)
           known.add(new_canonical.lower())
           d = cfg.get("entities", {}).get("dictionary", [])
           seed_entities(conn, d)
+          target_id = resolve_entity_id(conn, new_canonical)
+          if target_id is not None and target_id != original_id:
+            merge_entities(conn, target_id, [original_id])
           backfill_entity_sources(conn, d)
-          click.echo(f"  Added '{new_canonical}'.")
+          verb = "Added" if added else "Updated"
+          click.echo(f"  {verb} '{new_canonical}'.")
           break
 
         click.echo("  Use a, e, d, or q.")

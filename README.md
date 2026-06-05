@@ -118,15 +118,16 @@ yaams stats              # zero items - that is expected before first ingest
 yaams ingest --dry-run   # see what each adapter would pick up
 ```
 
-Then do a real ingest:
+Then do a real refresh:
 
 ```bash
-yaams ingest
+yaams refresh
 ```
 
 The first run downloads the embedding model (`BAAI/bge-m3`, ~2GB). YAAMS
 will prompt before downloading; after the cache is populated, subsequent
-runs are fully offline.
+runs are fully offline. `refresh` runs ingest, then safe entity maintenance
+and association rebuilds.
 
 Ask a question:
 
@@ -152,6 +153,8 @@ workflow, query flags, and best practices — see the
 | --- | --- |
 | `init-db` | create the SQLite schema (idempotent) |
 | `ingest` | run ingest for all enabled sources (or `--source <name>`) |
+| `refresh` | run ingest plus safe entity maintenance and association rebuild |
+| `curate` | run the human entity curation workflow |
 | `stats` | print item counts per source, plus last ingest run timing |
 | `query` | full-text + vector search; `--answer` for synthesized response |
 | `feedback` | log relevance signals against a prior query result |

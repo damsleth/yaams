@@ -12,6 +12,13 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- `yaams refresh`: unattended routine workflow that runs ingest, then safe
+  entity maintenance (dictionary seed/backfill and de-dupe, punctuation
+  normalization, orphan vacuum) plus learned association rebuild. Supports
+  `--skip-ingest`, `--skip-assoc`, `--dry-run`, and `--json`.
+- `yaams curate`: human entity curation workflow. It runs safe maintenance,
+  prints merge and prune suggestions, then enters interactive dedupe/discover
+  only when attached to a real terminal.
 - Language detection at ingest: every new item gets `items.lang` set to `"no"`
   or `"en"` based on the existing Norwegian heuristic (æ/ø/å characters plus
   function-word backstop). Items whose content is shorter than 10 characters
@@ -37,6 +44,9 @@ surface; pin to a specific version if you need stability.
 
 ### Changed
 
+- The launchd template now runs `yaams refresh` nightly instead of raw
+  `yaams ingest`, so scheduled runs also perform safe entity cleanup and
+  rebuild associations.
 - NER input is sanitized before tagging: markdown links/images keep their
   label but lose the target, raw URLs, e-mail addresses, and HTML tags are
   stripped. Entities containing markup residue (`://`, `](`, quotes, etc.)
@@ -69,6 +79,10 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- `yaams entities discover` now treats an edited candidate as a merge into the
+  saved canonical entity. The original NER row is deleted, existing item links
+  are repointed and marked as dictionary-sourced, and the old surface is kept
+  as an alias so the same candidate does not reappear on the next review pass.
 - Entity de-duplication was ASCII-only: SQLite's built-in `lower()` does not
   fold non-ASCII, so `HØYRE`/`Høyre` (and every other æ/ø/å name) forked into
   separate entities. `db.open_db` now overrides SQL `lower()` with Python's

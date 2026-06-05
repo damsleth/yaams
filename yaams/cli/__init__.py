@@ -10,6 +10,7 @@ from yaams.cli import (  # noqa: F401
   review,
   signals,
   sources,
+  workflows,
 )
 from yaams.cli import consolidate as _consolidate_mod  # noqa: F401
 from yaams.cli import ingest as _ingest_mod  # noqa: F401

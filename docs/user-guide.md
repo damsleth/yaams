@@ -65,19 +65,22 @@ In day-to-day terms:
 
 1. **`ingest`** pulls new items from each enabled source (incremental, via
    watermarks), normalizes them, embeds them, and tags entities.
-2. **`query`** does hybrid retrieval (full-text + vector) and fuses the
+2. **`refresh`** is the unattended daily wrapper: ingest, then safe entity
+   maintenance (`normalize`, `vacuum`) and association rebuild.
+3. **`query`** does hybrid retrieval (full-text + vector) and fuses the
    results, optionally synthesizing a cited answer.
-3. **`entities` / `assoc`** let you curate the entity graph so retrieval gets
+4. **`entities` / `assoc`** let you curate the entity graph so retrieval gets
    sharper over time.
-4. **`consolidate`** groups chatty items into sessions so a single
+5. **`curate`** runs the human entity curation flow: safe cleanup, merge
+   suggestions, prune suggestions, then interactive dedupe/discover in a TTY.
+6. **`consolidate`** groups chatty items into sessions so a single
    conversation surfaces as one result.
-5. **`feedback` / `review`** capture relevance signals to measure and improve
+7. **`feedback` / `review`** capture relevance signals to measure and improve
    retrieval quality.
-6. **`promote`** lifts the gems into your Tier 2 ledger.
+8. **`promote`** lifts the gems into your Tier 2 ledger.
 
-A typical rhythm: ingest runs nightly and unattended; you query ad hoc; you
-curate entities occasionally; you promote when you have something worth
-keeping.
+A typical rhythm: `refresh` runs nightly and unattended; you query ad hoc; you
+run `curate` occasionally; you promote when you have something worth keeping.
 
 ---
 
@@ -167,6 +170,7 @@ yaams init-db              # create the schema (idempotent)
 yaams ingest --dry-run     # see what each adapter would pick up
 yaams ingest               # the real thing
 yaams ingest --source imessage   # one source only
+yaams refresh              # ingest + safe maintenance + associations
 ```
 
 ### Sources
@@ -205,6 +209,20 @@ Useful flags:
   partial-success (exit 5). Good for scripts and CI.
 - `--json` — NDJSON progress plus a final action envelope, for automation.
 - `-v` / `--verbose` — stream DEBUG logs to stderr.
+
+### Refresh
+
+For routine unattended runs, prefer:
+
+```bash
+yaams refresh
+```
+
+`refresh` runs `ingest`, then safe maintenance: dictionary seed/backfill,
+entity dictionary de-dupe, `entities normalize`, `entities vacuum`, and
+`assoc build`. It does not run judgment-heavy steps like `prune`, arbitrary
+`merge`, or `discover`. Use `--skip-ingest` to run only maintenance, and
+`--json` for a single action envelope.
 
 ### Unattended scheduling
 
@@ -382,6 +400,11 @@ skipping obvious noise (stopwords, fragments). `add` seeds the DB
 immediately and writes the entity to your config dictionary so it survives
 re-ingest.
 
+When you choose `edit` in `discover` and save a different canonical name,
+YAAMS treats that as a merge of the reviewed NER candidate. Existing item
+links move to the saved entity, the old NER surface is recorded as an alias,
+and the original candidate will not show up for review again.
+
 ### Import people from Microsoft 365
 
 Bootstrap the dictionary from your org instead of typing colleagues in by
@@ -488,12 +511,19 @@ yaams entities manage      # curses TUI for the whole dictionary
 A good periodic cleanup, safest first:
 
 ```bash
+yaams curate                    # orchestrated pass
+
+# equivalent primitives:
 yaams entities normalize          # 1. auto-merge punctuation variants
 yaams entities suggest-merges     # 2. review and merge real duplicates
 yaams entities suggest-prune      # 3. review junk, then prune
 yaams entities vacuum             # 4. drop orphaned NER leftovers
 yaams entities discover           # 5. promote good NER candidates
 ```
+
+`curate` runs the safe steps automatically, prints merge and prune
+suggestions, and enters interactive `dedupe` / `discover` only when stdin and
+stdout are a real terminal. It never prunes entities automatically.
 
 ---
 
@@ -629,14 +659,15 @@ somewhere safe periodically — and keep the host's full-disk encryption on.
 - **Configure a real `synth.backend` early.** It unlocks both synthesized
   answers and the smart query parser. On `dummy`, you're running a much
   dumber YAAMS than the one you installed.
-- **Let ingest run nightly and unattended.** It's incremental and idempotent,
-  so there's no cost to frequent runs and no risk of duplicates. Set up the
-  `launchd` agent ([scheduling.md](scheduling.md)).
-- **Curate entities periodically, safest-first:** `normalize` →
-  `suggest-merges`/`merge` → `suggest-prune`/`prune` → `discover`. A clean
-  entity graph makes synonym expansion, tagging, and associations pay off.
-- **Rebuild associations after big changes.** `assoc build` after a large
-  ingest or merge pass keeps `--assoc` queries accurate.
+- **Let `refresh` run nightly and unattended.** It's incremental and
+  idempotent, and it also runs safe entity maintenance plus association
+  rebuilds. Set up the `launchd` agent ([scheduling.md](scheduling.md)).
+- **Run `curate` periodically.** It keeps human judgment in the loop for
+  merges, pruning, and discovery. A clean entity graph makes synonym
+  expansion, tagging, and associations pay off.
+- **Rebuild associations after manual big changes.** `refresh` and `curate`
+  do this for their own runs; use `assoc build` after separate large merge
+  passes.
 - **Re-consolidate after large ingests** so new conversational items fold
   into sessions.
 - **Use the fast path when you know it's exact.** `query --no-vector` skips

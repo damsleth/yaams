@@ -12,6 +12,16 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Language detection at ingest: every new item gets `items.lang` set to `"no"`
+  or `"en"` based on the existing Norwegian heuristic (æ/ø/å characters plus
+  function-word backstop). Items whose content is shorter than 10 characters
+  are left as `NULL`. Existing stores can be backfilled with `yaams backfill-lang`.
+- `yaams backfill-lang`: one-off command to populate `items.lang` for items
+  ingested before this release. Processes rows in `id`-order batches so it
+  always makes forward progress even when content is too short to detect.
+- `yaams query --lang no|en`: hard-restricts retrieval to items (and
+  consolidations whose constituent items) in the given language.
+
 - Norwegian-aware NER: a second spaCy model (`entities.spacy_model_nb`, e.g.
   `nb_core_news_md`) handles Norwegian content. Items route to it when they
   contain æ/ø/å or at least two distinctly Norwegian function words; other

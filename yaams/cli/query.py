@@ -202,6 +202,13 @@ def _resolve_source_filter(
 @click.option("--explain", is_flag=True, help="Print the parsed query JSON before results")
 @click.option("--high-quality", is_flag=True, help="Force synthesis-grade depth (bumps top_k, future rerank hook)")
 @click.option(
+  "--lang",
+  "lang_filter",
+  type=click.Choice(["no", "en"]),
+  default=None,
+  help="Restrict results to items in this language (no=Norwegian, en=English).",
+)
+@click.option(
   "--prompt/--no-prompt",
   "feedback_prompt",
   default=None,
@@ -232,6 +239,7 @@ def query_cmd(
   no_parse: bool,
   explain: bool,
   high_quality: bool,
+  lang_filter: str | None,
   feedback_prompt: bool | None,
 ) -> None:
   # --json and --pretty are aliases for --format. Last-one-wins by
@@ -298,6 +306,7 @@ def query_cmd(
         sort=sort_map[sort] if sort else "relevance",
         include_consolidations=not no_consolidations,
         expand_synonyms=not no_synonyms,
+        lang_filter=lang_filter,
       )
       if parsed is not None:
         qcfg = route_parsed(

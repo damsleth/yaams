@@ -57,6 +57,7 @@ class HybridQueryConfig:
   # score multiplied by boost_factor (does not filter the candidate set).
   boost_entities: list[str] | None = None
   boost_factor: float = 1.5
+  lang_filter: str | None = None
 
 
 @dataclass
@@ -289,11 +290,12 @@ def _fts_search_items(
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
+      AND (? IS NULL OR items.lang = ?)
       AND items.consolidated_into IS NULL
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg) + (cfg.per_index_k,),
+    _filter_params(match, cfg) + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["score"]))
@@ -318,10 +320,13 @@ def _fts_search_consolidations(
       AND (? = '' OR consolidations.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR consolidations.start_timestamp >= ?)
       AND (? IS NULL OR consolidations.end_timestamp <= ?)
+      AND (? IS NULL OR EXISTS (
+            SELECT 1 FROM items i, json_each(consolidations.raw_item_ids) j
+            WHERE i.id = j.value AND i.lang = ?))
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg) + (cfg.per_index_k,),
+    _filter_params(match, cfg) + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
   ).fetchall()
   return [
     ("consolidation", row["id"], rank, float(row["score"]))
@@ -345,10 +350,11 @@ def _vec_search_items(
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
+      AND (? IS NULL OR items.lang = ?)
       AND items.consolidated_into IS NULL
     ORDER BY distance
     """,
-    (blob, cfg.per_index_k) + _vec_filter_params(cfg),
+    (blob, cfg.per_index_k) + _vec_filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["distance"]))
@@ -372,9 +378,12 @@ def _vec_search_consolidations(
       AND (? = '' OR consolidations.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR consolidations.start_timestamp >= ?)
       AND (? IS NULL OR consolidations.end_timestamp <= ?)
+      AND (? IS NULL OR EXISTS (
+            SELECT 1 FROM items i, json_each(consolidations.raw_item_ids) j
+            WHERE i.id = j.value AND i.lang = ?))
     ORDER BY distance
     """,
-    (blob, cfg.per_index_k) + _vec_filter_params(cfg),
+    (blob, cfg.per_index_k) + _vec_filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter),
   ).fetchall()
   return [
     ("consolidation", row["id"], rank, float(row["distance"]))

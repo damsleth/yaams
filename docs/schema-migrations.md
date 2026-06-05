@@ -1,6 +1,13 @@
 # Schema Migration Policy
 
-YAAMS uses `PRAGMA user_version` as the schema version marker. The current schema version is `4`.
+YAAMS uses `PRAGMA user_version` as the schema version marker. The current schema version is `6` (`SCHEMA_VERSION` in `yaams/schema.py`).
+
+Version history:
+
+- v4 — structured query fields on `queries` (`parsed_query`, `shape`,
+  `confidence`, `confidence_reason`, `gaps`, `parser_fallback`).
+- v5 — entity association layer: `entity_assoc`, `entity_relations`.
+- v6 — entity metadata: `entity_tags`, `entity_meta`.
 
 ## Rules
 
@@ -16,16 +23,26 @@ YAAMS uses `PRAGMA user_version` as the schema version marker. The current schem
 - Source adapters must continue to produce stable `(source, source_id)` pairs.
 - When `SCHEMA_VERSION` is bumped, update this document in the same change.
 
-## Live Tables (schema version 4)
+## Live Tables (schema version 6)
 
 Phase A core:
 
-- `items`
+- `items` (note: the `lang` column has existed since Phase A; it is only
+  *populated* for items ingested at ≥ 0.4.0 or via `yaams backfill-lang`)
 - `items_vec`
 - `items_fts`
 - `entities`
 - `item_entities`
 - `watermarks`
+- `ingest_runs`
+
+Entity curation layer (v5/v6):
+
+- `entity_assoc` — learned co-occurrence (npmi), rebuilt in full by
+  `assoc build`
+- `entity_relations` — manual assoc links/suppressions
+- `entity_tags` — membership tags
+- `entity_meta` — key/value attributes, one value per `(entity_id, key)`
 
 Consolidation (Phase D):
 
@@ -50,8 +67,10 @@ Promotion (Phase E):
 
 `init_schema` (in `yaams/schema.py`) idempotently:
 
-1. Sets `PRAGMA user_version = 4`.
-2. Creates Phase A tables and FTS index with `CREATE TABLE IF NOT EXISTS` /
+1. Sets `PRAGMA user_version = SCHEMA_VERSION` (currently 6).
+2. Creates Phase A tables, the entity curation layer (`entity_assoc`,
+   `entity_relations`, `entity_tags`, `entity_meta`), `ingest_runs`,
+   and the FTS index with `CREATE TABLE IF NOT EXISTS` /
    `CREATE VIRTUAL TABLE IF NOT EXISTS`.
 3. Creates consolidation, queries, query_results, and query_feedback tables.
 4. Calls `_migrate_items_consolidated_into` - guards by inspecting

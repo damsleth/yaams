@@ -70,6 +70,13 @@ def _is_norwegian(text: str) -> bool:
   return len(_NB_STOPWORDS.intersection(words)) >= 2
 
 
+def detect_lang(text: str) -> str | None:
+  """Return ISO 639-1 language code for text, or None if text is too short."""
+  if len(text.strip()) < 10:
+    return None
+  return "no" if _is_norwegian(text) else "en"
+
+
 # Characters that never occur inside a legitimate entity name but are common
 # in half-stripped markup ("image](https://github.com", 'href="https://...').
 _ARTIFACT_CHARS = re.compile(r"[<>\[\](){}|`\"=/\\]|://|@")

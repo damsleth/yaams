@@ -5,6 +5,7 @@ import time
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -33,6 +34,7 @@ from yaams.conventions import (
   stream_result,
 )
 from yaams.db import open_db
+from yaams.enrich.entities import detect_lang
 from yaams.ingest import Adapter, Item
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.email_mbox import EmailAdapter
@@ -513,7 +515,11 @@ def process_batch(
   # this skips wasted work — and avoids loading the embedding model at all
   # when a run turns up nothing new.
   known = existing_ids(conn, [item.id for item in items])
-  new_items = [item for item in items if item.id not in known]
+  new_items = [
+    replace(item, lang=item.lang or detect_lang(item.content))
+    for item in items
+    if item.id not in known
+  ]
   if not new_items:
     return 0
   texts = [item.content for item in new_items]

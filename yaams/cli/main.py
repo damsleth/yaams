@@ -16,6 +16,7 @@ from yaams.conventions import (
   emit_action,
 )
 from yaams.db import open_db
+from yaams.enrich.entities import detect_lang
 from yaams.schema import init_schema
 from yaams.store import backfill_entity_sources, seed_entities
 
@@ -351,3 +352,47 @@ def reset_db(config_path: str, yes: bool, as_json: bool) -> None:
     ))
   else:
     click.echo(f"Removed database: {db_path}")
+
+
+@cli.command("backfill-lang")
+@config_option
+@click.option("--batch-size", default=500, show_default=True, type=int)
+@click.option("--json", "as_json", is_flag=True)
+def backfill_lang(config_path: str, batch_size: int, as_json: bool) -> None:
+  """Populate items.lang for rows where it is NULL."""
+  t0 = time.monotonic()
+  cfg = load_config(config_path)
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  try:
+    updated = 0
+    cursor = ""
+    while True:
+      rows = conn.execute(
+        "SELECT id, content FROM items WHERE lang IS NULL AND id > ? ORDER BY id LIMIT ?",
+        (cursor, batch_size),
+      ).fetchall()
+      if not rows:
+        break
+      for row in rows:
+        lang = detect_lang(row["content"] or "")
+        if lang is not None:
+          conn.execute("UPDATE items SET lang = ? WHERE id = ?", (lang, row["id"]))
+          updated += 1
+      conn.commit()
+      cursor = rows[-1]["id"]
+      if len(rows) < batch_size:
+        break
+  finally:
+    conn.close()
+
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="backfill-lang",
+      ok=True,
+      stats={"updated": updated},
+      duration_ms=duration_ms,
+    ))
+  else:
+    click.echo(f"Updated {updated} items with lang tag ({duration_ms:.0f}ms)")

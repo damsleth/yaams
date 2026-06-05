@@ -234,6 +234,8 @@ yaams query --source imessage --source teams_work "holiday plans"
 yaams query --tier ledger "principles I wrote down"      # only Tier 2 notes
 yaams query --since 2026-01-01 --until 2026-03-01 "Q1 planning"
 yaams query --no-consolidations "raw items only"
+yaams query --lang no "bare i norske meldinger"
+yaams query --lang en "english content only"
 ```
 
 - `--source` (repeatable) restricts to specific sources. `--source ledger` is
@@ -241,6 +243,9 @@ yaams query --no-consolidations "raw items only"
 - `--tier raw|ledger|both` restricts by tier. Explicit `--source` wins over
   `--tier`.
 - `--since` / `--until` take ISO timestamps.
+- `--lang no|en` restricts to items (and consolidations) in the given language.
+  Language is detected at ingest time; run `yaams backfill-lang` once to
+  populate existing items.
 
 ### Sorting
 

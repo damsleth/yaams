@@ -10,6 +10,8 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-05
+
 ### Added
 
 - `yaams refresh`: unattended routine workflow that runs ingest, then safe

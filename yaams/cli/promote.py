@@ -20,6 +20,50 @@ from yaams.db import open_db
 from yaams.schema import init_schema
 
 
+def _ledger_notes_dir() -> Path | None:
+  """Ask cogled where its notes live, via the stable `ledger paths` CLI
+  contract (never import cogled as a package). Returns None if cogled is not
+  installed or the path is unusable — callers degrade open."""
+  import shutil
+  import subprocess
+
+  exe = shutil.which("ledger")
+  if not exe:
+    return None
+  try:
+    out = subprocess.run(
+      [exe, "paths", "--field", "ledger_notes_dir"],
+      capture_output=True,
+      text=True,
+      timeout=10,
+    )
+  except Exception:
+    return None
+  if out.returncode != 0:
+    return None
+  val = out.stdout.strip()
+  if not val:
+    return None
+  notes_dir = Path(val).expanduser()
+  return notes_dir if notes_dir.is_dir() else None
+
+
+def _resolve_inbox_path(promote_cfg_raw: dict) -> Path:
+  """Resolve where promoted candidates are written.
+
+  1. explicit `promote.inbox_path` config wins (lets the user override);
+  2. else cogled's real inbox: `<ledger_notes_dir>/00_inbox` via `ledger paths`;
+  3. else the legacy `~/yaams/ledger-inbox` staging dir (cogled not installed).
+  """
+  explicit = promote_cfg_raw.get("inbox_path")
+  if explicit:
+    return expand_path(explicit)
+  notes_dir = _ledger_notes_dir()
+  if notes_dir is not None:
+    return notes_dir / "00_inbox"
+  return expand_path("~/yaams/ledger-inbox")
+
+
 @cli.group("promote")
 def promote_group() -> None:
   """Generate and review promotion candidates for the Tier 2 ledger."""
@@ -175,9 +219,7 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
   promote_cfg_raw = cfg.get("promote", {}) or {}
-  inbox_path = expand_path(
-    promote_cfg_raw.get("inbox_path", "~/yaams/ledger-inbox")
-  )
+  inbox_path = _resolve_inbox_path(promote_cfg_raw)
 
   conn = open_db(db_path)
   try:
@@ -188,6 +230,7 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
       click.echo("No candidates to review.")
       return
 
+    click.echo(f"Inbox: {inbox_path}")
     total = len(candidates)
     for i, c in enumerate(candidates, 1):
       click.echo(render_candidate(c, i, total))

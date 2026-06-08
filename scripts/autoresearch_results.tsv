@@ -1,3 +1,6 @@
 tag	mode	split	fitness	hit_rate	mrr_partial	p95_ms	regressions	status
 baseline-fts	fts	all	0.3228	0.3922	0.1611	86.5	0	ok
 baseline-hybrid	hybrid	all	0.3924	0.4706	0.2098	108.5	0	ok
+baseline-hybrid-dev	hybrid	dev	0.4112	0.4889	0.2299	103.7	0	ok
+baseline-fts-dev	fts	dev	0.3464	0.4	0.2212	57.6	0	ok
+rrf30-keep	hybrid	dev	0.4349	0.5333	0.2208	108.5	0	ok

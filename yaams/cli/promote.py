@@ -64,6 +64,34 @@ def _resolve_inbox_path(promote_cfg_raw: dict) -> Path:
   return expand_path("~/yaams/ledger-inbox")
 
 
+def _resolve_rejected_log_path(
+  tier2_cfg_raw: dict,
+  promote_cfg_raw: dict,
+  note_index_path: Path | None,
+) -> Path | None:
+  """Resolve cogled's `rejected_candidates.jsonl`, mirroring `note_index_path`.
+
+  1. explicit `ingest.tier2_ledger.rejected_log_path` or
+     `promote.rejected_log_path` config wins;
+  2. else its sibling next to a known `note_index_path` (same `08_indices` dir);
+  3. else derive `<ledger_notes_dir>/08_indices/rejected_candidates.jsonl`.
+
+  May be None (cogled not installed) → the rejection filter degrades open.
+  """
+  explicit = (
+    tier2_cfg_raw.get("rejected_log_path")
+    or promote_cfg_raw.get("rejected_log_path")
+  )
+  if explicit:
+    return expand_path(explicit)
+  if note_index_path is not None:
+    return note_index_path.expanduser().parent / "rejected_candidates.jsonl"
+  notes_dir = _ledger_notes_dir()
+  if notes_dir is not None:
+    return notes_dir / "08_indices" / "rejected_candidates.jsonl"
+  return None
+
+
 @cli.group("promote")
 def promote_group() -> None:
   """Generate and review promotion candidates for the Tier 2 ledger."""
@@ -100,16 +128,22 @@ def promote_generate(
       sys.exit(EXIT_USER_ERROR)
     raise
   promote_cfg_raw = cfg.get("promote", {}) or {}
+  tier2_cfg_raw = cfg.get("ingest", {}).get("tier2_ledger", {}) or {}
   raw_index_path = (
-    cfg.get("ingest", {}).get("tier2_ledger", {}).get("index_path")
+    tier2_cfg_raw.get("index_path")
     or promote_cfg_raw.get("note_index_path")
+  )
+  note_index_path = Path(raw_index_path) if raw_index_path else None
+  rejected_log_path = _resolve_rejected_log_path(
+    tier2_cfg_raw, promote_cfg_raw, note_index_path
   )
   pcfg = PromoteConfig(
     window_days=days or int(promote_cfg_raw.get("window_days", 90)),
     window_days_by_type=dict(promote_cfg_raw.get("window_days_by_type") or {"person": 365}),
     min_cluster_items=min_cluster or int(promote_cfg_raw.get("min_cluster_items", 3)),
     cluster_fetch_k=int(promote_cfg_raw.get("cluster_fetch_k", 10)),
-    note_index_path=Path(raw_index_path) if raw_index_path else None,
+    note_index_path=note_index_path,
+    rejected_log_path=rejected_log_path,
   )
   conn = open_db(db_path)
   try:

@@ -19,6 +19,8 @@ def _make_item(
   content: str = "hello world",
   ts: datetime | None = None,
   msg_id: str = "1",
+  recipients: list[str] | None = None,
+  timestamp_inferred: bool = False,
 ) -> Item:
   return Item(
     id=hash_id(source, f"{thread_id}:{msg_id}"),
@@ -26,10 +28,11 @@ def _make_item(
     source_id=f"{thread_id}:{msg_id}",
     timestamp=ts or datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
     sender=sender,
-    recipients=[],
+    recipients=recipients or [],
     content=content,
     subject="",
     thread_id=thread_id,
+    timestamp_inferred=timestamp_inferred,
   )
 
 
@@ -199,6 +202,78 @@ def test_sort_desc_orders_results_by_timestamp_desc():
   assert len(results) >= 2
   for a, b in zip(results, results[1:]):
     assert a.timestamp >= b.timestamp
+
+
+def test_recency_sort_excludes_inferred_timestamps():
+  # #1: an undated note stamped with a (recent) import mtime must not float to
+  # the top of a desc/recency sort. Relevance sort still includes it.
+  conn = _open_db()
+  base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+  real = _make_item(
+    source="teams_work", content="gamma-token real", ts=base, msg_id="1"
+  )
+  undated = _make_item(
+    source="notes",
+    content="gamma-token undated",
+    ts=base + timedelta(days=200),  # newer, but inferred
+    msg_id="2",
+    timestamp_inferred=True,
+  )
+  store_items(conn, [real, undated], [b"\x00" * 16] * 2, [[]] * 2)
+
+  desc = query(conn, "gamma-token", config=HybridQueryConfig(sort="desc", include_consolidations=False))
+  assert [r.id for r in desc] == [real.id]  # inferred excluded despite being newer
+
+  rel = query(conn, "gamma-token", config=HybridQueryConfig(sort="relevance", include_consolidations=False))
+  assert undated.id in {r.id for r in rel}  # still eligible on relevance
+
+
+def test_participant_filter_restricts_to_user_activity():
+  # #2: only items the user sent or received survive the participant filter.
+  conn = _open_db()
+  mine_sender = _make_item(
+    source="teams_work", sender="cdam@une.no", content="delta-token a", msg_id="1"
+  )
+  mine_recipient = _make_item(
+    source="teams_work",
+    sender="someone@else.test",
+    recipients=["Damsleth, Carl Joakim"],
+    content="delta-token b",
+    msg_id="2",
+  )
+  theirs = _make_item(
+    source="teams_work", sender="other@else.test", content="delta-token c", msg_id="3"
+  )
+  store_items(conn, [mine_sender, mine_recipient, theirs], [b"\x00" * 16] * 3, [[]] * 3)
+
+  cfg = HybridQueryConfig(
+    participant_filter=["cdam@une.no", "Damsleth, Carl Joakim"],
+    include_consolidations=False,
+  )
+  results = query(conn, "delta-token", config=cfg)
+  ids = {r.id for r in results}
+  assert mine_sender.id in ids
+  assert mine_recipient.id in ids
+  assert theirs.id not in ids
+
+
+def test_relevance_floor_drops_weak_tail_before_timestamp_sort():
+  from yaams.retrieve.hybrid import HybridResult, _apply_relevance_floor
+
+  def _r(rid: str, score: float) -> HybridResult:
+    return HybridResult(
+      id=rid, kind="item", source="notes",
+      timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+      sender="me", subject="", content="", thread_id=None, score=score,
+    )
+
+  results = [_r("strong", 1.0), _r("mid", 0.5), _r("weak", 0.1)]
+  kept = {r.id for r in _apply_relevance_floor(results, 0.2)}
+  assert kept == {"strong", "mid"}  # weak (0.1 < 0.2*1.0) dropped
+
+  # floor 0 is a no-op; the top scorer always clears its own threshold.
+  assert len(_apply_relevance_floor(results, 0.0)) == 3
+  assert len(_apply_relevance_floor([_r("only", 0.4)], 0.9)) == 1
 
 
 def test_first_occurrence_picks_oldest_match_outside_relevance_window():

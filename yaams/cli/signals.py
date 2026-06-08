@@ -22,7 +22,7 @@ from yaams.signals import flush_session, log_feedback, noise_cascade, recent_que
 
 @cli.command("feedback")
 @click.argument("query_id")
-@click.argument("kind", type=click.Choice(["hit", "miss", "correction", "note", "noise"]))
+@click.argument("kind", type=click.Choice(["hit", "miss", "correction", "relevant", "thin", "note", "noise"]))
 @click.option("--result", "result_id", default=None, help="Result id this feedback targets (omit for query-level)")
 @click.option("--message", "-m", default=None, help="Free-text payload (e.g. \"expected X\" or correction details)")
 @click.option("--cascade/--no-cascade", default=True, show_default=True, help="For kind=noise, also mark every unjudged query with identical text.")

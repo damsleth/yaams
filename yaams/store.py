@@ -510,14 +510,15 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
     item.lang,
     json.dumps(item.raw_metadata, ensure_ascii=False),
     ensure_utc(item.ingested_at).isoformat(),
+    1 if item.timestamp_inferred else 0,
   )
   if exists is None:
     conn.execute(
       """
       INSERT INTO items
         (id, source, source_id, timestamp, sender, recipients, content,
-         subject, thread_id, lang, raw_metadata, ingested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         subject, thread_id, lang, raw_metadata, ingested_at, timestamp_inferred)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       params,
     )
@@ -534,7 +535,8 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
       subject = ?,
       thread_id = ?,
       lang = ?,
-      raw_metadata = ?
+      raw_metadata = ?,
+      timestamp_inferred = ?
     WHERE id = ?
     """,
     (
@@ -548,6 +550,7 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
       item.thread_id,
       item.lang,
       json.dumps(item.raw_metadata, ensure_ascii=False),
+      1 if item.timestamp_inferred else 0,
       item.id,
     ),
   )

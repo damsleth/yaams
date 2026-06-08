@@ -7,6 +7,7 @@ print non-interactive text views; ``--json`` emits a machine document.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 
 import click
@@ -66,8 +67,12 @@ def review_cmd(
   try:
     cfg = load_config(config_path)
     db_path = get_db_path(cfg)
-    conn = open_db(db_path, readonly=False)
-    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    # Only the TUI writes (flush_session at the end of a judging run).
+    # Queue/stats/JSON views open read-only so they work against a live DB
+    # another process holds open — init_schema would need write access.
+    conn = open_db(db_path, readonly=not use_tui)
+    if use_tui:
+      init_schema(conn, embedding_dim=_embedding_dim(cfg))
   except Exception as exc:
     if as_json:
       emit_data_error(data_error(
@@ -103,6 +108,16 @@ def review_cmd(
       payload = _queue_payload(queue, limit=limit, unjudged_only=unjudged_only)
       click.echo(json.dumps(payload, ensure_ascii=False, default=str))
       return
+  except sqlite3.OperationalError as exc:
+    # Read-only mode can't create missing tables — surface "no such table"
+    # (uninitialized DB) as a structured error instead of a traceback.
+    if as_json:
+      emit_data_error(data_error(
+        command="review", code="db_query_failed", message=str(exc),
+        hint="Run: yaams init-db",
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
   finally:
     conn.close()
 
@@ -126,7 +141,12 @@ def review_cmd(
       snippet = r.snippet[:80]
       click.echo(f"       {cited} {r.rank}. [{r.source or '-'}] {snippet}")
   click.echo("")
-  click.echo("Log a verdict with: yaams feedback <query_id> <hit|miss|correction> [--result <id>]")
+  click.echo(
+    "Log a verdict with: yaams feedback <query_id> <kind> [--result <id>]\n"
+    "  answer-shaped (factual/first/last/event): hit | miss | correction\n"
+    "  recall-shaped (synthesis/temporal_range): relevant | thin\n"
+    "  any shape: noise"
+  )
 
 
 def _queue_payload(queue, *, limit: int, unjudged_only: bool) -> dict:

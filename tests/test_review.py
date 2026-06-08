@@ -80,6 +80,8 @@ def _log(
   result_ids: list[str] | None = None,
   cited: list[str] = (),
   confidence: str | None = None,
+  shape: str | None = None,
+  parser_fallback: bool = False,
   ts: datetime | None = None,
 ) -> None:
   ids = result_ids or []
@@ -97,6 +99,8 @@ def _log(
     results=results,
     cited_result_ids=list(cited),
     confidence=confidence,
+    shape=shape,
+    parser_fallback=parser_fallback,
     ts=ts,
   )
 
@@ -230,7 +234,9 @@ def test_queue_source_filter_substring_match():
 # ---------------------------------------------------------------------------
 
 
-def _item_with_results(ranks: list[int]) -> ReviewItem:
+def _item_with_results(
+  ranks: list[int], shape: str | None = None, parser_fallback: bool = False
+) -> ReviewItem:
   results = [
     ReviewResult(
       rank=r,
@@ -250,10 +256,11 @@ def _item_with_results(ranks: list[int]) -> ReviewItem:
     text="text",
     ts="2026-04-01T12:00:00+00:00",
     results_returned=len(ranks),
-    shape=None,
+    shape=shape,
     confidence=None,
     cited_count=0,
     results=results,
+    parser_fallback=parser_fallback,
   )
 
 
@@ -295,6 +302,104 @@ def test_verdict_digit_out_of_range_returns_none():
 def test_verdict_unknown_keys_skip(key: str):
   item = _item_with_results([1, 2])
   assert verdict_signal(item, key) is None
+
+
+# ---------------------------------------------------------------------------
+# shape gating
+# ---------------------------------------------------------------------------
+
+
+def test_is_answer_shaped_classification():
+  from yaams.signals import is_answer_shaped
+
+  for s in ("factual", "first_occurrence", "last_occurrence", "event_anchored"):
+    assert is_answer_shaped(s) is True
+  for s in ("synthesis", "temporal_range", "SYNTHESIS", " synthesis "):
+    assert is_answer_shaped(s) is False
+  # Unknown / None default to answer-shaped (backward compatible).
+  assert is_answer_shaped(None) is True
+  assert is_answer_shaped("whatever") is True
+
+
+def test_is_answer_shaped_fallback_overrides_shape():
+  from yaams.signals import is_answer_shaped
+
+  # A fallback query's stored shape is a placeholder — even "factual" must
+  # grade usefulness, since the parser never understood the query.
+  assert is_answer_shaped("factual", parser_fallback=True) is False
+  assert is_answer_shaped(None, parser_fallback=True) is False
+  # Confidently parsed factual stays answer-shaped.
+  assert is_answer_shaped("factual", parser_fallback=False) is True
+
+
+def test_fallback_query_grades_set_usefulness():
+  # The original bug: a bag-of-keywords query logged as fallback→factual was
+  # graded on the answer rubric. It should grade usefulness instead.
+  item = _item_with_results([1, 2, 3], shape="factual", parser_fallback=True)
+  assert verdict_signal(item, "r") == {"query_id": "q_x", "kind": "relevant"}
+  assert verdict_signal(item, "t") == {"query_id": "q_x", "kind": "thin"}
+  assert verdict_signal(item, "h") is None
+  assert verdict_signal(item, "2") is None
+
+
+def test_queue_surfaces_parser_fallback():
+  conn = _open()
+  _log(conn, "q_fb", result_ids=["r1"], shape="factual", parser_fallback=True)
+  _log(conn, "q_ok", result_ids=["r2"], shape="factual", parser_fallback=False)
+  by_id = {it.query_id: it for it in build_review_queue(conn)}
+  assert by_id["q_fb"].parser_fallback is True
+  assert by_id["q_ok"].parser_fallback is False
+  # And the gating follows: fallback → recall verdicts, confident → answer.
+  assert verdict_signal(by_id["q_fb"], "r") == {"query_id": "q_fb", "kind": "relevant"}
+  assert verdict_signal(by_id["q_ok"], "h") == {
+    "query_id": "q_ok", "kind": "hit", "result_id": "r2",
+  }
+
+
+@pytest.mark.parametrize("shape", ["synthesis", "temporal_range"])
+def test_recall_shape_grades_set_usefulness(shape):
+  item = _item_with_results([1, 2, 3], shape=shape)
+  assert verdict_signal(item, "r") == {"query_id": "q_x", "kind": "relevant"}
+  assert verdict_signal(item, "t") == {"query_id": "q_x", "kind": "thin"}
+  # Answer-precision keys don't apply to a recall query.
+  assert verdict_signal(item, "h") is None
+  assert verdict_signal(item, "m") is None
+  assert verdict_signal(item, "2") is None
+  # Noise is shared across shapes.
+  assert verdict_signal(item, "n") == {"query_id": "q_x", "kind": "noise"}
+
+
+@pytest.mark.parametrize("shape", ["factual", "last_occurrence", None])
+def test_answer_shape_rejects_recall_verdicts(shape):
+  item = _item_with_results([1, 2, 3], shape=shape)
+  # relevant/thin only make sense for recall-shaped queries.
+  assert verdict_signal(item, "r") is None
+  assert verdict_signal(item, "t") is None
+  # Answer keys still work.
+  assert verdict_signal(item, "h") == {
+    "query_id": "q_x", "kind": "hit", "result_id": "r1",
+  }
+
+
+def test_dashboard_usefulness_rate_separate_from_hit_rate():
+  conn = _open()
+  _log(conn, "q_ans")
+  _log(conn, "q_rec1")
+  _log(conn, "q_rec2")
+  flush_session(conn, [
+    {"query_id": "q_ans", "kind": "hit", "result_id": "r1"},
+    {"query_id": "q_rec1", "kind": "relevant"},
+    {"query_id": "q_rec2", "kind": "thin"},
+  ])
+  data = dashboard_data(conn)
+  # Answer axis: 1 hit of 1 graded → 100%, and recall verdicts excluded.
+  assert data["graded_queries"] == 1
+  assert data["hit_rate"] == 1.0
+  # Recall axis: 1 relevant of 2 graded → 50%.
+  assert data["graded_recall_queries"] == 2
+  assert data["usefulness_rate"] == 0.5
+  text = render_dashboard(data)
+  assert "Usefulness" in text
 
 
 # ---------------------------------------------------------------------------

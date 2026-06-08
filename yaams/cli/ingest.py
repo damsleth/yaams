@@ -74,6 +74,13 @@ from yaams.watermark import get_watermark, update_watermark
   ),
 )
 @click.option("--dry-run", is_flag=True)
+@click.option(
+  "--reindex",
+  is_flag=True,
+  help="Re-store items even if their id already exists (refreshes derived "
+  "fields like timestamps after an ingester change). Slower: re-embeds and "
+  "re-tags everything fetched.",
+)
 @click.option("--batch-size", default=64, show_default=True)
 @click.option("--require-vec", is_flag=True)
 @click.option("-v", "--verbose", is_flag=True, help="Stream DEBUG logs to stderr in addition to the log file.")
@@ -92,6 +99,7 @@ def ingest(
   config_path: str,
   source: str,
   dry_run: bool,
+  reindex: bool,
   batch_size: int,
   require_vec: bool,
   verbose: bool,
@@ -191,6 +199,7 @@ def ingest(
             since_by_source[src],
             batch_size=batch_size,
             dry_run=dry_run,
+            reindex=reindex,
             processors=processors,
             started_at=src_started_at,
             fetch_ms=fetch_ms,
@@ -434,6 +443,7 @@ def ingest_source(
   processors,
   started_at: datetime,
   fetch_ms: float,
+  reindex: bool = False,
 ) -> dict[str, object]:
   """Embed + store an already-fetched item list and advance the watermark.
 
@@ -453,7 +463,7 @@ def ingest_source(
     if item.timestamp > latest_ts:
       latest_ts = item.timestamp
     if len(batch) >= batch_size:
-      inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+      inserted += process_batch(conn, batch, processors, dry_run=dry_run, reindex=reindex)
       batch = []
   if batch:
     inserted += process_batch(conn, batch, processors, dry_run=dry_run)
@@ -505,6 +515,7 @@ def process_batch(
   processors,
   *,
   dry_run: bool,
+  reindex: bool = False,
 ) -> int:
   if dry_run:
     return 0
@@ -513,12 +524,14 @@ def process_batch(
   # Drop already-stored items before embedding/tagging. Re-seen items (the
   # common case once a watermark is established) carry identical content, so
   # this skips wasted work — and avoids loading the embedding model at all
-  # when a run turns up nothing new.
-  known = existing_ids(conn, [item.id for item in items])
+  # when a run turns up nothing new. `--reindex` keeps them so derived fields
+  # (e.g. timestamps after an ingester change) get refreshed via the UPDATE
+  # path in store_items; those re-stores return 0 inserted, as expected.
+  known = set() if reindex else existing_ids(conn, [item.id for item in items])
   new_items = [
     replace(item, lang=item.lang or detect_lang(item.content))
     for item in items
-    if item.id not in known
+    if reindex or item.id not in known
   ]
   if not new_items:
     return 0

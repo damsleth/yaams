@@ -113,6 +113,86 @@ def test_route_sets_entity_filter_from_parsed_entities():
   assert cfg.entity_filter == ["Bob Smith"]
 
 
+def test_route_intent_terms_demote_entity_filter_to_boost():
+  # #3: a relevance-ranked query with topic terms lifts entity docs via a soft
+  # boost instead of hard-filtering, so the intent term can outrank entity noise.
+  cfg = route(
+    _parsed(shape="factual", entities=["M365", "IAM"], topic_terms=["incidents"]),
+    HybridQueryConfig(),
+  )
+  assert cfg.entity_filter is None
+  assert cfg.boost_entities == ["M365", "IAM"]
+
+
+def test_route_occurrence_with_topic_terms_keeps_hard_entity_filter():
+  # A soft boost is invisible to a timestamp sort, so occurrence shapes must
+  # keep the hard entity filter even when intent terms are present — otherwise
+  # the entity constraint vanishes and a tangential early/late item wins.
+  for shape in ("first_occurrence", "last_occurrence"):
+    cfg = route(
+      _parsed(shape=shape, entities=["NOCOS"], topic_terms=["involved"]),
+      HybridQueryConfig(),
+    )
+    assert cfg.entity_filter == ["NOCOS"], shape
+    assert cfg.boost_entities is None, shape
+
+
+def test_route_synthesis_keeps_hard_entity_filter_with_topic_terms():
+  # Synthesis needs clean scoping even when topic terms are present.
+  cfg = route(
+    _parsed(shape="synthesis", entities=["NOCOS"], topic_terms=["provisioning"]),
+    HybridQueryConfig(),
+  )
+  assert cfg.entity_filter == ["NOCOS"]
+  assert cfg.boost_entities is None
+
+
+def test_route_entities_without_topic_terms_stay_hard_filter():
+  # No intent terms → the entity is the only signal; keep the hard filter.
+  cfg = route(_parsed(shape="factual", entities=["Bob Smith"]), HybridQueryConfig())
+  assert cfg.entity_filter == ["Bob Smith"]
+  assert cfg.boost_entities is None
+
+
+def test_route_occurrence_sets_participant_filter_from_identities():
+  # #2: first/last_occurrence anchors on the user's participation.
+  ids = ["me", "cdam@une.no"]
+  first = route(_parsed(shape="first_occurrence"), HybridQueryConfig(), self_identities=ids)
+  last = route(_parsed(shape="last_occurrence"), HybridQueryConfig(), self_identities=ids)
+  assert first.participant_filter == ids
+  assert last.participant_filter == ids
+
+
+def test_route_no_participant_filter_without_identities():
+  cfg = route(_parsed(shape="first_occurrence"), HybridQueryConfig())
+  assert cfg.participant_filter is None
+
+
+def test_route_occurrence_sets_relevance_floor():
+  first = route(_parsed(shape="first_occurrence"), HybridQueryConfig())
+  last = route(_parsed(shape="last_occurrence"), HybridQueryConfig())
+  assert first.relevance_floor > 0
+  assert last.relevance_floor > 0
+
+
+def test_route_explicit_sort_does_not_set_relevance_floor():
+  # User --sort wins over shape and must not get the occurrence floor.
+  cfg = route(
+    _parsed(shape="last_occurrence"), HybridQueryConfig(sort="desc"), explicit_sort=True
+  )
+  assert cfg.relevance_floor == 0.0
+
+
+def test_route_factual_has_no_relevance_floor():
+  cfg = route(_parsed(shape="factual"), HybridQueryConfig())
+  assert cfg.relevance_floor == 0.0
+
+
+def test_route_synthesis_does_not_set_participant_filter():
+  cfg = route(_parsed(shape="synthesis"), HybridQueryConfig(), self_identities=["me"])
+  assert cfg.participant_filter is None
+
+
 def test_filter_results_by_entities_drops_unmatched_items():
   conn = sqlite3.connect(":memory:")
   conn.row_factory = sqlite3.Row

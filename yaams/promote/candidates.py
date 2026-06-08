@@ -58,12 +58,31 @@ class PromotionCandidate:
 
 
 @dataclass
+class RejectedIndex:
+  """Suppression signal sourced from cogled's `rejected_candidates.jsonl`.
+
+  Supports the contract v1 match precedence (candidate id, then source-item
+  overlap, then entity+title fallback for pre-v1 rejections). Empty when the
+  log is missing/unreadable — degrade open, never raise."""
+
+  candidate_ids: set[str] = field(default_factory=set)
+  item_ids: set[str] = field(default_factory=set)
+  # (lowercased entity, lowercased title) pairs from pre-v1 rejections that
+  # lacked a candidate id and source item ids.
+  entity_titles: set[tuple[str, str]] = field(default_factory=set)
+
+  def __bool__(self) -> bool:
+    return bool(self.candidate_ids or self.item_ids or self.entity_titles)
+
+
+@dataclass
 class PromoteConfig:
   window_days: int = 90
   window_days_by_type: dict[str, int] = field(default_factory=lambda: {"person": 365})
   min_cluster_items: int = 3
   cluster_fetch_k: int = 10
   note_index_path: Path | None = None
+  rejected_log_path: Path | None = None
 
 
 def generate_candidates(
@@ -76,6 +95,7 @@ def generate_candidates(
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
   index_texts = _load_index_texts(config.note_index_path)
+  rejected = _load_rejected(config.rejected_log_path)
   candidates: list[PromotionCandidate] = []
   total = len(entities)
 
@@ -91,8 +111,27 @@ def generate_candidates(
       if on_progress:
         on_progress(f"  skipped (cluster too small: {len(cluster)} items)")
       continue
+    cluster_item_ids = [r["id"] for r in cluster]
+    # Rejection precedence rules 1 & 2 are decidable pre-draft (no title yet),
+    # so we short-circuit before the expensive LLM call.
+    if rejected:
+      cid = _candidate_id(entity_name, cluster_item_ids)
+      if cid in rejected.candidate_ids:
+        if on_progress:
+          on_progress("  skipped (previously rejected)")
+        continue
+      if any(item_id in rejected.item_ids for item_id in cluster_item_ids):
+        if on_progress:
+          on_progress("  skipped (previously rejected)")
+        continue
     candidate = _draft(adapter, entity_name, cluster)
     if candidate:
+      # Rule 3: entity + title fallback, only for pre-v1 rejections that
+      # lacked id/item-ids. Requires the drafted title, so it runs post-draft.
+      if rejected.entity_titles and _rejected_by_entity_title(rejected, candidate):
+        if on_progress:
+          on_progress("  skipped (previously rejected)")
+        continue
       candidates.append(candidate)
       if on_progress:
         on_progress(f"  drafted: {candidate.draft_title}")
@@ -258,6 +297,69 @@ def _load_index_texts(index_path: Path | None) -> list[str]:
     return []
 
 
+def _candidate_id(entity_name: str, item_ids: list[str]) -> str:
+  """Stable 16-hex id for a candidate, keyed on entity + its source item ids.
+
+  This is the rejection-log match key (contract v1); cogled records it as
+  `yaams_candidate_id`."""
+  return sha256(f"{entity_name}:{','.join(item_ids)}".encode()).hexdigest()[:16]
+
+
+def _load_rejected(path: Path | None) -> RejectedIndex:
+  """Load cogled's `rejected_candidates.jsonl` into a suppression index.
+
+  Missing/unreadable/None file → empty index (suppresses nothing). Malformed
+  lines are skipped, never fatal — degrade open."""
+  rejected = RejectedIndex()
+  if not path:
+    return rejected
+  try:
+    raw = Path(path).expanduser().read_text(encoding="utf-8")
+  except Exception:
+    return rejected
+  for line in raw.splitlines():
+    line = line.strip()
+    if not line:
+      continue
+    try:
+      rec = json.loads(line)
+    except Exception:
+      continue
+    if not isinstance(rec, dict):
+      continue
+    cid = rec.get("yaams_candidate_id") or ""
+    if cid:
+      rejected.candidate_ids.add(cid)
+    item_ids = rec.get("yaams_source_item_ids") or []
+    if isinstance(item_ids, list):
+      for item_id in item_ids:
+        if item_id:
+          rejected.item_ids.add(str(item_id))
+    # Rule-3 fallback only applies to pre-v1 rejections that carried neither a
+    # candidate id nor source item ids.
+    if not cid and not item_ids:
+      entity = (rec.get("yaams_entity") or "").strip().lower()
+      title = (rec.get("title") or "").strip().lower()
+      if entity and title:
+        rejected.entity_titles.add((entity, title))
+  return rejected
+
+
+def _rejected_by_entity_title(rejected: RejectedIndex, candidate: PromotionCandidate) -> bool:
+  """Rule-3 fallback: same entity AND one title is a substring of the other
+  (case-insensitive). Matches the documented pre-v1 degradation path."""
+  entity = candidate.entity.strip().lower()
+  draft_title = candidate.draft_title.strip().lower()
+  if not entity or not draft_title:
+    return False
+  for rej_entity, rej_title in rejected.entity_titles:
+    if rej_entity != entity:
+      continue
+    if rej_title and (rej_title in draft_title or draft_title in rej_title):
+      return True
+  return False
+
+
 def _is_covered(
   entity_name: str,
   existing_titles: list[str],
@@ -315,7 +417,7 @@ def _draft(
     return None
 
   item_ids = [r["id"] for r in cluster]
-  cid = sha256(f"{entity_name}:{','.join(item_ids)}".encode()).hexdigest()[:16]
+  cid = _candidate_id(entity_name, item_ids)
 
   return PromotionCandidate(
     id=cid,

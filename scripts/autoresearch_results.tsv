@@ -10,3 +10,5 @@ cb2.0	hybrid	dev	0.3422	0.4	-	105.3	7	discard
 pk100	hybrid	dev	0.4351	0.5333	-	114.4	1	discard
 pk120	hybrid	dev	0.4352	0.5333	-	114.3	1	discard
 pk80-keep	hybrid	dev	0.4379	0.5333	0.2208	110.4	0	ok
+fts-prefix	hybrid	dev	0.4393	0.5556	0.3318	164.6	1	discard
+prefix5-keep	hybrid	dev	0.459	0.5778	0.3229	157.1	0	ok

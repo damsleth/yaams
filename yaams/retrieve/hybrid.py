@@ -499,7 +499,10 @@ def _fts_query(text: str, synonyms: dict[str, list[str]] | None = None) -> str:
     return ""
   if synonyms:
     tokens = expand_fts_tokens(tokens, synonyms)
-  return " OR ".join(f'"{t}"' for t in tokens)
+  # Prefix-match longer stems for morphological recall (øvelse→øvelsen/øvelser)
+  # while leaving short tokens exact — a 4-char stem like "funn" prefix-expands
+  # into far too many candidates (funnet/funne/funnene) and dilutes exact hits.
+  return " OR ".join(f'"{t}"*' if len(t) >= 5 else f'"{t}"' for t in tokens)
 
 
 def _filter_params(match: str, cfg: HybridQueryConfig):

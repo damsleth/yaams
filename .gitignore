@@ -23,3 +23,6 @@ data/
 yaams-data/
 *.mbox
 *.emlx
+
+# autoresearch harness machine-local rank cache (results.tsv is kept as the experiment log)
+scripts/.autoresearch_state.json

@@ -21,7 +21,7 @@ from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.time import ensure_utc
 
 DEFAULT_TOP_K = 20
-DEFAULT_PER_INDEX_K = 60
+DEFAULT_PER_INDEX_K = 80
 RRF_K = 30
 HIGH_QUALITY_FETCH_MULTIPLIER = 2
 TIMESTAMP_SORT_FETCH_MULTIPLIER = 4

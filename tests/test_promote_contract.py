@@ -1,0 +1,79 @@
+"""YAAMS⇄cogled interface contract (v1), YAAMS-write side.
+
+Pins the inbox-candidate frontmatter and inbox-path resolution that cogled's
+Phase A rejection-feedback loop depends on. The contract is documented in
+cognitive-ledger/docs/yaams-cogled-interface.md.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from yaams.cli import promote as promote_cli
+from yaams.promote.review import CONTRACT_VERSION, format_note
+
+
+def _candidate() -> dict:
+  # Shape as it comes off the promotion_candidates DB row: tags and
+  # source_item_ids are JSON strings, not lists.
+  return {
+    "id": "a1b2c3d4e5f60718",
+    "entity": "AFØR",
+    "draft_type": "fact",
+    "draft_title": "AFØR krever minimum tre år å oppnå",
+    "draft_statement": "Kvalifikasjonen tar minimum tre år.",
+    "draft_body": "## Statement\nKvalifikasjonen tar minimum tre år.",
+    "draft_tags": json.dumps(["røde-kors", "brkh"]),
+    "source_item_ids": json.dumps(["9f2e1c0a7b3d4e5f", "6a8d2f1e0c9b3a7d"]),
+  }
+
+
+def test_format_note_emits_contract_v1_provenance():
+  note = format_note(_candidate())
+
+  # source must be a valid cogled enum value, not "yaams"
+  assert "source: inferred\n" in note
+  assert "source: yaams\n" not in note
+
+  assert f"contract_version: {CONTRACT_VERSION}\n" in note
+  assert "promoted_by: yaams\n" in note
+  assert "yaams_candidate_id: a1b2c3d4e5f60718\n" in note
+  # entity is JSON-quoted so non-ascii / special chars stay valid YAML
+  assert 'yaams_entity: "AFØR"\n' in note
+  assert "yaams_source_item_ids:\n  - 9f2e1c0a7b3d4e5f\n  - 6a8d2f1e0c9b3a7d\n" in note
+
+  # body + sources footer preserved
+  assert "# AFØR krever minimum tre år å oppnå" in note
+  assert "- yaams:tier1 (promoted" in note
+
+
+def test_format_note_handles_empty_source_items():
+  c = _candidate()
+  c["source_item_ids"] = "[]"
+  c["id"] = ""
+  note = format_note(c)
+  assert "yaams_source_item_ids: []\n" in note
+  # missing id still emits the key (degrades to item-id / entity match in cogled)
+  assert "yaams_candidate_id: \n" in note
+
+
+def test_resolve_inbox_path_explicit_config_wins(tmp_path, monkeypatch):
+  # explicit config must win and short-circuit the ledger lookup
+  monkeypatch.setattr(promote_cli, "_ledger_notes_dir", lambda: Path("/should/not/be/used"))
+  resolved = promote_cli._resolve_inbox_path({"inbox_path": str(tmp_path / "custom")})
+  assert resolved == (tmp_path / "custom").resolve()
+
+
+def test_resolve_inbox_path_derives_cogled_inbox(tmp_path, monkeypatch):
+  notes_dir = tmp_path / "ledger"
+  notes_dir.mkdir()
+  monkeypatch.setattr(promote_cli, "_ledger_notes_dir", lambda: notes_dir)
+  resolved = promote_cli._resolve_inbox_path({})
+  assert resolved == notes_dir / "00_inbox"
+
+
+def test_resolve_inbox_path_falls_back_when_ledger_absent(monkeypatch):
+  # cogled not installed → degrade open to legacy staging dir
+  monkeypatch.setattr(promote_cli, "_ledger_notes_dir", lambda: None)
+  resolved = promote_cli._resolve_inbox_path({})
+  assert resolved == Path("~/yaams/ledger-inbox").expanduser().resolve()

@@ -21,24 +21,76 @@ from typing import Any
 
 from yaams.signals.logger import log_feedback
 
-VERDICT_KINDS = {"hit", "miss", "correction", "noise"}
+VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin"}
 """Feedback kinds the review loop can emit.
 
+Answer-shaped queries (factual, first/last_occurrence, event_anchored) have
+one pointable right row, so they grade answer *precision*:
+
 - ``hit`` / ``miss`` / ``correction``: graded — counted in hit-rate stats.
+
+Recall-shaped queries (synthesis, temporal_range) ask for a useful *set*, not
+a single answer, so "which rank is right" doesn't apply. They grade set
+*usefulness* instead:
+
+- ``relevant`` / ``thin``: graded — counted in the usefulness rate. ``relevant``
+  means the result set was useful context; ``thin`` means too sparse/off-topic
+  to help. Kept out of the answer hit-rate so the two axes don't conflate.
+
+Shared:
+
 - ``noise``: the query had no real intent (probe, test, placeholder).
-  Excluded from hit-rate denominators but still counts as "judged" so it
-  drops out of the review queue. Mark with ``n`` in the TUI.
+  Excluded from both rates but still counts as "judged" so it drops out of the
+  review queue. Mark with ``n`` in the TUI.
 """
+
+# Shapes (from yaams.retrieve.parse) that ask for a useful *set* rather than a
+# single answer. Everything else is treated as answer-shaped.
+RECALL_SHAPES = frozenset({"synthesis", "temporal_range"})
+
+
+def is_answer_shaped(shape: str | None, parser_fallback: bool = False) -> bool:
+  """True if a query expects one right answer (hit/miss/correction grading).
+
+  False — i.e. grade set usefulness (relevant/thin) — when either:
+
+  - the shape is a recall shape (synthesis, temporal_range), or
+  - ``parser_fallback`` is set, meaning the parser never understood the
+    query. On a dummy/absent LLM backend *every* query falls back to a
+    placeholder ``shape="factual"`` (see ``retrieve.parse._fallback``), so the
+    stored shape is meaningless — we can't claim there's a single right row,
+    and the honest grade is "was the result set useful?".
+
+  A confidently-parsed ``factual`` query (fallback False) stays answer-shaped.
+  """
+  if parser_fallback:
+    return False
+  return (shape or "").strip().lower() not in RECALL_SHAPES
+
 
 _SNIPPET_LEN = 480
 
-_HELP_LINES = [
+_HELP_LINES_ANSWER = [
   "h  hit (top result was right)      m  miss (none right)",
   "1-9  correction (that rank is the right answer)",
   "n  noise (no real intent — cascades to identical text)",
   "space/enter  skip                  u  undo last      q  quit & save",
   "up/down  scroll results            ?  toggle this help",
 ]
+
+_HELP_LINES_RECALL = [
+  "r  relevant (useful result set)    t  thin (too sparse/off to help)",
+  "recall-shaped query — no single 'right' answer, so grade the set",
+  "n  noise (no real intent — cascades to identical text)",
+  "space/enter  skip                  u  undo last      q  quit & save",
+  "up/down  scroll results            ?  toggle this help",
+]
+
+
+def _help_lines(item: "ReviewItem") -> list[str]:
+  if is_answer_shaped(item.shape, item.parser_fallback):
+    return _HELP_LINES_ANSWER
+  return _HELP_LINES_RECALL
 
 
 @dataclass
@@ -70,6 +122,7 @@ class ReviewItem:
   results: list[ReviewResult] = field(default_factory=list)
   priority: float = 0.0
   reasons: list[str] = field(default_factory=list)
+  parser_fallback: bool = False
 
   @property
   def reason(self) -> str:
@@ -221,7 +274,7 @@ def build_review_queue(
   sql = """
     SELECT
       q.id, q.text, q.ts, q.results_returned,
-      q.shape, q.confidence
+      q.shape, q.confidence, q.parser_fallback
     FROM queries AS q
   """
   if where:
@@ -238,6 +291,7 @@ def build_review_queue(
     results_returned = row["results_returned"] if hasattr(row, "keys") else row[3]
     shape = row["shape"] if hasattr(row, "keys") else row[4]
     confidence = row["confidence"] if hasattr(row, "keys") else row[5]
+    parser_fallback = bool(row["parser_fallback"] if hasattr(row, "keys") else row[6])
 
     result_rows = conn.execute(
       """
@@ -300,6 +354,7 @@ def build_review_queue(
         results=results,
         priority=priority,
         reasons=reasons,
+        parser_fallback=parser_fallback,
       )
     )
 
@@ -324,40 +379,59 @@ def _is_unjudged(conn: sqlite3.Connection, query_id: str) -> bool:
 def verdict_signal(item: ReviewItem, key: str) -> dict[str, Any] | None:
   """Map one keystroke to :func:`log_feedback` kwargs, or None to skip.
 
-  Keys:
+  The accepted keys depend on the query's shape (see :func:`is_answer_shaped`).
+
+  Shared:
+    - ``n`` → ``noise`` (no real intent — probe, test, placeholder).
+      In the TUI this also cascades to identical-text unjudged queries
+      via :func:`noise_cascade`; this function only emits the single row.
+
+  Answer-shaped queries (factual, first/last_occurrence, event_anchored):
     - ``h`` → ``hit`` on the top-1 result (the common case).
     - ``m`` → ``miss`` (no useful results).
     - ``1``..``9`` → ``correction`` naming the result at that rank as the
       right answer. Returns None if no result at that rank.
-    - ``n`` → ``noise`` (no real intent — probe, test, placeholder).
-      In the TUI this also cascades to identical-text unjudged queries
-      via :func:`noise_cascade`; this function only emits the single row.
-    - Anything else (space, enter, ``q``, etc.) → None.
+
+  Recall-shaped queries (synthesis, temporal_range):
+    - ``r`` → ``relevant`` (the result set was useful context).
+    - ``t`` → ``thin`` (results too sparse/off-topic to help).
+
+  Keys that don't apply to the query's shape — and anything else (space,
+  enter, ``q``, etc.) — return None.
   """
   if not key:
     return None
-  if key == "h":
-    if not item.results:
-      return None
-    return {
-      "query_id": item.query_id,
-      "kind": "hit",
-      "result_id": item.results[0].result_id,
-    }
-  if key == "m":
-    return {"query_id": item.query_id, "kind": "miss"}
   if key == "n":
     return {"query_id": item.query_id, "kind": "noise"}
-  if len(key) == 1 and key in "123456789":
-    rank = int(key)
-    target = next((r for r in item.results if r.rank == rank), None)
-    if target is None:
-      return None
-    return {
-      "query_id": item.query_id,
-      "kind": "correction",
-      "result_id": target.result_id,
-    }
+
+  if is_answer_shaped(item.shape, item.parser_fallback):
+    if key == "h":
+      if not item.results:
+        return None
+      return {
+        "query_id": item.query_id,
+        "kind": "hit",
+        "result_id": item.results[0].result_id,
+      }
+    if key == "m":
+      return {"query_id": item.query_id, "kind": "miss"}
+    if len(key) == 1 and key in "123456789":
+      rank = int(key)
+      target = next((r for r in item.results if r.rank == rank), None)
+      if target is None:
+        return None
+      return {
+        "query_id": item.query_id,
+        "kind": "correction",
+        "result_id": target.result_id,
+      }
+    return None
+
+  # Recall-shaped: grade set usefulness, not a single answer.
+  if key == "r":
+    return {"query_id": item.query_id, "kind": "relevant"}
+  if key == "t":
+    return {"query_id": item.query_id, "kind": "thin"}
   return None
 
 
@@ -437,8 +511,15 @@ def dashboard_data(conn: sqlite3.Connection) -> dict[str, Any]:
   miss = by_kind.get("miss", 0)
   correction = by_kind.get("correction", 0)
   noise = by_kind.get("noise", 0)
+  relevant = by_kind.get("relevant", 0)
+  thin = by_kind.get("thin", 0)
+  # Answer-shaped grading: did the right row come back / rank well?
   graded = hit + miss + correction
   hit_rate = (hit / graded) if graded else 0.0
+  # Recall-shaped grading: was the result set useful? Separate axis — kept
+  # out of hit_rate so set-usefulness doesn't dilute answer precision.
+  graded_recall = relevant + thin
+  usefulness_rate = (relevant / graded_recall) if graded_recall else 0.0
 
   miss_sources_rows = conn.execute(
     """
@@ -478,6 +559,8 @@ def dashboard_data(conn: sqlite3.Connection) -> dict[str, Any]:
     "by_kind": by_kind,
     "hit_rate": hit_rate,
     "graded_queries": graded,
+    "usefulness_rate": usefulness_rate,
+    "graded_recall_queries": graded_recall,
     "noise_queries": noise,
     "miss_sources": miss_sources,
     "by_provenance": by_provenance,
@@ -614,7 +697,9 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
 
     entry = verdict_signal(item, key)
     if entry is None:
-      flash = f"'{key}' — no verdict (h/m/n, 1-9, space=skip, ? help)"
+      answer_shaped = is_answer_shaped(item.shape, item.parser_fallback)
+      keys = "h/m/n, 1-9" if answer_shaped else "r/t/n"
+      flash = f"'{key}' — no verdict ({keys}, space=skip, ? help)"
       continue
     entries.append(entry)
     history.append((idx, 1))
@@ -644,7 +729,11 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
   line(2, f"Q: {q_text}", curses.A_BOLD)
 
   meta_bits = [item.ts]
-  if item.shape:
+  # A fallback query's stored shape is a placeholder ("factual"), not a real
+  # finding — show it as "unparsed" so the recall-style verdict keys make sense.
+  if item.parser_fallback:
+    meta_bits.append("shape unparsed")
+  elif item.shape:
     meta_bits.append(f"shape {item.shape}")
   if item.confidence:
     meta_bits.append(f"conf {item.confidence}")
@@ -655,8 +744,9 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
   line(4, f"▸ {item.reason}", curses.A_DIM)
   line(5, "─" * w)
 
+  help_lines = _help_lines(item)
   body_top = 6
-  footer_rows = 3 + (len(_HELP_LINES) if show_help else 0)
+  footer_rows = 3 + (len(help_lines) if show_help else 0)
   body_height = max(1, height - body_top - footer_rows)
 
   # Render each result as a block: header + wrapped snippet lines.
@@ -691,15 +781,15 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
 
   foot = height - footer_rows
   line(foot, "─" * w)
-  line(
-    foot + 1,
-    "[h]it  [m]iss  [1-9]correction  [n]oise  [space]skip  [u]ndo  [q]uit  [?]help",
-    curses.A_BOLD,
-  )
+  if is_answer_shaped(item.shape, item.parser_fallback):
+    keybar = "[h]it  [m]iss  [1-9]correction  [n]oise  [space]skip  [u]ndo  [q]uit  [?]help"
+  else:
+    keybar = "[r]elevant  [t]hin  [n]oise  [space]skip  [u]ndo  [q]uit  [?]help"
+  line(foot + 1, keybar, curses.A_BOLD)
   if flash:
     line(foot + 2, flash, curses.A_REVERSE)
   if show_help:
-    for i, htext in enumerate(_HELP_LINES):
+    for i, htext in enumerate(help_lines):
       line(foot + 3 + i, htext, curses.A_DIM)
   stdscr.refresh()
 
@@ -723,7 +813,12 @@ def render_dashboard(data: dict[str, Any]) -> str:
   if data["graded_queries"]:
     lines.append(
       f"Hit rate      : {data['hit_rate'] * 100:.0f}% "
-      f"(of {data['graded_queries']} graded)"
+      f"(of {data['graded_queries']} graded, answer-shaped)"
+    )
+  if data.get("graded_recall_queries"):
+    lines.append(
+      f"Usefulness    : {data['usefulness_rate'] * 100:.0f}% "
+      f"(of {data['graded_recall_queries']} graded, recall-shaped)"
     )
   if data.get("noise_queries"):
     lines.append(f"Noise         : {data['noise_queries']} (excluded from hit rate)")

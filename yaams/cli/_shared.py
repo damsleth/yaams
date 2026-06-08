@@ -47,6 +47,24 @@ def _entity_dictionary(cfg: dict) -> list[dict]:
   return list(_entities_config(cfg).get("dictionary", []))
 
 
+def _self_identities(cfg: dict) -> list[str]:
+  """The user's own sender/recipient identities, for participation filtering.
+
+  Reads ``identity.self`` (a list of names/emails) from config; ``"me"`` — the
+  ingest-normalized author of imessage/notes/signal — is always included.
+  Used by first/last_occurrence retrieval so "when did I first/last …" anchors
+  on the user's own activity, not any corpus mention."""
+  identity = cfg.get("identity") or {}
+  configured = identity.get("self") or []
+  out: list[str] = ["me"]
+  seen = {"me"}
+  for ident in configured:
+    if isinstance(ident, str) and ident.strip() and ident.strip().lower() not in seen:
+      out.append(ident.strip())
+      seen.add(ident.strip().lower())
+  return out
+
+
 def _progress(iterable: Iterable[Item], desc: str, unit: str = "it") -> Iterable[Item]:
   try:
     from tqdm import tqdm

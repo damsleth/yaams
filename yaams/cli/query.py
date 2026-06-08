@@ -6,7 +6,12 @@ import click
 
 from yaams.cli._envelope import JsonFailureGuard
 from yaams.cli._root import cli
-from yaams.cli._shared import _embed_config, _embedding_dim, config_option
+from yaams.cli._shared import (
+  _embed_config,
+  _embedding_dim,
+  _self_identities,
+  config_option,
+)
 from yaams.config import get_db_path, load_config
 from yaams.db import open_db
 from yaams.enrich import Embedder
@@ -315,6 +320,7 @@ def query_cmd(
           explicit_since=since is not None,
           explicit_until=until is not None,
           explicit_sort=sort is not None,
+          self_identities=_self_identities(cfg),
         )
       else:
         qcfg = base_cfg
@@ -460,6 +466,8 @@ def query_cmd(
         query_id=query_id,
         query_text=query_text,
         results=results,
+        shape=parsed.shape if parsed is not None else None,
+        parser_fallback=parser_fallback_used,
       )
 
 
@@ -488,18 +496,39 @@ def _should_prompt(feedback_prompt: bool | None, output_format: str) -> bool:
   return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _prompt_feedback(*, db_path, query_id: str, query_text: str, results) -> None:
-  """Inline post-query verdict prompt. One keystroke, no Enter required."""
-  from yaams.signals import flush_session, log_feedback, noise_cascade
+def _prompt_feedback(
+  *,
+  db_path,
+  query_id: str,
+  query_text: str,
+  results,
+  shape: str | None = None,
+  parser_fallback: bool = False,
+) -> None:
+  """Inline post-query verdict prompt. One keystroke, no Enter required.
+
+  Shape-gated: answer-shaped queries grade the answer (hit/miss/correction);
+  recall-shaped queries — and ones the parser couldn't understand
+  (``parser_fallback``) — grade the set's usefulness (relevant/thin), since
+  there is no single 'right' result to point at.
+  """
+  from yaams.signals import (
+    flush_session,
+    is_answer_shaped,
+    log_feedback,
+    noise_cascade,
+  )
 
   if not results:
     return
 
+  answer_shaped = is_answer_shaped(shape, parser_fallback)
   click.echo("")
-  click.echo(
-    "Useful? [h]it  [m]iss  [1-9]correction  [n]oise  [enter]skip",
-    nl=False,
-  )
+  if answer_shaped:
+    prompt = "Useful? [h]it  [m]iss  [1-9]correction  [n]oise  [enter]skip"
+  else:
+    prompt = "Useful set? [r]elevant  [t]hin  [n]oise  [enter]skip"
+  click.echo(prompt, nl=False)
   try:
     ch = click.getchar(echo=False)
   except (KeyboardInterrupt, EOFError):
@@ -518,32 +547,45 @@ def _prompt_feedback(*, db_path, query_id: str, query_text: str, results) -> Non
     return
 
   try:
-    if ch == "h":
-      log_feedback(
-        conn, query_id=query_id, kind="hit", result_id=results[0].id
-      )
-      click.echo(f"  logged: hit on rank 1 ({results[0].id})")
-      return
-    if ch == "m":
-      log_feedback(conn, query_id=query_id, kind="miss")
-      click.echo("  logged: miss")
-      return
+    # Noise applies to any shape and cascades to identical-text queries.
     if ch == "n":
       entries = noise_cascade(conn, query_id=query_id, text=query_text)
       written = flush_session(conn, entries)
       click.echo(f"  logged: noise (cascaded to {written} row(s))")
       return
-    if len(ch) == 1 and ch in "123456789":
-      rank = int(ch)
-      if rank > len(results):
-        click.echo(f"  no result at rank {rank}; skipped")
+
+    if answer_shaped:
+      if ch == "h":
+        log_feedback(
+          conn, query_id=query_id, kind="hit", result_id=results[0].id
+        )
+        click.echo(f"  logged: hit on rank 1 ({results[0].id})")
         return
-      target = results[rank - 1]
-      log_feedback(
-        conn, query_id=query_id, kind="correction", result_id=target.id
-      )
-      click.echo(f"  logged: correction → rank {rank} ({target.id})")
-      return
+      if ch == "m":
+        log_feedback(conn, query_id=query_id, kind="miss")
+        click.echo("  logged: miss")
+        return
+      if len(ch) == 1 and ch in "123456789":
+        rank = int(ch)
+        if rank > len(results):
+          click.echo(f"  no result at rank {rank}; skipped")
+          return
+        target = results[rank - 1]
+        log_feedback(
+          conn, query_id=query_id, kind="correction", result_id=target.id
+        )
+        click.echo(f"  logged: correction → rank {rank} ({target.id})")
+        return
+    else:
+      if ch == "r":
+        log_feedback(conn, query_id=query_id, kind="relevant")
+        click.echo("  logged: relevant (useful set)")
+        return
+      if ch == "t":
+        log_feedback(conn, query_id=query_id, kind="thin")
+        click.echo("  logged: thin (not useful)")
+        return
+
     click.echo(f"  {ch!r} — no verdict; skipped")
   finally:
     conn.close()

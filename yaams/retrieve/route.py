@@ -18,6 +18,15 @@ EVENT_TOP_K = 8
 TIER2_BOOST_PREFERRED = 1.6
 TIER2_BOOST_RAW = 1.0
 EVENT_CONS_BOOST = 1.3
+# Shapes that sort by timestamp rather than relevance. A soft entity *boost*
+# is invisible to a timestamp sort, so these must keep the hard entity filter;
+# intent terms narrow *within* the entity set (FTS scoring + relevance floor).
+OCCURRENCE_SHAPES = frozenset({"first_occurrence", "last_occurrence"})
+# first/last_occurrence sort by time, so a weak, tangential entity match would
+# win on date alone. Keep only candidates within this fraction of the top
+# relevance score before the timestamp sort. Conservative — cuts the clearly
+# off-topic tail without dropping moderate genuine matches.
+OCCURRENCE_RELEVANCE_FLOOR = 0.2
 
 
 def route(
@@ -27,6 +36,7 @@ def route(
   explicit_since: bool = False,
   explicit_until: bool = False,
   explicit_sort: bool = False,
+  self_identities: list[str] | None = None,
 ) -> HybridQueryConfig:
   cfg = replace(base)
 
@@ -47,8 +57,14 @@ def route(
     cfg.high_quality = True
   elif parsed.shape == "first_occurrence" and not explicit_sort:
     cfg.sort = "asc"
+    cfg.relevance_floor = OCCURRENCE_RELEVANCE_FLOOR
+    if self_identities:
+      cfg.participant_filter = list(self_identities)
   elif parsed.shape == "last_occurrence" and not explicit_sort:
     cfg.sort = "desc"
+    cfg.relevance_floor = OCCURRENCE_RELEVANCE_FLOOR
+    if self_identities:
+      cfg.participant_filter = list(self_identities)
   elif parsed.shape == "event_anchored":
     cfg.top_k = min(cfg.top_k, EVENT_TOP_K) if cfg.top_k > EVENT_TOP_K else cfg.top_k
     cfg.consolidation_boost = max(cfg.consolidation_boost, EVENT_CONS_BOOST)
@@ -59,7 +75,26 @@ def route(
   if parsed.sort != "relevance" and cfg.sort == "relevance" and not explicit_sort:
     cfg.sort = parsed.sort
 
-  cfg.entity_filter = list(parsed.entities) if parsed.entities else None
+  if parsed.entities:
+    keep_hard_filter = (
+      parsed.shape == "synthesis"
+      or parsed.shape in OCCURRENCE_SHAPES
+      or not parsed.topic_terms
+    )
+    if keep_hard_filter:
+      # Keep the hard candidate allowlist when: synthesis (needs clean scoping
+      # to avoid mixing unrelated sources); occurrence (timestamp sort ignores a
+      # soft boost, so the entity must constrain the set); or no intent terms
+      # (the entity is the only signal).
+      cfg.entity_filter = list(parsed.entities)
+    else:
+      # A relevance-ranked query carrying intent terms (e.g. "incidents"): let
+      # the terms drive the candidate set and merely *lift* entity-linked docs
+      # via a soft boost, so a strong topic term isn't drowned by entity-matched
+      # noise (generic M365 chatter).
+      cfg.boost_entities = list(parsed.entities)
+  else:
+    cfg.entity_filter = None
 
   return cfg
 

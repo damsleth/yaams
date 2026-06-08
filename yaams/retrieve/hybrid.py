@@ -58,6 +58,16 @@ class HybridQueryConfig:
   boost_entities: list[str] | None = None
   boost_factor: float = 1.5
   lang_filter: str | None = None
+  # Restrict candidates to items the user took part in — sender or a recipient
+  # matches one of these identities (casefolded), consolidations match via
+  # participants. Set for first/last_occurrence so "when did I first/last …"
+  # anchors on the user's own activity, not any corpus mention of the entity.
+  participant_filter: list[str] | None = None
+  # For timestamp-sorted occurrence queries, drop candidates scoring below this
+  # fraction of the top relevance score *before* sorting by time, so a weak,
+  # tangential match can't win first/last just by being the oldest/newest.
+  # 0 disables. Set by route() for first/last_occurrence, not by explicit sort.
+  relevance_floor: float = 0.0
 
 
 @dataclass
@@ -109,12 +119,21 @@ def query(
     fetch_k = max(fetch_k, cfg.per_index_k * TIMESTAMP_SORT_FETCH_MULTIPLIER)
   if cfg.entity_filter:
     fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
+  if cfg.participant_filter:
+    fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
   fetch_cfg = replace(cfg, per_index_k=fetch_k) if fetch_k != cfg.per_index_k else cfg
 
   item_allow: set[str] | None = None
   cons_allow: set[str] | None = None
   if cfg.entity_filter:
     item_allow, cons_allow = _resolve_entity_allowlist(conn, cfg.entity_filter)
+
+  part_item_allow: set[str] | None = None
+  part_cons_allow: set[str] | None = None
+  if cfg.participant_filter:
+    part_item_allow, part_cons_allow = _resolve_participant_allowlist(
+      conn, cfg.participant_filter
+    )
 
   fts_items: list[tuple[str, str, int, float]] = []
   fts_cons: list[tuple[str, str, int, float]] = []
@@ -136,6 +155,12 @@ def query(
   if cons_allow is not None:
     fts_cons = [t for t in fts_cons if t[1] in cons_allow]
     vec_cons = [t for t in vec_cons if t[1] in cons_allow]
+  if part_item_allow is not None:
+    fts_items = [t for t in fts_items if t[1] in part_item_allow]
+    vec_items = [t for t in vec_items if t[1] in part_item_allow]
+  if part_cons_allow is not None:
+    fts_cons = [t for t in fts_cons if t[1] in part_cons_allow]
+    vec_cons = [t for t in vec_cons if t[1] in part_cons_allow]
 
   fused = _fuse(
     [fts_items, fts_cons, vec_items, vec_cons],
@@ -157,10 +182,9 @@ def query(
       r.assoc_weight = weight
       if weight != 1.0:
         r.score *= weight
-  if cfg.sort == "asc":
-    hydrated.sort(key=lambda r: (r.timestamp, -r.score))
-  elif cfg.sort == "desc":
-    hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=True)
+  if cfg.sort in ("asc", "desc"):
+    hydrated = _apply_relevance_floor(hydrated, cfg.relevance_floor)
+    hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=cfg.sort == "desc")
   else:
     hydrated.sort(key=lambda r: r.score, reverse=True)
   if cfg.assoc_weights:
@@ -215,6 +239,50 @@ def _resolve_entity_allowlist(
     cons_ids = {
       r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
     }
+  return item_ids, cons_ids
+
+
+def _resolve_participant_allowlist(
+  conn: sqlite3.Connection,
+  identities: list[str],
+) -> tuple[set[str], set[str]]:
+  """Return (item_ids, consolidation_ids) the user took part in.
+
+  An item matches when its ``sender`` is one of ``identities`` or one of its
+  ``recipients`` is; a consolidation matches when any of its ``participants``
+  is. All comparisons are casefolded. Returns empty sets when no identity is
+  given, which the caller treats as "match nothing"."""
+  ids = [i.strip().lower() for i in identities if i and i.strip()]
+  if not ids:
+    return set(), set()
+  ph = ",".join("?" * len(ids))
+  item_rows = conn.execute(
+    f"""
+    SELECT id FROM items
+    WHERE lower(sender) IN ({ph})
+       OR EXISTS (
+         SELECT 1 FROM json_each(items.recipients) j
+         WHERE lower(j.value) IN ({ph})
+       )
+    """,
+    (*ids, *ids),
+  ).fetchall()
+  item_ids: set[str] = {
+    r[0] if not hasattr(r, "keys") else r["id"] for r in item_rows
+  }
+  cons_rows = conn.execute(
+    f"""
+    SELECT id FROM consolidations
+    WHERE EXISTS (
+      SELECT 1 FROM json_each(consolidations.participants) j
+      WHERE lower(j.value) IN ({ph})
+    )
+    """,
+    tuple(ids),
+  ).fetchall()
+  cons_ids: set[str] = {
+    r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
+  }
   return item_ids, cons_ids
 
 
@@ -291,11 +359,13 @@ def _fts_search_items(
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
+      AND (? = 0 OR items.timestamp_inferred = 0)
       AND items.consolidated_into IS NULL
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg) + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
+    _filter_params(match, cfg)
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), cfg.per_index_k),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["score"]))
@@ -351,10 +421,13 @@ def _vec_search_items(
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
+      AND (? = 0 OR items.timestamp_inferred = 0)
       AND items.consolidated_into IS NULL
     ORDER BY distance
     """,
-    (blob, cfg.per_index_k) + _vec_filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter),
+    (blob, cfg.per_index_k)
+    + _vec_filter_params(cfg)
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg)),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["distance"]))
@@ -389,6 +462,35 @@ def _vec_search_consolidations(
     ("consolidation", row["id"], rank, float(row["distance"]))
     for rank, row in enumerate(rows)
   ]
+
+
+def _apply_relevance_floor(
+  hydrated: list[HybridResult], floor: float
+) -> list[HybridResult]:
+  """Drop results scoring below ``floor`` × the top score.
+
+  Used before a timestamp sort so an occurrence query ("when did I first/last
+  …") ranks by date *among results that are actually relevant*, not letting a
+  weak tangential match win on recency alone. Never empties a non-empty set:
+  the top scorer always clears its own threshold. ``floor <= 0`` is a no-op."""
+  if floor <= 0 or not hydrated:
+    return hydrated
+  top = max(r.score for r in hydrated)
+  if top <= 0:
+    return hydrated
+  threshold = top * floor
+  return [r for r in hydrated if r.score >= threshold]
+
+
+def _exclude_inferred(cfg: HybridQueryConfig) -> int:
+  """1 when items with an inferred (fallback) timestamp must be excluded.
+
+  Recency/occurrence sorts (asc/desc) rank purely by timestamp, so an undated
+  note stamped with its import mtime would float to the top of "what's the
+  latest" or sink to "when did this first happen". Relevance sort ignores the
+  timestamp, so inferred items stay eligible there.
+  """
+  return 1 if cfg.sort != "relevance" else 0
 
 
 def _fts_query(text: str, synonyms: dict[str, list[str]] | None = None) -> str:

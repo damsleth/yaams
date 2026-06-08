@@ -41,6 +41,7 @@ def init_schema(
         lang TEXT,
         raw_metadata TEXT,
         ingested_at TEXT NOT NULL,
+        timestamp_inferred INTEGER NOT NULL DEFAULT 0,
         UNIQUE (source, source_id)
       );
 
@@ -244,6 +245,7 @@ def init_schema(
     )
     _migrate_items_consolidated_into(conn)
     _migrate_items_promoted_to(conn)
+    _migrate_items_timestamp_inferred(conn)
     _migrate_promotion_candidates(conn)
     _migrate_query_structured_fields(conn)
     _init_vector_table(conn, embedding_dim, vector_enabled)
@@ -282,6 +284,16 @@ def _migrate_items_promoted_to(conn: sqlite3.Connection) -> None:
   cols = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
   if "promoted_to" not in cols:
     conn.execute("ALTER TABLE items ADD COLUMN promoted_to TEXT")
+
+
+def _migrate_items_timestamp_inferred(conn: sqlite3.Connection) -> None:
+  # Existing rows default to 0 (real timestamp); only undated notes re-ingested
+  # after this migration get 1. Recency sorts use it to exclude undated items.
+  cols = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+  if "timestamp_inferred" not in cols:
+    conn.execute(
+      "ALTER TABLE items ADD COLUMN timestamp_inferred INTEGER NOT NULL DEFAULT 0"
+    )
 
 
 def _migrate_promotion_candidates(conn: sqlite3.Connection) -> None:

@@ -22,6 +22,10 @@ class Item:
   lang: Optional[str] = None
   raw_metadata: dict = field(default_factory=dict)
   ingested_at: datetime = field(default_factory=utc_now)
+  # True when ``timestamp`` was a fallback (e.g. file mtime) rather than a real
+  # date signal from the content. Recency-sorted retrieval excludes these so
+  # undated items don't masquerade as the freshest in the corpus.
+  timestamp_inferred: bool = False
 
 
 class Adapter(Protocol):

@@ -849,31 +849,47 @@ def _effective_since(conn, source: str, cfg: dict) -> datetime:
 
 def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   cfg = cfg or {}
-  teams_profiles = list((cfg.get("ingest", {}).get("teams", {}) or {}).get("profiles", []))
-  teams_sources = [f"teams_{p}" for p in teams_profiles if _teams_profile_active(p)]
-  tc_profiles = list((cfg.get("ingest", {}).get("teams_channels", {}) or {}).get("profiles", []))
-  tc_sources = [f"teams_channels_{p}" for p in tc_profiles if _teams_profile_active(p)]
-  cal_profiles = list((cfg.get("ingest", {}).get("calendar", {}) or {}).get("profiles", []))
-  cal_sources = [f"calendar_{p}" for p in cal_profiles]
-  mail_profiles = list((cfg.get("ingest", {}).get("mail", {}) or {}).get("profiles", []))
-  mail_sources = [f"mail_{p}" for p in mail_profiles]
+
+  def _piggy_sources(kind: str, prefix: str) -> list[str]:
+    profiles = list((cfg.get("ingest", {}).get(kind, {}) or {}).get("profiles", []))
+    active: list[str] = []
+    for p in profiles:
+      if _owa_piggy_profile_active(p):
+        active.append(f"{prefix}{p}")
+      else:
+        click.echo(
+          f"  skipping {prefix}{p}: owa-piggy profile '{p}' is deactivated",
+          err=True,
+        )
+    return active
+
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github", *teams_sources, *tc_sources, *cal_sources, *mail_sources,
+      "github",
+      *_piggy_sources("teams", "teams_"),
+      *_piggy_sources("teams_channels", "teams_channels_"),
+      *_piggy_sources("calendar", "calendar_"),
+      *_piggy_sources("mail", "mail_"),
     ]
   if source == "teams":
-    return teams_sources
+    return _piggy_sources("teams", "teams_")
   if source in ("teams-channels", "teams_channels"):
-    return tc_sources
+    return _piggy_sources("teams_channels", "teams_channels_")
   if source == "calendar":
-    return cal_sources
+    return _piggy_sources("calendar", "calendar_")
   if source == "mail":
-    return mail_sources
+    return _piggy_sources("mail", "mail_")
   return [source]
 
 
-def _teams_profile_active(profile: str) -> bool:
+def _owa_piggy_profile_active(profile: str) -> bool:
+  """Whether an owa-piggy profile is still activated (registered/scheduled).
+
+  Mail, calendar, teams and teams_channels all authenticate via owa-piggy
+  using the same profile aliases, so a profile that has been deactivated in
+  owa-piggy must not be ingested by any of them.
+  """
   profiles = sources_mod.discover_teams_profiles()
   if not profiles:
     return True
@@ -901,13 +917,15 @@ def _config_section(source: str) -> str:
 
 def _source_enabled(cfg: dict, source: str) -> bool:
   section = _config_section(source)
-  # Check teams_channels_ first: it also startswith "teams_", and slicing the
-  # wrong prefix would feed "channels_<p>" to the profile-active check.
-  if source.startswith("teams_channels_"):
-    if not _teams_profile_active(source[len("teams_channels_"):]):
-      return False
-  elif source.startswith("teams_") and not _teams_profile_active(source[len("teams_"):]):
-    return False
+  # owa-piggy-backed sources must not be ingested when their profile has been
+  # deactivated in owa-piggy. teams_channels_ is checked first: it also
+  # startswith "teams_", and slicing the wrong prefix would feed
+  # "channels_<p>" to the profile-active check.
+  for prefix in ("teams_channels_", "teams_", "calendar_", "mail_"):
+    if source.startswith(prefix):
+      if not _owa_piggy_profile_active(source[len(prefix):]):
+        return False
+      break
   return bool(cfg.get("ingest", {}).get(section, {}).get("enabled", False))
 
 

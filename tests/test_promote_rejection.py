@@ -22,7 +22,6 @@ from yaams.schema import init_schema
 from yaams.store import store_items
 from yaams.synthesize.llm import LLMResponse
 
-
 # --- fixtures / seeding ---------------------------------------------------
 
 

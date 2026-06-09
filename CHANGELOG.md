@@ -10,6 +10,18 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-09
+
+### Fixed
+
+- Ingest now skips owa-piggy-backed sources (mail, calendar, teams,
+  teams_channels) whose profile has been deactivated in owa-piggy
+  (`registered`/`scheduled` false), instead of attempting a fetch that fails
+  with `invalid_grant`. Previously only teams and teams_channels were guarded;
+  mail and calendar would still try the deactivated profile. Skipped profiles
+  are logged (`skipping mail_<p>: owa-piggy profile '<p>' is deactivated`) and
+  rejoin the ingest set automatically once re-activated.
+
 ## [0.4.0] - 2026-06-05
 
 ### Added

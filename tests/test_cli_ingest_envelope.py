@@ -160,6 +160,30 @@ def test_sources_to_run_skips_disabled_owa_piggy_profiles(monkeypatch):
   assert ingest_mod._source_enabled(cfg, "teams_crayon") is False
 
 
+def test_sources_to_run_skips_disabled_mail_and_calendar_profiles(monkeypatch):
+  """mail/calendar share owa-piggy profiles; a deactivated one is skipped."""
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+  monkeypatch.setattr(
+    ingest_mod.sources_mod,
+    "discover_teams_profiles",
+    lambda: [
+      {"alias": "nc", "enabled": True},
+      {"alias": "une", "enabled": False},
+    ],
+  )
+  cfg = {
+    "ingest": {
+      "mail": {"enabled": True, "profiles": ["nc", "une"]},
+      "calendar": {"enabled": True, "profiles": ["nc", "une"]},
+    }
+  }
+  assert ingest_mod._sources_to_run("mail", cfg) == ["mail_nc"]
+  assert ingest_mod._sources_to_run("calendar", cfg) == ["calendar_nc"]
+  assert ingest_mod._source_enabled(cfg, "mail_une") is False
+  assert ingest_mod._source_enabled(cfg, "calendar_une") is False
+  assert ingest_mod._source_enabled(cfg, "mail_nc") is True
+
+
 def test_sources_to_run_keeps_configured_teams_when_discovery_unavailable(monkeypatch):
   ingest_mod = importlib.import_module("yaams.cli.ingest")
   monkeypatch.setattr(

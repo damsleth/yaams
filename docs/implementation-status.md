@@ -77,7 +77,7 @@ through `pending_review`.
 `ingest`, `refresh`, `curate`, `query`, `feedback`, `signals`, `consolidate`,
 `promote {generate,list,review}`, `entities {list,add,remove,discover,denied,manage}`,
 `enrich retag`, `sources` (TUI), and `doctor`. Machine-capable action
-commands emit byte-identical JSON envelopes under the hugr CLI contract;
+commands emit byte-identical JSON envelopes under the YAAMS CLI contract;
 interactive commands reject `--json` with an actionable error.
 
 ## Operations

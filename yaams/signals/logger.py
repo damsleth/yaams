@@ -19,7 +19,7 @@ def new_query_id() -> str:
 def detect_provenance(explicit: str | None = None) -> str:
   """Return the provenance label for a logged query.
 
-  Caller can pass ``explicit`` (e.g. ``"cli"`` or ``"hugr"``); otherwise
+  Caller can pass ``explicit`` (e.g. ``"cli"``); otherwise
   detect a pytest run via the ``PYTEST_CURRENT_TEST`` env var that pytest
   exports during test execution. Falls back to ``"unknown"``.
   """

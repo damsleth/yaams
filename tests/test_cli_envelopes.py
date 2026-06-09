@@ -1,6 +1,6 @@
 """Action envelopes on data/action class commands.
 
-Pins the hugr CLI contract from hugr/CONVENTIONS.md for the simple
+Pins the YAAMS CLI contract for the simple
 commands in yaams/cli/main.py: init-db, setup, stats, reset-db.
 """
 from __future__ import annotations

@@ -1,12 +1,12 @@
 """JSON failure envelopes for `yaams query --json` (Plan 06).
 
-Pins the data-class failure contract from hugr CONVENTIONS.md:
+Pins the data-class failure contract from the YAAMS CLI conventions:
 
 - stdout is exactly ONE line of valid JSON
 - ``ok`` is ``false``
 - ``error.code`` is a stable identifier (config_not_found,
   config_invalid, db_open_failed)
-- exit code maps to CONVENTIONS exit codes (4 for not-found, 1 for
+- exit code maps to the YAAMS exit codes (4 for not-found, 1 for
   user error)
 - tracebacks go to stderr, never stdout
 """
@@ -86,8 +86,8 @@ def test_query_missing_db_emits_envelope(tmp_path):
 def test_query_traceback_only_on_stderr(tmp_path):
   """Stdout must remain pure JSON even when the body would traceback.
 
-  Hugr's passthrough only treats stdout as the result channel; any
-  bleed of stack frames would corrupt the envelope.
+  Callers treat stdout as the result channel only; any bleed of stack
+  frames would corrupt the envelope.
   """
   runner = CliRunner()
   result = runner.invoke(

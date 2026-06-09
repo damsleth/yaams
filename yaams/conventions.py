@@ -1,15 +1,10 @@
-"""YAAMS implementation of the hugr suite CLI contract.
+"""YAAMS CLI contract.
 
-The wire contract (action/error envelopes, NDJSON streaming, the
-doctor payload shape, the 0-5 exit-code taxonomy, redact()) is
-specified by CONVENTIONS.md in the hugr repo. YAAMS keeps a
-self-contained hand-copy of it here rather than depending on a
-separate package, so yaams installs cleanly with no third-party
-runtime dependency and stays independently shippable - the suite's
-loose-coupling axiom. Mirrors the equivalent files in
-cognitive-ledger, owa-piggy, and owa-tools.
-
-See https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md.
+Defines the wire contract used by YAAMS's CLI: action/error envelopes,
+NDJSON streaming, the doctor payload shape, the 0-5 exit-code taxonomy,
+and redact(). The contract is self-contained here with no third-party
+runtime dependency, so yaams installs cleanly and stays independently
+shippable.
 """
 
 from __future__ import annotations

@@ -15,13 +15,8 @@ def _candidate_config_paths() -> list[Path]:
   Order (first match wins):
 
   1. ``$YAAMS_CONFIG`` - explicit override.
-  2. ``$XDG_CONFIG_HOME/hugr/yaams/config.yaml`` - the suite path. This
-     is where ``hugr init`` writes the generated YAAMS config, so it
-     wins over the legacy direct-CLI location when both files exist.
-  3. ``$XDG_CONFIG_HOME/yaams/config.yaml`` - legacy direct-CLI path,
-     kept so existing users who installed YAAMS standalone keep
-     working.
-  4. ``./config.yaml`` - cwd fallback for ad-hoc / dev usage.
+  2. ``$XDG_CONFIG_HOME/yaams/config.yaml`` - the standard config path.
+  3. ``./config.yaml`` - cwd fallback for ad-hoc / dev usage.
 
   When ``XDG_CONFIG_HOME`` is unset, ``~/.config`` is used per the
   XDG Base Directory spec.
@@ -34,9 +29,6 @@ def _candidate_config_paths() -> list[Path]:
 
   xdg = os.environ.get("XDG_CONFIG_HOME")
   xdg_root = expand_path(xdg) if xdg else expand_path("~/.config")
-  # Suite path first (hugr init writes here), then legacy direct-CLI
-  # path. See docstring above for rationale.
-  candidates.append(xdg_root / "hugr" / "yaams" / "config.yaml")
   candidates.append(xdg_root / "yaams" / "config.yaml")
 
   candidates.append(expand_path("config.yaml"))
@@ -55,7 +47,8 @@ def resolve_config_path(explicit: str | Path | None = None) -> Path:
   searched = "\n  ".join(str(p) for p in _candidate_config_paths())
   raise FileNotFoundError(
     "Could not find a YAAMS config file. Searched:\n  " + searched +
-    "\nRun `hugr init` to generate one, or set $YAAMS_CONFIG."
+    "\nCreate a config at $XDG_CONFIG_HOME/yaams/config.yaml, "
+    "or set $YAAMS_CONFIG to point at one."
   )
 
 
@@ -159,7 +152,7 @@ def _validate_config(data: dict[str, Any], config_path: Path) -> None:
 def _apply_aliases(data: dict[str, Any]) -> None:
   """Rewrite suite-wide config aliases in place.
 
-  Per hugr CONVENTIONS.md, `ingest.ledger:` is a user-facing alias
+  `ingest.ledger:` is a user-facing alias
   for the internal `ingest.tier2_ledger:` block. The internal source
   id stays `tier2_ledger`; we accept the friendlier name on input.
 

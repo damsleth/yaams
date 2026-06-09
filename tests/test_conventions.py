@@ -1,4 +1,4 @@
-"""Tests for the hugr CLI contract helpers in yaams/conventions.py."""
+"""Tests for the YAAMS CLI contract helpers in yaams/conventions.py."""
 from __future__ import annotations
 
 import io
@@ -86,7 +86,7 @@ def test_action_envelope_shape_failure():
   env = action_envelope(
     command="ingest",
     ok=False,
-    error={"code": "auth_expired", "message": "M365 token expired", "hint": "hugr auth setup"},
+    error={"code": "auth_expired", "message": "M365 token expired", "hint": "run auth setup"},
   )
   assert env["ok"] is False
   assert env["error"]["code"] == "auth_expired"

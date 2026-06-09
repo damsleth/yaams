@@ -539,7 +539,7 @@ def dashboard_data(conn: sqlite3.Connection) -> dict[str, Any]:
     for r in miss_sources_rows
   }
 
-  # Provenance breakdown — surfaces how many rows came from tests / hugr /
+  # Provenance breakdown — surfaces how many rows came from tests /
   # the CLI / unknown sources, so noisy buckets stand out at a glance.
   prov_rows = conn.execute(
     "SELECT COALESCE(provenance, 'unknown') AS p, COUNT(*) AS n "

@@ -506,7 +506,7 @@ def test_render_dashboard_shows_noise_and_provenance():
 
 def test_detect_provenance_explicit_wins():
   assert detect_provenance("cli") == "cli"
-  assert detect_provenance("hugr") == "hugr"
+  assert detect_provenance("import") == "import"
 
 
 def test_detect_provenance_falls_through_to_pytest_when_none(monkeypatch):

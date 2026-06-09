@@ -156,8 +156,7 @@ Other agents may be working in this repo at the same time as you - running A/B t
 
 ## Cutting a release
 
-YAAMS ships to PyPI as `yaams` (a sibling of `hugr`, `cognitive-ledger`,
-`owa-tools`, and `owa-piggy`). The version lives in two places that must
+YAAMS ships to PyPI as `yaams`. The version lives in two places that must
 match: `pyproject.toml` `version` and `yaams/__init__.py` `__version__`.
 Pre-1.0, bump the minor for new features and the patch for fixes.
 

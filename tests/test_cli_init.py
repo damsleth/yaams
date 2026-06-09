@@ -1,6 +1,6 @@
 """`yaams init` writes a default config from the shipped example.
 
-Action-class command per hugr CONVENTIONS.md - emits an envelope
+Action-class command per the YAAMS CLI conventions - emits an envelope
 under --json, plain output otherwise, and refuses to clobber an
 existing file unless --force is passed.
 """

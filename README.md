@@ -23,17 +23,6 @@ Each tier is split between a public **engine** and a private **store**:
 Engines ship code, no data. Stores live outside the repo, are gitignored
 by default, and never get pushed.
 
-## Suite
-
-YAAMS is one of four tools in the **[hugr](https://github.com/damsleth/hugr)**
-memory suite. The suite gives you one install (`brew install
-damsleth/tap/hugr`), one verb surface (`hugr query`, `hugr ingest`,
-`hugr promote`, ...), and one CLI contract (output classes, exit
-codes, action envelopes - see
-[hugr/CONVENTIONS.md](https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md)).
-Power users can still call `yaams` directly and get byte-identical
-JSON.
-
 ## What
 
 ```

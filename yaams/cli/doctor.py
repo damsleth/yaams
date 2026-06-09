@@ -1,6 +1,6 @@
 """``yaams --doctor`` - data-class health check.
 
-Per the hugr CONVENTIONS.md spec:
+Per the YAAMS CLI conventions:
 
 - Output class: data.
 - Returns a structured JSON document on stdout (doctor schema) when

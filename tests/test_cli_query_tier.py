@@ -1,6 +1,6 @@
 """`yaams query` Phase 2b additions.
 
-Pins the hugr CONVENTIONS.md contract for the query data command:
+Pins the YAAMS CLI contract for the query data command:
 
 - `--json` flag as a machine-mode alias for `--format json`.
 - `--pretty` flag as the human-mode alias for `--format text`.

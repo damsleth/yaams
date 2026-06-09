@@ -1,4 +1,4 @@
-"""Config alias rewriting per hugr CONVENTIONS.md.
+"""Config alias rewriting per the YAAMS config conventions.
 
 Pins the `ingest.ledger:` -> `ingest.tier2_ledger:` rename. The
 internal source id stays `tier2_ledger`; the alias is a CLI-and-

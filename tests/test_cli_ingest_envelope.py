@@ -1,6 +1,6 @@
 """`yaams ingest --json` - action envelope + NDJSON streaming.
 
-Pins the hugr CONVENTIONS.md contract for the most complex action
+Pins the YAAMS CLI contract for the most complex action
 command: streaming progress lines on stdout, a final result envelope,
 and the partial-success exit-code rules (0 / 1 / 5).
 """

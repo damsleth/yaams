@@ -42,17 +42,14 @@ _LEDGER_SOURCE_ID = "tier2_ledger"
 
 
 def _cli_provenance() -> str | None:
-  """Tag CLI-issued queries; flag hugr passthrough when detectable.
+  """Tag CLI-issued queries.
 
-  ``hugr`` sets ``HUGR_PASSTHROUGH=1`` when shelling out to ``yaams query``
-  so those rows can be distinguished from a direct ``yaams query`` call.
   Returns ``None`` under pytest so ``detect_provenance`` falls through to
   its ``PYTEST_CURRENT_TEST`` check and tags the row ``"test"`` instead.
+  Otherwise returns ``"cli"`` for direct ``yaams query`` calls.
   """
   if os.environ.get("PYTEST_CURRENT_TEST"):
     return None
-  if os.environ.get("HUGR_PASSTHROUGH"):
-    return "hugr"
   return "cli"
 
 

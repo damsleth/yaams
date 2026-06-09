@@ -190,7 +190,7 @@ surface; pin to a specific version if you need stability.
 - Mail ingest uses `owa-mail --with-body` and now surfaces silently dropped
   messages in the run stats.
 - `embed` supports a quiet mode that suppresses progress bars.
-- The `hugr-conventions` dependency was dropped in favour of an inline
+- The external conventions dependency was dropped in favour of an inline
   vendored contract.
 
 ### Fixed
@@ -262,8 +262,8 @@ surface; pin to a specific version if you need stability.
   doesn't yet have the source block. First toggle (parent or profile
   child) writes a default block, so users no longer have to hand-edit
   YAML before the TUI can manage M365 sources.
-- `yaams doctor` is now also exposed as a subcommand for parity with
-  `hugr doctor`. The `--doctor` flag still works.
+- `yaams doctor` is now also exposed as a subcommand. The `--doctor`
+  flag still works.
 
 ## [0.1.5] - 2026-05-12
 

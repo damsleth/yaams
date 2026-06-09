@@ -168,10 +168,6 @@ def init_cmd(dest_path: str | None, force: bool, as_json: bool) -> None:
   The contents are a copy of ``config.yaml.example`` - edit it before
   running ``yaams ingest`` (the defaults disable everything except
   iMessage and Apple Mail).
-
-  This is the standalone-yaams equivalent of ``hugr init``'s yaams
-  step. Use ``hugr init`` instead if you want probe-driven defaults
-  and the broader suite setup.
   """
   import os
   from importlib import resources

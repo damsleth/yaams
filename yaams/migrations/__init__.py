@@ -97,14 +97,21 @@ def apply_pending(
     already_applied = applied(conn)
 
     # Stamp-on-detect: existing DB at v4 that has never been journaled.
-    # Insert the baseline record without calling apply() -- the DDL is already
-    # present.
+    # All five migrations (0001-0005) are already reflected in the schema --
+    # stamp them without calling apply() so apply_pending skips them.
     if len(already_applied) == 0 and _looks_like_v4(conn):
         now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations(name, applied_at) VALUES (?, ?)",
-            ("0001_baseline", now),
-        )
+        for stamp_name in (
+            "0001_baseline",
+            "0002_items_consolidated_into",
+            "0003_items_promoted_to",
+            "0004_promotion_candidates",
+            "0005_query_structured_fields",
+        ):
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(name, applied_at) VALUES (?, ?)",
+                (stamp_name, now),
+            )
         conn.commit()
         already_applied = applied(conn)
 

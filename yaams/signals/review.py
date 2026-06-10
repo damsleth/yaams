@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from yaams.render import DEFAULT_SNIPPET_CHARS
 from yaams.signals.logger import log_feedback
 
 VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin"}
@@ -68,7 +69,7 @@ def is_answer_shaped(shape: str | None, parser_fallback: bool = False) -> bool:
   return (shape or "").strip().lower() not in RECALL_SHAPES
 
 
-_SNIPPET_LEN = 480
+_SNIPPET_LEN = DEFAULT_SNIPPET_CHARS
 
 _HELP_LINES_ANSWER = [
   "h  hit (top result was right)      m  miss (none right)",

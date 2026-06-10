@@ -324,6 +324,29 @@ def _migrate_promotion_candidates(conn: sqlite3.Connection) -> None:
     "CREATE INDEX IF NOT EXISTS idx_promo_entity ON promotion_candidates(entity)"
   )
 
+  # Phase C (plan 38): dedup fields
+  existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(promotion_candidates)")}
+  for col, coltype in [
+    ("merge_with", "TEXT"),
+    ("dedup_similarity", "REAL"),
+  ]:
+    if col not in existing_cols:
+      conn.execute(f"ALTER TABLE promotion_candidates ADD COLUMN {col} {coltype}")
+
+  # Phase E (plan 40): conflict detection fields
+  existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(promotion_candidates)")}
+  for col, coltype in [
+    ("conflict_classification", "TEXT"),
+    ("conflict_confidence", "REAL"),
+    ("conflict_reason", "TEXT"),
+    ("conflict_model", "TEXT"),
+    ("conflict_checked_at", "TEXT"),
+    ("conflict_target_statement_hash", "TEXT"),
+    ("conflict_prompt_version", "INTEGER"),
+  ]:
+    if col not in existing_cols:
+      conn.execute(f"ALTER TABLE promotion_candidates ADD COLUMN {col} {coltype}")
+
 
 def _init_consolidations_vec(
   conn: sqlite3.Connection,

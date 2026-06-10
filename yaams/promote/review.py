@@ -46,6 +46,44 @@ def format_note(candidate: dict[str, Any]) -> str:
   else:
     item_ids_yaml = "yaams_source_item_ids: []"
 
+  # Conflict block — emitted only when conflict_classification is present
+  conflict_block = ""
+  conflict_classification = candidate.get("conflict_classification")
+  if conflict_classification:
+    merge_with = candidate.get("merge_with") or ""
+    dedup_similarity = candidate.get("dedup_similarity")
+    conflict_confidence = candidate.get("conflict_confidence")
+    conflict_reason = candidate.get("conflict_reason") or ""
+    conflict_model = candidate.get("conflict_model") or ""
+    conflict_checked_at = candidate.get("conflict_checked_at") or ""
+    conflict_target_statement_hash = candidate.get("conflict_target_statement_hash") or ""
+    conflict_prompt_version = candidate.get("conflict_prompt_version") or ""
+
+    lines = []
+    if merge_with:
+      lines.append(f"merge_with: {merge_with}")
+    if dedup_similarity is not None:
+      lines.append(f"dedup_similarity: {dedup_similarity:.2f}")
+    lines.append(f"conflict_classification: {conflict_classification}")
+    if conflict_confidence is not None:
+      lines.append(f"conflict_confidence: {conflict_confidence:.2f}")
+    lines.append(f"conflict_reason: {conflict_reason}")
+    lines.append(f"conflict_model: {conflict_model}")
+    lines.append(f"conflict_checked_at: {conflict_checked_at}")
+    if conflict_target_statement_hash:
+      lines.append(f"conflict_target_statement_hash: {conflict_target_statement_hash}")
+    if conflict_prompt_version:
+      lines.append(f"conflict_prompt_version: {conflict_prompt_version}")
+    conflict_block = "\n".join(lines) + "\n"
+  elif candidate.get("merge_with"):
+    # Phase C dedup only (no conflict classification)
+    merge_with = candidate.get("merge_with")
+    dedup_similarity = candidate.get("dedup_similarity")
+    lines = [f"merge_with: {merge_with}"]
+    if dedup_similarity is not None:
+      lines.append(f"dedup_similarity: {dedup_similarity:.2f}")
+    conflict_block = "\n".join(lines) + "\n"
+
   return (
     f"---\n"
     f"created: {now}\n"
@@ -60,6 +98,7 @@ def format_note(candidate: dict[str, Any]) -> str:
     f"yaams_candidate_id: {candidate_id}\n"
     f"yaams_entity: {_json.dumps(entity, ensure_ascii=False)}\n"
     f"{item_ids_yaml}\n"
+    f"{conflict_block}"
     f"---\n\n"
     f"# {title}\n\n"
     f"{body.strip()}\n\n"
@@ -83,6 +122,11 @@ def write_to_inbox(
   inbox_path: Path,
   content: str | None = None,
 ) -> Path:
+  # Contradictions are routed to _conflicts/ subdirectory so cogled can load
+  # them separately via `ledger inbox conflicts`.
+  if candidate.get("conflict_classification") == "contradict":
+    inbox_path = inbox_path / "_conflicts"
+
   inbox_path.mkdir(parents=True, exist_ok=True)
   filename = note_filename(candidate)
   dest = inbox_path / filename

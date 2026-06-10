@@ -55,6 +55,17 @@ class PromotionCandidate:
   created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
   backend: str = ""
   model: str | None = None
+  # Dedup fields (Phase C, plan 38)
+  merge_with: str | None = None
+  dedup_similarity: float | None = None
+  # Conflict classification fields (Phase E, plan 40)
+  conflict_classification: str | None = None
+  conflict_confidence: float | None = None
+  conflict_reason: str | None = None
+  conflict_model: str | None = None
+  conflict_checked_at: str | None = None
+  conflict_target_statement_hash: str | None = None
+  conflict_prompt_version: int | None = None
 
 
 @dataclass
@@ -91,6 +102,7 @@ def generate_candidates(
   config: PromoteConfig,
   entity_filter: str | None = None,
   on_progress: Callable[[str], None] | None = None,
+  conflict_cfg: "ConflictConfig | None" = None,
 ) -> list[PromotionCandidate]:
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
@@ -132,6 +144,68 @@ def generate_candidates(
         if on_progress:
           on_progress("  skipped (previously rejected)")
         continue
+      # --- Phase C: dedup check -------------------------------------------
+      from yaams.promote.dedup import DedupChecker, DedupConfig
+      dedup_cfg = DedupConfig()
+      dedup_checker = DedupChecker(dedup_cfg)
+      verdict = dedup_checker.check(candidate.draft_statement)
+      if verdict.decision == "duplicate":
+        if on_progress:
+          on_progress(f"  skipped (dedup duplicate: {verdict.target_path})")
+        continue
+      if verdict.decision == "merge":
+        candidate.merge_with = verdict.target_path
+        candidate.dedup_similarity = verdict.similarity
+
+      # --- Phase E: conflict classification --------------------------------
+      if (
+        conflict_cfg is not None
+        and conflict_cfg.enabled
+        and (
+          not conflict_cfg.only_for_merge_band
+          or verdict.decision == "merge"
+        )
+        and candidate.merge_with is not None
+        and config.note_index_path is not None
+      ):
+        existing_note = _load_note_from_index(
+          config.note_index_path, candidate.merge_with
+        )
+        if existing_note is not None:
+          from yaams.promote.conflict import classify_pair, strip_private_fences
+          from datetime import UTC, datetime as _dt
+          cv = classify_pair(
+            existing_note["title"],
+            existing_note["statement"],
+            candidate.draft_title,
+            candidate.draft_statement,
+            candidate.merge_with,
+            adapter,
+            conflict_cfg,
+          )
+          now_str = _dt.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+          existing_stmt_hash = "sha256:" + __import__("hashlib").sha256(
+            existing_note["statement"].encode()
+          ).hexdigest()
+
+          if cv.classification == "duplicate":
+            if on_progress:
+              on_progress(f"  skipped (conflict: duplicate via LLM)")
+            continue
+          elif cv.classification == "unrelated":
+            candidate.merge_with = None
+            candidate.dedup_similarity = None
+          # For supplement/contradict/unclassified: keep merge_with
+
+          # Store all conflict fields regardless
+          candidate.conflict_classification = cv.classification
+          candidate.conflict_confidence = cv.confidence
+          candidate.conflict_reason = strip_private_fences(cv.reason)
+          candidate.conflict_model = cv.model
+          candidate.conflict_checked_at = now_str
+          candidate.conflict_target_statement_hash = existing_stmt_hash
+          candidate.conflict_prompt_version = cv.prompt_version
+
       candidates.append(candidate)
       if on_progress:
         on_progress(f"  drafted: {candidate.draft_title}")
@@ -152,8 +226,12 @@ def store_candidates(
         """
         INSERT OR IGNORE INTO promotion_candidates
           (id, created_at, entity, draft_type, draft_title, draft_statement,
-           draft_body, draft_tags, source_item_ids, status, backend, model)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           draft_body, draft_tags, source_item_ids, status, backend, model,
+           merge_with, dedup_similarity,
+           conflict_classification, conflict_confidence, conflict_reason,
+           conflict_model, conflict_checked_at, conflict_target_statement_hash,
+           conflict_prompt_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
           c.id,
@@ -168,6 +246,15 @@ def store_candidates(
           "pending",
           c.backend,
           c.model,
+          c.merge_with,
+          c.dedup_similarity,
+          c.conflict_classification,
+          c.conflict_confidence,
+          c.conflict_reason,
+          c.conflict_model,
+          c.conflict_checked_at,
+          c.conflict_target_statement_hash,
+          c.conflict_prompt_version,
         ),
       )
       stored += 1
@@ -295,6 +382,30 @@ def _load_index_texts(index_path: Path | None) -> list[str]:
     return texts
   except Exception:
     return []
+
+
+def _load_note_from_index(
+  index_path: Path,
+  target_path: str,
+) -> dict[str, str] | None:
+  """Return {"title": ..., "statement": ...} for target_path from note_index.json.
+
+  Returns None if the file is missing, unreadable, or the entry lacks both
+  title and statement — so the caller can safely skip conflict classification.
+  """
+  try:
+    index = json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
+  except Exception:
+    return None
+
+  entries = index.get("entries") or {}
+  entry = entries.get(target_path) or {}
+  candidate = entry.get("candidate") or {}
+  title = candidate.get("title") or ""
+  statement = candidate.get("statement") or ""
+  if not title and not statement:
+    return None
+  return {"title": title, "statement": statement}
 
 
 def _candidate_id(entity_name: str, item_ids: list[str]) -> str:

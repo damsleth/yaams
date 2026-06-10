@@ -113,6 +113,15 @@ embed:
 synth:
   backend: dummy
 
+promote:
+  # LLM-based conflict classification: compares drafted candidates against the
+  # existing Tier 2 note they would merge into. Requires an LLM backend in the
+  # `synth` section. Off by default; flip `enabled: true` after enabling dedup.
+  conflict_detection:
+    enabled: false
+    only_for_merge_band: true   # only classify merge-band candidates
+    confidence_threshold: 0.7   # below this -> "unclassified"
+
 entities:
   # xx_ent_wiki_sm is the safe default for arbitrary-language content, but it
   # is wiki-trained and weak on chat/mail. If your non-Norwegian content is
@@ -136,3 +145,9 @@ entities:
       type: org
       aliases:
         - EX
+
+retrieve:
+  synonyms:
+    - [vakt, shift]
+    - [øvelse, exercise]
+    - [hytte, cabin]

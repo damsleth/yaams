@@ -71,11 +71,14 @@ def is_answer_shaped(shape: str | None, parser_fallback: bool = False) -> bool:
 
 _SNIPPET_LEN = DEFAULT_SNIPPET_CHARS
 
+# Number of chars to show for the expanded rank-1 snippet (step 1).
+_RANK1_SNIPPET_CHARS = 480
+
 _HELP_LINES_ANSWER = [
   "h  hit (top result was right)      m  miss (none right)",
   "1-9  correction (that rank is the right answer)",
   "n  noise (no real intent — cascades to identical text)",
-  "space/enter  skip                  u  undo last      q  quit & save",
+  "tab/right  expand next rank        u  undo last      q  quit & save",
   "up/down  scroll results            ?  toggle this help",
 ]
 
@@ -83,7 +86,7 @@ _HELP_LINES_RECALL = [
   "r  relevant (useful result set)    t  thin (too sparse/off to help)",
   "recall-shaped query — no single 'right' answer, so grade the set",
   "n  noise (no real intent — cascades to identical text)",
-  "space/enter  skip                  u  undo last      q  quit & save",
+  "tab/right  expand next rank        u  undo last      q  quit & save",
   "up/down  scroll results            ?  toggle this help",
 ]
 
@@ -92,6 +95,147 @@ def _help_lines(item: "ReviewItem") -> list[str]:
   if is_answer_shaped(item.shape, item.parser_fallback):
     return _HELP_LINES_ANSWER
   return _HELP_LINES_RECALL
+
+
+# ---------------------------------------------------------------------------
+# Default verdict heuristic (pure — testable without curses)
+# ---------------------------------------------------------------------------
+
+
+def default_verdict(item: "ReviewItem") -> str | None:
+  """Compute a heuristic default verdict for a review card.
+
+  Rules (in priority order):
+
+  1. If the query looks like a probe/test (very short, or contains "test",
+     or starts with "?") → ``"noise"``.
+  2. If no query tokens appear *anywhere* in any result snippet → ``"miss"``.
+  3. If any query token appears in the rank-1 snippet → ``"hit"``
+     (answer-shaped) or ``"relevant"`` (recall-shaped).
+  4. Otherwise (tokens found in lower ranks but not rank-1) → None (no default).
+
+  Returns the verdict string or None when no confident default can be inferred.
+  """
+  text = (item.text or "").strip()
+
+  # Rule 1: probe/noise detection.
+  if len(text) <= 4 or "test" in text.lower() or text.startswith("?"):
+    return "noise"
+
+  # Tokenise: lowercase alpha-only words of length >= 3, ignoring stop words.
+  _STOP = frozenset(
+    {"the", "and", "for", "are", "was", "had", "has", "did", "not", "what",
+     "when", "where", "who", "how", "that", "this", "with", "from", "which"}
+  )
+  tokens = [
+    w for w in text.lower().split()
+    if len(w) >= 3 and w.isalpha() and w not in _STOP
+  ]
+  if not tokens:
+    return None
+
+  # Rule 2: check if any token appears anywhere in any result.
+  all_snippets = " ".join(
+    (r.snippet or "").lower() for r in item.results
+  )
+  any_match_anywhere = any(tok in all_snippets for tok in tokens)
+  if not any_match_anywhere:
+    return "miss"
+
+  # Rule 3: check rank-1 snippet specifically.
+  rank1 = next((r for r in item.results if r.rank == 1), None)
+  if rank1 is None:
+    return None
+  rank1_text = (rank1.snippet or "").lower()
+  if any(tok in rank1_text for tok in tokens):
+    if is_answer_shaped(item.shape, item.parser_fallback):
+      return "hit"
+    return "relevant"
+
+  return None
+
+
+# ---------------------------------------------------------------------------
+# Pure card renderer (testable without curses)
+# ---------------------------------------------------------------------------
+
+
+def render_card_lines(
+  item: "ReviewItem",
+  *,
+  expanded_ranks: set[int] | None = None,
+  width: int = 80,
+) -> list[str]:
+  """Render a review card as plain-text lines (no curses).
+
+  ``expanded_ranks`` is the set of rank numbers whose snippets should be
+  shown in full. Defaults to ``{1}`` (rank 1 always expanded on open).
+  Ranks not in the set collapse to a single one-line header.
+
+  Returns a list of strings — each is one display line, not padded.
+  """
+  import textwrap
+
+  if expanded_ranks is None:
+    expanded_ranks = {1}
+
+  w = max(20, width - 2)
+  lines: list[str] = []
+
+  q_text = (item.text or "").replace("\n", " ").strip()
+  lines.append(f"Q: {q_text}")
+
+  meta_bits = [item.ts]
+  if item.parser_fallback:
+    meta_bits.append("shape unparsed")
+  elif item.shape:
+    meta_bits.append(f"shape {item.shape}")
+  if item.confidence:
+    meta_bits.append(f"conf {item.confidence}")
+  meta_bits.append(f"results {item.results_returned}")
+  if item.cited_count:
+    meta_bits.append(f"★ {item.cited_count} cited")
+  lines.append("  ·  ".join(str(b) for b in meta_bits))
+  lines.append(f"▸ {item.reason}")
+  lines.append("─" * min(w, width))
+
+  for r in item.results:
+    cited = "★" if r.cited else " "
+    src = r.source or "-"
+    ts_short = (r.timestamp or "")[:10]
+    sender_part = f"  {r.sender}" if r.sender else ""
+    header = f" {cited} {r.rank}. [{src}] {ts_short}{sender_part}".rstrip()
+
+    if r.rank in expanded_ranks:
+      lines.append(header)
+      # For rank 1 only, trim the snippet to _RANK1_SNIPPET_CHARS.
+      snippet = r.snippet or "(no snippet)"
+      if r.rank == 1 and len(snippet) > _RANK1_SNIPPET_CHARS:
+        snippet = snippet[: _RANK1_SNIPPET_CHARS - 1] + "…"
+      snippet_lines = snippet.splitlines() or [""]
+      for snippet_line in snippet_lines:
+        wrapped = textwrap.wrap(snippet_line, w - 4, subsequent_indent="  ") or [""]
+        for wl in wrapped:
+          lines.append("    " + wl)
+      lines.append("")
+    else:
+      # Collapsed: one-line summary "[N] Title (source, date)"
+      lines.append(f"  [{r.rank}] {header.strip()}  (tab to expand)")
+
+  dv = default_verdict(item)
+  if is_answer_shaped(item.shape, item.parser_fallback):
+    if dv:
+      keybar = f"enter={dv}(default)  h  m  1-9  n  space=skip  u  q  ?"
+    else:
+      keybar = "h  m  1-9  n  space=skip  u  q  ?"
+  else:
+    if dv:
+      keybar = f"enter={dv}(default)  r  t  n  space=skip  u  q  ?"
+    else:
+      keybar = "r  t  n  space=skip  u  q  ?"
+  lines.append(keybar)
+
+  return lines
 
 
 @dataclass
@@ -634,10 +778,21 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
   # text on every subsequent card with that text.
   cascaded_texts: set[str] = set()
   flash = ""
+  # Step 1: track which ranks are expanded per card.
+  # On card open, only rank 1 is expanded. Tab/right-arrow expands the next.
+  expanded_ranks: set[int] = {1}
+
+  def _reset_card_state() -> None:
+    nonlocal scroll, expanded_ranks
+    scroll = 0
+    expanded_ranks = {1}
 
   while idx < len(queue):
     item = queue[idx]
-    _draw_card(stdscr, item, idx, len(queue), len(entries), scroll, show_help, flash)
+    _draw_card(
+      stdscr, item, idx, len(queue), len(entries),
+      scroll, show_help, flash, expanded_ranks,
+    )
     flash = ""
     ch = stdscr.getch()
 
@@ -654,6 +809,18 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
     if ch in (curses.KEY_UP, ord("K")):
       scroll = max(0, scroll - 1)
       continue
+
+    # Tab or right-arrow: expand the next collapsed rank.
+    if ch in (ord("\t"), curses.KEY_RIGHT):
+      all_ranks = sorted(r.rank for r in item.results)
+      collapsed = [r for r in all_ranks if r not in expanded_ranks]
+      if collapsed:
+        expanded_ranks.add(collapsed[0])
+        flash = f"expanded rank {collapsed[0]}"
+      else:
+        flash = "all ranks expanded"
+      continue
+
     if ch == ord("u"):
       if history:
         prev_idx, count = history.pop()
@@ -661,15 +828,75 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
           if entries:
             entries.pop()
         idx = prev_idx
-        scroll = 0
+        _reset_card_state()
         flash = f"undid last verdict ({count} row{'s' if count != 1 else ''})"
       else:
         flash = "nothing to undo"
       continue
-    if ch in (ord(" "), 10, 13):  # space / enter — skip
+
+    # Enter: apply default verdict (if any), otherwise skip.
+    if ch in (10, 13):
+      dv = default_verdict(item)
+      if dv == "noise":
+        text = item.text or ""
+        if text in cascaded_texts:
+          entry = {"query_id": item.query_id, "kind": "noise"}
+          entries.append(entry)
+          history.append((idx, 1))
+          flash = "noise (default, already cascaded earlier in session)"
+        else:
+          cascade = noise_cascade(conn, query_id=item.query_id, text=text)
+          already = {e["query_id"] for e in entries}
+          fresh = [e for e in cascade if e["query_id"] not in already]
+          entries.extend(fresh)
+          cascaded_texts.add(text)
+          history.append((idx, len(fresh)))
+          flash = f"noise (default) — cascaded {len(fresh)} row(s)"
+        idx += 1
+        _reset_card_state()
+      elif dv == "hit" and item.results:
+        entry: dict[str, Any] = {
+          "query_id": item.query_id, "kind": "hit",
+          "result_id": item.results[0].result_id,
+        }
+        entries.append(entry)
+        history.append((idx, 1))
+        flash = "hit (default)"
+        idx += 1
+        _reset_card_state()
+      elif dv == "miss":
+        entry = {"query_id": item.query_id, "kind": "miss"}
+        entries.append(entry)
+        history.append((idx, 1))
+        flash = "miss (default)"
+        idx += 1
+        _reset_card_state()
+      elif dv == "relevant":
+        entry = {"query_id": item.query_id, "kind": "relevant"}
+        entries.append(entry)
+        history.append((idx, 1))
+        flash = "relevant (default)"
+        idx += 1
+        _reset_card_state()
+      elif dv == "thin":
+        entry = {"query_id": item.query_id, "kind": "thin"}
+        entries.append(entry)
+        history.append((idx, 1))
+        flash = "thin (default)"
+        idx += 1
+        _reset_card_state()
+      else:
+        # No default — skip.
+        history.append((idx, 0))
+        idx += 1
+        _reset_card_state()
+      continue
+
+    # Space: skip.
+    if ch == ord(" "):
       history.append((idx, 0))
       idx += 1
-      scroll = 0
+      _reset_card_state()
       continue
 
     key = chr(ch) if 0 <= ch < 256 else ""
@@ -693,24 +920,30 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
         history.append((idx, len(fresh)))
         flash = f"noise — cascaded {len(fresh)} row(s) with identical text"
       idx += 1
-      scroll = 0
+      _reset_card_state()
       continue
 
     entry = verdict_signal(item, key)
     if entry is None:
       answer_shaped = is_answer_shaped(item.shape, item.parser_fallback)
       keys = "h/m/n, 1-9" if answer_shaped else "r/t/n"
-      flash = f"'{key}' — no verdict ({keys}, space=skip, ? help)"
+      flash = f"'{key}' — no verdict ({keys}, tab=expand, ? help)"
       continue
     entries.append(entry)
     history.append((idx, 1))
     idx += 1
-    scroll = 0
+    _reset_card_state()
 
 
-def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # pragma: no cover
+def _draw_card(  # pragma: no cover
+  stdscr, item, idx, total, judged, scroll, show_help, flash,
+  expanded_ranks: "set[int] | None" = None,
+):
   import curses
   import textwrap
+
+  if expanded_ranks is None:
+    expanded_ranks = {1}
 
   stdscr.erase()
   height, width = stdscr.getmaxyx()
@@ -750,24 +983,34 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
   footer_rows = 3 + (len(help_lines) if show_help else 0)
   body_height = max(1, height - body_top - footer_rows)
 
-  # Render each result as a block: header + wrapped snippet lines.
-  # Snippets may contain newlines (from render_consolidation_snippet);
-  # preserve them by wrapping each line independently.
+  # Render each result as a block.
+  # Expanded ranks: header + wrapped snippet lines.
+  # Collapsed ranks: one-line summary only.
   rendered: list[tuple[str, int]] = []  # (text, attr-flag: 0 normal, 1 dim, 2 bold)
   for r in item.results:
     cited = "★" if r.cited else " "
     src = r.source or "-"
     ts_short = (r.timestamp or "")[:10]
     header = f" {cited} {r.rank}. [{src}] {ts_short}  {r.sender or ''}".rstrip()
-    rendered.append((header, 2))
-    snippet_lines = (r.snippet or "(no snippet)").splitlines() or [""]
-    for snippet_line in snippet_lines:
-      wrapped_lines = textwrap.wrap(
-        snippet_line, w - 4, subsequent_indent="  "
-      ) or [""]
-      for wrapped in wrapped_lines:
-        rendered.append(("    " + wrapped, 1))
-    rendered.append(("", 0))
+
+    if r.rank in expanded_ranks:
+      rendered.append((header, 2))
+      # For rank 1 only, trim to _RANK1_SNIPPET_CHARS to keep it compact.
+      snippet = r.snippet or "(no snippet)"
+      if r.rank == 1 and len(snippet) > _RANK1_SNIPPET_CHARS:
+        snippet = snippet[: _RANK1_SNIPPET_CHARS - 1] + "…"
+      snippet_lines = snippet.splitlines() or [""]
+      for snippet_line in snippet_lines:
+        wrapped_lines = textwrap.wrap(
+          snippet_line, w - 4, subsequent_indent="  "
+        ) or [""]
+        for wrapped in wrapped_lines:
+          rendered.append(("    " + wrapped, 1))
+      rendered.append(("", 0))
+    else:
+      # Collapsed: single line with rank, source, date — tab expands.
+      collapsed_line = f"  [{r.rank}] {header.strip()}  (tab=expand)"
+      rendered.append((collapsed_line, 0))
 
   visible = rendered[scroll : scroll + body_height]
   for i, (text, attr_flag) in enumerate(visible):
@@ -782,10 +1025,12 @@ def _draw_card(stdscr, item, idx, total, judged, scroll, show_help, flash):  # p
 
   foot = height - footer_rows
   line(foot, "─" * w)
+  dv = default_verdict(item)
+  enter_label = f"enter={dv}(default)  " if dv else ""
   if is_answer_shaped(item.shape, item.parser_fallback):
-    keybar = "[h]it  [m]iss  [1-9]correction  [n]oise  [space]skip  [u]ndo  [q]uit  [?]help"
+    keybar = f"{enter_label}[h]it  [m]iss  [1-9]corr  [n]oise  [space]skip  [tab]expand  [u]  [q]  [?]"
   else:
-    keybar = "[r]elevant  [t]hin  [n]oise  [space]skip  [u]ndo  [q]uit  [?]help"
+    keybar = f"{enter_label}[r]elevant  [t]hin  [n]oise  [space]skip  [tab]expand  [u]  [q]  [?]"
   line(foot + 1, keybar, curses.A_BOLD)
   if flash:
     line(foot + 2, flash, curses.A_REVERSE)

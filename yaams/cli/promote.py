@@ -272,10 +272,14 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
 
   from yaams.promote.candidates import (
     fetch_pending,
-    mark_items_promoted,
     update_status,
   )
-  from yaams.promote.review import format_note, render_candidate, write_to_inbox
+  from yaams.promote.review import (
+    format_note,
+    render_candidate,
+    write_candidate_to_ledger,
+    write_to_inbox,
+  )
 
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
@@ -315,22 +319,182 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
           break
 
         if choice in ("a", "e"):
-          note_content = format_note(c)
           if choice == "e":
-            note_content = click.edit(note_content) or note_content
-          dest = write_to_inbox(c, inbox_path, content=note_content)
-          import json as _j
-          try:
-            item_ids = _j.loads(c.get("source_item_ids") or "[]")
-          except Exception:
-            item_ids = []
-          mark_items_promoted(conn, item_ids, str(dest))
-          update_status(conn, c["id"], "accepted", promoted_path=str(dest))
-          click.echo(f"  Accepted -> {dest}")
+            note_content = click.edit(format_note(c)) or format_note(c)
+            from yaams.promote.review import write_to_inbox as _wti
+            from yaams.promote.candidates import mark_items_promoted, update_status as _us
+            import json as _j
+            dest = _wti(c, inbox_path, content=note_content)
+            try:
+              item_ids = _j.loads(c.get("source_item_ids") or "[]")
+            except Exception:
+              item_ids = []
+            mark_items_promoted(conn, item_ids, str(dest))
+            _us(conn, c["id"], "accepted", promoted_path=str(dest))
+            click.echo(f"  Accepted -> {dest}")
+          else:
+            result = write_candidate_to_ledger(conn, c, inbox_path)
+            click.echo(f"  Accepted -> {result['ledger_note']}")
           break
 
         click.echo("  Unknown choice. Use a/e/r/s/q.")
 
     click.echo("Review complete.")
+  finally:
+    conn.close()
+
+
+@promote_group.command("commit")
+@config_option
+@click.option(
+  "--candidate",
+  "candidate_ids",
+  multiple=True,
+  metavar="ID",
+  help="Commit one specific candidate (repeatable).",
+)
+@click.option("--all", "commit_all", is_flag=True, help="Commit all pending candidates.")
+@click.option(
+  "--min-score",
+  type=float,
+  default=None,
+  metavar="FLOAT",
+  help="Commit candidates with signal_score >= FLOAT.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
+def promote_commit(
+  config_path: str,
+  candidate_ids: tuple[str, ...],
+  commit_all: bool,
+  min_score: float | None,
+  as_json: bool,
+) -> None:
+  """Non-interactively commit promotion candidates to the Tier 2 ledger inbox.
+
+  Targeting: supply --all, one or more --candidate <id>, or --min-score <f>.
+  All three may be combined. Without any targeting flag the command errors.
+
+  Idempotent: re-committing an already-accepted candidate is a no-op (counted
+  as 'skipped', not an error).
+  """
+  import time as _time
+
+  from yaams.promote.candidates import fetch_pending
+  from yaams.promote.review import write_candidate_to_ledger
+
+  t0 = _time.monotonic()
+  command = "promote commit"
+
+  if not commit_all and not candidate_ids and min_score is None:
+    msg = (
+      "No targeting flag given. "
+      "Use --all, --candidate <id>, or --min-score <float>."
+    )
+    if as_json:
+      emit_action(action_envelope(
+        command=command, ok=False,
+        error={"code": "no_target", "message": msg},
+      ))
+    else:
+      click.echo(f"Error: {msg}", err=True)
+    sys.exit(EXIT_USER_ERROR)
+
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command=command, ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+      ))
+    else:
+      click.echo(f"Error loading config: {exc}", err=True)
+    sys.exit(EXIT_USER_ERROR)
+
+  promote_cfg_raw = cfg.get("promote", {}) or {}
+  inbox_path = _resolve_inbox_path(promote_cfg_raw)
+
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+
+    # Build the candidate pool to commit.
+    # With --all we fetch every candidate (pending + accepted) so that
+    # already-accepted ones are counted as 'skipped' (idempotency contract).
+    # With --min-score alone we only want to commit pending ones that qualify.
+    if commit_all:
+      all_pending = fetch_pending(conn, "all")
+    elif min_score is not None:
+      all_pending = fetch_pending(conn, "pending")
+    else:
+      all_pending = []
+
+    # Merge explicit ids (fetch them regardless of status so we can be idempotent)
+    explicit: list[dict] = []
+    if candidate_ids:
+      rows = fetch_pending(conn, "all")
+      by_id = {r["id"]: r for r in rows}
+      missing = [cid for cid in candidate_ids if cid not in by_id]
+      if missing:
+        msg = f"Unknown candidate id(s): {', '.join(missing)}"
+        if as_json:
+          emit_action(action_envelope(
+            command=command, ok=False,
+            error={"code": "unknown_candidate", "message": msg},
+          ))
+        else:
+          click.echo(f"Error: {msg}", err=True)
+        sys.exit(EXIT_USER_ERROR)
+      explicit = [by_id[cid] for cid in candidate_ids]
+
+    # Apply min-score filter on the pending pool
+    pool = list(all_pending)
+    if min_score is not None:
+      pool = [c for c in pool if (c.get("signal_score") or 0.0) >= min_score]
+
+    # Merge explicit + pool, deduplicate by id preserving order
+    seen_ids: set[str] = set()
+    candidates_to_commit: list[dict] = []
+    for c in explicit + pool:
+      if c["id"] not in seen_ids:
+        seen_ids.add(c["id"])
+        candidates_to_commit.append(c)
+
+    items: list[dict] = []
+    promoted = 0
+    skipped = 0
+
+    for c in candidates_to_commit:
+      result = write_candidate_to_ledger(conn, c, inbox_path)
+      items.append(result)
+      if result["status"] == "written":
+        promoted += 1
+        if not as_json:
+          click.echo(f"  Committed -> {result['ledger_note']}")
+      else:
+        skipped += 1
+        if not as_json:
+          click.echo(f"  Skipped (already accepted): {result['candidate_id']}")
+
+    duration_ms = (_time.monotonic() - t0) * 1000.0
+
+    if as_json:
+      import json as _json
+      import sys as _sys
+      envelope = {
+        "tool": "yaams",
+        "command": command,
+        "ok": True,
+        "exit_code": 0,
+        "promoted": promoted,
+        "skipped": skipped,
+        "items": items,
+        "duration_ms": round(duration_ms, 1),
+      }
+      click.echo(_json.dumps(envelope, ensure_ascii=False))
+    else:
+      click.echo(f"\nCommitted {promoted} candidate(s), {skipped} already accepted.")
+
   finally:
     conn.close()

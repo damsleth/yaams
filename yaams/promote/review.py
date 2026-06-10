@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json as _json
 import re
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,52 @@ def write_to_inbox(
 
   dest.write_text(content or format_note(candidate), encoding="utf-8")
   return dest
+
+
+def write_candidate_to_ledger(
+  conn: sqlite3.Connection,
+  candidate: dict[str, Any],
+  inbox_path: Path,
+) -> dict[str, Any]:
+  """Write one candidate to the inbox and update the DB — shared write path
+  used by both the interactive ``promote review`` TUI and the headless
+  ``promote commit`` verb.
+
+  Idempotent: if the candidate already has status='accepted' in the DB we
+  return its existing promoted_path without writing a duplicate file.
+
+  Returns a dict with keys: ``candidate_id``, ``ledger_note``, ``status``
+  where status is either ``'written'`` (new write) or ``'already_accepted'``
+  (no-op, idempotent).
+  """
+  from yaams.promote.candidates import mark_items_promoted, update_status
+
+  cid = str(candidate.get("id") or "")
+
+  # Idempotency check — if already accepted, return existing path
+  if candidate.get("status") == "accepted":
+    return {
+      "candidate_id": cid,
+      "ledger_note": candidate.get("promoted_path") or "",
+      "status": "already_accepted",
+    }
+
+  note_content = format_note(candidate)
+  dest = write_to_inbox(candidate, inbox_path, content=note_content)
+
+  try:
+    item_ids = _json.loads(candidate.get("source_item_ids") or "[]")
+  except Exception:
+    item_ids = []
+
+  mark_items_promoted(conn, item_ids, str(dest))
+  update_status(conn, cid, "accepted", promoted_path=str(dest))
+
+  return {
+    "candidate_id": cid,
+    "ledger_note": str(dest),
+    "status": "written",
+  }
 
 
 def render_candidate(candidate: dict[str, Any], index: int, total: int) -> str:

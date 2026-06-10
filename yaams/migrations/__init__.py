@@ -59,6 +59,24 @@ def applied(conn: sqlite3.Connection) -> set[str]:
         return set()
 
 
+def _looks_like_v4(conn: sqlite3.Connection) -> bool:
+    """Return True if the database appears to be an existing v4 schema.
+
+    Checks for presence of items.promoted_to column AND promotion_candidates
+    table -- both introduced at user_version=4.
+    """
+    try:
+        item_cols = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+        if "promoted_to" not in item_cols:
+            return False
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='promotion_candidates'"
+        ).fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+
+
 def apply_pending(
     conn: sqlite3.Connection, *, dry_run: bool = False
 ) -> list[str]:
@@ -66,15 +84,30 @@ def apply_pending(
 
     1. CREATE TABLE IF NOT EXISTS schema_migrations(...)
     2. Read applied names
-    3. For each pending migration in order:
+    3. If no migrations applied yet and DB looks like v4: stamp 0001_baseline
+       without running apply() (existing DB fast-path).
+    4. For each pending migration in order:
        BEGIN IMMEDIATE -> call migration.apply(conn) -> INSERT into schema_migrations -> COMMIT
-    4. Return list of names applied (empty if nothing pending)
+    5. Return list of names applied (empty if nothing pending)
     """
     # Ensure the tracking table exists (outside any per-migration transaction)
     conn.execute(_CREATE_TABLE_SQL)
     conn.commit()
 
     already_applied = applied(conn)
+
+    # Stamp-on-detect: existing DB at v4 that has never been journaled.
+    # Insert the baseline record without calling apply() -- the DDL is already
+    # present.
+    if len(already_applied) == 0 and _looks_like_v4(conn):
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(name, applied_at) VALUES (?, ?)",
+            ("0001_baseline", now),
+        )
+        conn.commit()
+        already_applied = applied(conn)
+
     all_migrations = discover()
     pending = [m for m in all_migrations if m.name not in already_applied]
 

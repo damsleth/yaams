@@ -36,6 +36,7 @@ from yaams.signals import (
 @click.option("--source", default=None, help="Restrict to queries with this source in source_filter.")
 @click.option("--limit", default=50, show_default=True, type=int, help="Cap queue length.")
 @click.option("--unjudged-only/--all", default=True, show_default=True, help="Skip queries that already have feedback.")
+@click.option("--deferred", "deferred_only", is_flag=True, default=False, help="Surface only deferred queries (marked ? in the TUI).")
 @click.option("--queue", "as_queue", is_flag=True, help="Print the prioritized queue as text and exit.")
 @click.option("--stats", "as_stats", is_flag=True, help="Print the dashboard and exit.")
 @click.option("--json", "as_json", is_flag=True, help="Emit the queue or dashboard as JSON on stdout.")
@@ -46,6 +47,7 @@ def review_cmd(
   source: str | None,
   limit: int,
   unjudged_only: bool,
+  deferred_only: bool,
   as_queue: bool,
   as_stats: bool,
   as_json: bool,
@@ -97,6 +99,7 @@ def review_cmd(
       source=source,
       limit=limit,
       unjudged_only=unjudged_only,
+      deferred_only=deferred_only,
     )
 
     if use_tui:

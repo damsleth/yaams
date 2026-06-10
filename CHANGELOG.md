@@ -10,6 +10,12 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+
+- Configured `retrieve.synonyms` concept groups for query-time FTS expansion,
+  so Norwegian and English pairs like `vakt`/`shift` and `øvelse`/`exercise`
+  can bridge zero-result lexical misses.
+
 ## [0.4.1] - 2026-06-09
 
 ### Fixed

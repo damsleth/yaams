@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -21,7 +20,6 @@ import pytest
 from yaams.promote.conflict import (
     CONFLICT_PROMPT_VERSION,
     ConflictConfig,
-    ConflictVerdict,
     _build_prompt,
     _parse_json_response,
     classify_pair,

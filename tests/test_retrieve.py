@@ -467,6 +467,40 @@ def test_synonym_expansion_disabled_misses_alias_only_document():
   )
 
 
+def test_configured_synonym_expansion_reaches_cross_lingual_document():
+  conn = _open_db()
+  items = [
+    _make_item(content="Ops shift handoff covered the deploy window", msg_id="1"),
+    _make_item(content="totally unrelated lunch plans", msg_id="2"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(
+    include_consolidations=False,
+    synonym_groups=[["vakt", "shift"]],
+  )
+  results = query(conn, "vakt", config=cfg)
+
+  assert any("shift handoff" in r.content for r in results)
+
+
+def test_fts_prefix_expansion_reaches_norwegian_inflection():
+  conn = _open_db()
+  items = [
+    _make_item(content="Planen for øvelsen ble avklart i møtet", msg_id="1"),
+    _make_item(content="totally unrelated lunch plans", msg_id="2"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  results = query(
+    conn,
+    "øvelse",
+    config=HybridQueryConfig(include_consolidations=False),
+  )
+
+  assert any("øvelsen" in r.content for r in results)
+
+
 def test_association_boost_surfaces_associated_doc_below_exact_match():
   from yaams.retrieve.associate import expand_query_entities
 

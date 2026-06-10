@@ -21,7 +21,27 @@ import json
 import sqlite3
 
 
-def load_synonym_groups(conn: sqlite3.Connection) -> dict[str, list[str]]:
+def normalize_synonym_groups(raw: object) -> list[list[str]]:
+  """Normalize config ``retrieve.synonyms`` into term groups."""
+  if raw is None:
+    return []
+  if not isinstance(raw, list):
+    raise ValueError("Config section 'retrieve.synonyms' must be a list")
+
+  groups: list[list[str]] = []
+  for group in raw:
+    if not isinstance(group, list):
+      raise ValueError("Each retrieve.synonyms entry must be a list")
+    terms = [term.strip() for term in group if isinstance(term, str) and term.strip()]
+    if len(terms) >= 2:
+      groups.append(terms)
+  return groups
+
+
+def load_synonym_groups(
+  conn: sqlite3.Connection,
+  configured_groups: list[list[str]] | None = None,
+) -> dict[str, list[str]]:
   """Map each casefolded surface form to every surface form in its group.
 
   A group is one canonical name plus its aliases. Both the canonical name
@@ -30,6 +50,8 @@ def load_synonym_groups(conn: sqlite3.Connection) -> dict[str, list[str]]:
   the entities table is unreadable (fail soft).
   """
   groups: dict[str, list[str]] = {}
+  for group in configured_groups or []:
+    _merge_group(groups, group)
   try:
     # Skip denied entities (pending_review = 2) so pruned junk does not expand.
     rows = conn.execute(
@@ -53,19 +75,38 @@ def load_synonym_groups(conn: sqlite3.Connection) -> dict[str, list[str]]:
         if isinstance(alias, str) and alias.strip():
           forms.append(alias.strip())
 
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for form in forms:
-      key = form.casefold()
-      if key not in seen:
-        seen.add(key)
-        uniq.append(form)
-    if len(uniq) < 2:
-      # A lone canonical with no aliases adds nothing to expand.
-      continue
-    for form in uniq:
-      groups.setdefault(form.casefold(), uniq)
+    _merge_group(groups, forms)
   return groups
+
+
+def _merge_group(groups: dict[str, list[str]], forms: list[str]) -> None:
+  seen: set[str] = set()
+  uniq: list[str] = []
+  for form in forms:
+    clean = form.strip()
+    key = clean.casefold()
+    if clean and key not in seen:
+      seen.add(key)
+      uniq.append(clean)
+  if len(uniq) < 2:
+    return
+
+  merged: list[str] = []
+  for form in uniq:
+    existing = groups.get(form.casefold())
+    if existing:
+      merged.extend(existing)
+    merged.append(form)
+
+  seen.clear()
+  out: list[str] = []
+  for form in merged:
+    key = form.casefold()
+    if key not in seen:
+      seen.add(key)
+      out.append(form)
+  for form in out:
+    groups[form.casefold()] = out
 
 
 def expand_fts_tokens(

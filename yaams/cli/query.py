@@ -33,6 +33,7 @@ from yaams.retrieve import (
 )
 from yaams.retrieve.associate import expand_query_entities
 from yaams.retrieve.metadata import entities_matching
+from yaams.retrieve.synonyms import normalize_synonym_groups
 from yaams.schema import init_schema
 from yaams.signals import log_query, new_query_id
 from yaams.synthesize import llm_adapter_from_config, synthesize_answer
@@ -51,6 +52,12 @@ def _cli_provenance() -> str | None:
   if os.environ.get("PYTEST_CURRENT_TEST"):
     return None
   return "cli"
+
+
+def _configured_synonym_groups(cfg: dict) -> list[list[str]]:
+  retrieve = cfg.get("retrieve")
+  raw = retrieve.get("synonyms") if isinstance(retrieve, dict) else None
+  return normalize_synonym_groups(raw)
 
 
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
@@ -308,6 +315,7 @@ def query_cmd(
         sort=sort_map[sort] if sort else "relevance",
         include_consolidations=not no_consolidations,
         expand_synonyms=not no_synonyms,
+        synonym_groups=_configured_synonym_groups(cfg),
         lang_filter=lang_filter,
       )
       if parsed is not None:

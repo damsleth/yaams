@@ -125,7 +125,7 @@ def _validate_config(data: dict[str, Any], config_path: Path) -> None:
   tracebacks well after load: a top-level section that isn't a mapping,
   and a numeric knob set to a non-numeric (or non-positive) value.
   """
-  for section in ("ingest", "embed", "synth", "entities"):
+  for section in ("ingest", "embed", "synth", "entities", "retrieve"):
     value = data.get(section)
     if value is not None and not isinstance(value, dict):
       raise ValueError(

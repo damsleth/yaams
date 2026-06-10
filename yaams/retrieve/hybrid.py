@@ -52,6 +52,7 @@ class HybridQueryConfig:
   entity_filter: list[str] | None = None
   expand_synonyms: bool = True
   synonyms: dict[str, list[str]] | None = None
+  synonym_groups: list[list[str]] | None = None
   # Map of lowercased canonical entity name -> association weight in (0, 1].
   # Query entities sit at 1.0; associated entities carry their merged weight.
   # When set, hydrated scores are multiplied by the result's best weight so
@@ -114,7 +115,7 @@ def query(
     return []
 
   if cfg.expand_synonyms and cfg.synonyms is None:
-    cfg.synonyms = load_synonym_groups(conn)
+    cfg.synonyms = load_synonym_groups(conn, cfg.synonym_groups)
 
   fetch_k = cfg.per_index_k
   if cfg.high_quality:

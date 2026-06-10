@@ -7,9 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from yaams.synthesize.llm import LLMAdapter
+
+if TYPE_CHECKING:
+  from yaams.promote.conflict import ConflictConfig
 
 GENERATE_PROMPT = """\
 You are drafting an atomic note for a personal knowledge base.
@@ -172,8 +175,10 @@ def generate_candidates(
           config.note_index_path, candidate.merge_with
         )
         if existing_note is not None:
+          from datetime import UTC
+          from datetime import datetime as _dt
+
           from yaams.promote.conflict import classify_pair, strip_private_fences
-          from datetime import UTC, datetime as _dt
           cv = classify_pair(
             existing_note["title"],
             existing_note["statement"],
@@ -190,7 +195,7 @@ def generate_candidates(
 
           if cv.classification == "duplicate":
             if on_progress:
-              on_progress(f"  skipped (conflict: duplicate via LLM)")
+              on_progress("  skipped (conflict: duplicate via LLM)")
             continue
           elif cv.classification == "unrelated":
             candidate.merge_with = None

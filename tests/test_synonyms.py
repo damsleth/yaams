@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
+import pytest
+
+from yaams.retrieve.synonyms import (
+  expand_fts_tokens,
+  load_synonym_groups,
+  normalize_synonym_groups,
+)
 from yaams.schema import init_schema
 
 
@@ -83,3 +89,33 @@ def test_expand_tokens_dedupes_across_expansion():
 
 def test_expand_tokens_empty_groups_is_identity():
   assert expand_fts_tokens(["nc", "norconsult"], {}) == ["nc", "norconsult"]
+
+
+def test_load_groups_includes_configured_concept_synonyms():
+  conn = _db_with_entities([])
+
+  groups = load_synonym_groups(conn, [["vakt", "shift"], ["øvelse", "exercise"]])
+
+  assert groups["vakt"] == ["vakt", "shift"]
+  assert groups["shift"] == ["vakt", "shift"]
+  assert groups["øvelse"] == ["øvelse", "exercise"]
+
+
+def test_load_groups_merges_overlapping_config_and_entity_groups():
+  conn = _db_with_entities([("Norconsult", ["nc"])])
+
+  groups = load_synonym_groups(conn, [["nc", "customer"]])
+
+  assert set(groups["norconsult"]) == {"nc", "customer", "Norconsult"}
+  assert groups["customer"] == groups["norconsult"]
+
+
+def test_normalize_synonym_groups_ignores_empty_terms():
+  assert normalize_synonym_groups([[" vakt ", "shift", ""], ["one"]]) == [
+    ["vakt", "shift"]
+  ]
+
+
+def test_normalize_synonym_groups_rejects_invalid_shape():
+  with pytest.raises(ValueError):
+    normalize_synonym_groups({"vakt": "shift"})

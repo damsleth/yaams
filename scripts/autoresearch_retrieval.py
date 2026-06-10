@@ -66,6 +66,7 @@ from yaams.retrieve import (  # noqa: E402
     route,
 )
 from yaams.retrieve import query as run_query  # noqa: E402
+from yaams.retrieve.synonyms import normalize_synonym_groups  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
 _STATE = _REPO / "scripts" / ".autoresearch_state.json"
@@ -139,7 +140,13 @@ def _load_gold(conn) -> tuple[list[dict], int, int]:
     return gold, n_miss, n_miss_zero
 
 
-def _replay_one(conn, embedder, self_ids, row: dict) -> tuple[int | None, float]:
+def _replay_one(
+    conn,
+    embedder,
+    self_ids,
+    row: dict,
+    synonym_groups: list[list[str]],
+) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
     parsed = _parsed_from_json(row["parsed_query"], text)
@@ -149,6 +156,7 @@ def _replay_one(conn, embedder, self_ids, row: dict) -> tuple[int | None, float]
         source_filter=sf,
         since=parse_iso_datetime(row["since"]) if row["since"] else None,
         until=parse_iso_datetime(row["until"]) if row["until"] else None,
+        synonym_groups=synonym_groups,
     )
     if parsed is not None:
         qcfg = route(parsed, base, self_identities=self_ids)
@@ -187,6 +195,9 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_config()
+    retrieve_cfg = cfg.get("retrieve")
+    raw_synonyms = retrieve_cfg.get("synonyms") if isinstance(retrieve_cfg, dict) else None
+    synonym_groups = normalize_synonym_groups(raw_synonyms)
     db_path = args.db or os.environ.get("YAAMS_AUTORESEARCH_DB") or str(get_db_path(cfg))
     self_ids = _self_identities(cfg)
 
@@ -205,7 +216,7 @@ def main() -> int:
         n_corr_total = 0
         corr_recip: list[float] = []
         for row in gold:
-            rank, ms = _replay_one(conn, embedder, self_ids, row)
+            rank, ms = _replay_one(conn, embedder, self_ids, row, synonym_groups)
             ranks[row["query_id"]] = rank
             latencies.append(ms)
             if row["kind"] == "correction":

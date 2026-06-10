@@ -300,7 +300,10 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
 ```
 
 - **`--no-synonyms`** disables alias expansion. By default a query for `nc`
-  also matches `Norconsult` if that alias is registered.
+  also matches `Norconsult` if that alias is registered. Add
+  cross-language concept groups under `retrieve.synonyms`, for example
+  `[vakt, shift]` or `[øvelse, exercise]`, to make FTS treat each term in a
+  group as equivalent.
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

@@ -22,7 +22,8 @@ _BOT_LIKE_NAMES = re.compile(
   r"^(approvals?|workflows?|forms|polly|planner|loop|"
   r"viva|insights?|company communicator|communications?|"
   r"webex|zoom|news|announce|notify|notifications?|"
-  r"whobot|who|tasks?|reminder|microsoft teams)$",
+  r"whobot|who|tasks?|reminder|microsoft teams|"
+  r"github|jira|azure devops|power automate|servicenow|jenkins|confluence)$",
   re.IGNORECASE,
 )
 

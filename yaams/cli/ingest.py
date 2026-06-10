@@ -622,10 +622,12 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     # "teams_") is True, so the chat branch would otherwise swallow it and
     # mis-parse the profile as "channels_work".
     profile = source[len("teams_channels_"):]
+    backfill_raw = cfg.get("backfill_limit_pages")
     return TeamsChannelsAdapter(
       profile=profile,
       teams=tuple(cfg.get("teams") or ()),
       limit_pages=int(cfg.get("limit_pages", 4)),
+      backfill_limit_pages=int(backfill_raw) if backfill_raw is not None else None,
       skip_bots=bool(cfg.get("skip_bots", True)),
       max_retries=int(cfg.get("max_retries", 5)),
     )

@@ -260,7 +260,7 @@ def test_extract_folds_reactions_into_parent_body():
   assert len(items) == 1
   parent = items[0]
   assert "ship it" in parent.content
-  assert "Reactions:" in parent.content
+  assert "reactions:" in parent.content
   assert "👍" in parent.content and "🚀" in parent.content
   assert parent.raw_metadata["reactions"][0]["emoji"] == "👍"
   assert parent.raw_metadata["reactions"][0]["from"] == "Alice"

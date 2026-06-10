@@ -369,7 +369,7 @@ def _fold_reactions(body: str, reactions: list[dict]) -> str:
     emoji = r.get("emoji") or ""
     who = r.get("from") or "(unknown)"
     parts.append(f"{emoji} from {who}".strip())
-  footer = "Reactions: " + ", ".join(p for p in parts if p)
+  footer = "reactions: " + ", ".join(p for p in parts if p)
   return f"{body}\n\n{footer}" if body else footer
 
 

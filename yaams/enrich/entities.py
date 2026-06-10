@@ -50,6 +50,8 @@ NOISE_WORDS = {
   "eta", "faks", "unett",
   # email/chat header tokens (xx model tags the CC: field as a person)
   "cc", "bcc", "fwd", "re", "sv", "kopi",
+  # chat reaction labels - "Reactions: ❤️ from X" tags 'Reactions' as org (~300 spurious links)
+  "reactions", "reaksjoner",
   # temporal terms (NO + EN) - not useful as entities
   "yesterday", "today", "tomorrow", "monday", "tuesday", "wednesday",
   "thursday", "friday", "saturday", "sunday",

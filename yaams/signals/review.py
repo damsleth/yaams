@@ -22,7 +22,7 @@ from typing import Any
 from yaams.render import DEFAULT_SNIPPET_CHARS
 from yaams.signals.logger import log_feedback
 
-VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin"}
+VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin", "deferred"}
 """Feedback kinds the review loop can emit.
 
 Answer-shaped queries (factual, first/last_occurrence, event_anchored) have
@@ -43,6 +43,10 @@ Shared:
 - ``noise``: the query had no real intent (probe, test, placeholder).
   Excluded from both rates but still counts as "judged" so it drops out of the
   review queue. Mark with ``n`` in the TUI.
+
+- ``deferred``: the query needs more context before judging. Excluded from
+  the normal unjudged queue but surfaced by ``yaams review --deferred``.
+  Mark with ``?`` in the TUI.
 """
 
 # Shapes (from yaams.retrieve.parse) that ask for a useful *set* rather than a
@@ -78,16 +82,18 @@ _HELP_LINES_ANSWER = [
   "h  hit (top result was right)      m  miss (none right)",
   "1-9  correction (that rank is the right answer)",
   "n  noise (no real intent — cascades to identical text)",
+  "?  defer (come back later via yaams review --deferred)",
   "tab/right  expand next rank        u  undo last      q  quit & save",
-  "up/down  scroll results            ?  toggle this help",
+  "up/down  scroll results            H  toggle this help",
 ]
 
 _HELP_LINES_RECALL = [
   "r  relevant (useful result set)    t  thin (too sparse/off to help)",
   "recall-shaped query — no single 'right' answer, so grade the set",
   "n  noise (no real intent — cascades to identical text)",
+  "?  defer (come back later via yaams review --deferred)",
   "tab/right  expand next rank        u  undo last      q  quit & save",
-  "up/down  scroll results            ?  toggle this help",
+  "up/down  scroll results            H  toggle this help",
 ]
 
 
@@ -107,6 +113,9 @@ def default_verdict(item: "ReviewItem") -> str | None:
 
   Rules (in priority order):
 
+  0. If any result was cited (``cited=True``) → ``"hit"`` (answer-shaped) or
+     ``"relevant"`` (recall-shaped). Cited signal is the strongest evidence
+     the retrieval was useful, so it overrides all other heuristics.
   1. If the query looks like a probe/test (very short, or contains "test",
      or starts with "?") → ``"noise"``.
   2. If no query tokens appear *anywhere* in any result snippet → ``"miss"``.
@@ -117,6 +126,12 @@ def default_verdict(item: "ReviewItem") -> str | None:
   Returns the verdict string or None when no confident default can be inferred.
   """
   text = (item.text or "").strip()
+
+  # Rule 0: cited-as-implicit-hit — strongest signal, checked first.
+  if any(r.cited for r in item.results):
+    if is_answer_shaped(item.shape, item.parser_fallback):
+      return "hit"
+    return "relevant"
 
   # Rule 1: probe/noise detection.
   if len(text) <= 4 or "test" in text.lower() or text.startswith("?"):
@@ -225,14 +240,14 @@ def render_card_lines(
   dv = default_verdict(item)
   if is_answer_shaped(item.shape, item.parser_fallback):
     if dv:
-      keybar = f"enter={dv}(default)  h  m  1-9  n  space=skip  u  q  ?"
+      keybar = f"enter={dv}(default)  h  m  1-9  n  ?=defer  space=skip  u  q  H=help"
     else:
-      keybar = "h  m  1-9  n  space=skip  u  q  ?"
+      keybar = "h  m  1-9  n  ?=defer  space=skip  u  q  H=help"
   else:
     if dv:
-      keybar = f"enter={dv}(default)  r  t  n  space=skip  u  q  ?"
+      keybar = f"enter={dv}(default)  r  t  n  ?=defer  space=skip  u  q  H=help"
     else:
-      keybar = "r  t  n  space=skip  u  q  ?"
+      keybar = "r  t  n  ?=defer  space=skip  u  q  H=help"
   lines.append(keybar)
 
   return lines
@@ -389,6 +404,7 @@ def build_review_queue(
   source: str | None = None,
   limit: int | None = None,
   unjudged_only: bool = True,
+  deferred_only: bool = False,
   top_results: int = 5,
   now: datetime | None = None,
 ) -> list[ReviewItem]:
@@ -400,10 +416,18 @@ def build_review_queue(
       source. Substring match — coarse but enough for v1.
     limit: Cap the queue length after sorting.
     unjudged_only: Skip queries that already have any ``query_feedback`` row.
+    deferred_only: Surface only queries whose last feedback kind is
+      ``'deferred'``. Implies ``unjudged_only=False`` (deferred queries
+      have a feedback row, so the normal unjudged filter would exclude them).
     top_results: How many ranked results to attach per query.
     now: Override "now" for deterministic tests.
   """
   now = now or datetime.now(UTC)
+
+  # deferred_only overrides unjudged_only — deferred queries have a feedback
+  # row so the unjudged filter would hide them.
+  if deferred_only:
+    unjudged_only = False
 
   where: list[str] = []
   params: list[Any] = []
@@ -413,7 +437,12 @@ def build_review_queue(
   if source:
     where.append("q.source_filter LIKE ?")
     params.append(f"%{source}%")
-  if unjudged_only:
+  if deferred_only:
+    where.append(
+      "EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind = 'deferred')"
+      " AND NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind != 'deferred')"
+    )
+  elif unjudged_only:
     where.append("NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id)")
 
   sql = """
@@ -546,6 +575,8 @@ def verdict_signal(item: ReviewItem, key: str) -> dict[str, Any] | None:
   """
   if not key:
     return None
+  if key == "?":
+    return {"query_id": item.query_id, "kind": "deferred"}
   if key == "n":
     return {"query_id": item.query_id, "kind": "noise"}
 
@@ -780,12 +811,20 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
   flash = ""
   # Step 1: track which ranks are expanded per card.
   # On card open, only rank 1 is expanded. Tab/right-arrow expands the next.
-  expanded_ranks: set[int] = {1}
+  # Step 5: pre-expand cited ranks for the first card.
+  first_item = queue[0] if queue else None
+  expanded_ranks: set[int] = {1} | {r.rank for r in (first_item.results if first_item else []) if r.cited}
 
-  def _reset_card_state() -> None:
+  def _reset_card_state(next_item: "ReviewItem | None" = None) -> None:
     nonlocal scroll, expanded_ranks
     scroll = 0
-    expanded_ranks = {1}
+    # Step 5: pre-expand cited ranks so the reviewer sees the cited result
+    # without having to tab through. Rank 1 is always included.
+    if next_item is not None:
+      cited = {r.rank for r in next_item.results if r.cited}
+      expanded_ranks = {1} | cited
+    else:
+      expanded_ranks = {1}
 
   while idx < len(queue):
     item = queue[idx]
@@ -800,7 +839,7 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
       continue
     if ch == ord("q"):
       break
-    if ch == ord("?"):
+    if ch == ord("H"):
       show_help = not show_help
       continue
     if ch in (curses.KEY_DOWN, ord("J")):
@@ -828,7 +867,7 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
           if entries:
             entries.pop()
         idx = prev_idx
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
         flash = f"undid last verdict ({count} row{'s' if count != 1 else ''})"
       else:
         flash = "nothing to undo"
@@ -853,7 +892,7 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
           history.append((idx, len(fresh)))
           flash = f"noise (default) — cascaded {len(fresh)} row(s)"
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       elif dv == "hit" and item.results:
         entry: dict[str, Any] = {
           "query_id": item.query_id, "kind": "hit",
@@ -863,40 +902,40 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
         history.append((idx, 1))
         flash = "hit (default)"
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       elif dv == "miss":
         entry = {"query_id": item.query_id, "kind": "miss"}
         entries.append(entry)
         history.append((idx, 1))
         flash = "miss (default)"
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       elif dv == "relevant":
         entry = {"query_id": item.query_id, "kind": "relevant"}
         entries.append(entry)
         history.append((idx, 1))
         flash = "relevant (default)"
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       elif dv == "thin":
         entry = {"query_id": item.query_id, "kind": "thin"}
         entries.append(entry)
         history.append((idx, 1))
         flash = "thin (default)"
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       else:
         # No default — skip.
         history.append((idx, 0))
         idx += 1
-        _reset_card_state()
+        _reset_card_state(queue[idx] if idx < len(queue) else None)
       continue
 
     # Space: skip.
     if ch == ord(" "):
       history.append((idx, 0))
       idx += 1
-      _reset_card_state()
+      _reset_card_state(queue[idx] if idx < len(queue) else None)
       continue
 
     key = chr(ch) if 0 <= ch < 256 else ""
@@ -920,19 +959,20 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
         history.append((idx, len(fresh)))
         flash = f"noise — cascaded {len(fresh)} row(s) with identical text"
       idx += 1
-      _reset_card_state()
+      _reset_card_state(queue[idx] if idx < len(queue) else None)
       continue
 
     entry = verdict_signal(item, key)
     if entry is None:
       answer_shaped = is_answer_shaped(item.shape, item.parser_fallback)
       keys = "h/m/n, 1-9" if answer_shaped else "r/t/n"
-      flash = f"'{key}' — no verdict ({keys}, tab=expand, ? help)"
+      flash = f"'{key}' — no verdict ({keys}, tab=expand, H=help)"
       continue
     entries.append(entry)
     history.append((idx, 1))
+    flash = f"deferred — revisit with: yaams review --deferred" if entry.get("kind") == "deferred" else flash
     idx += 1
-    _reset_card_state()
+    _reset_card_state(queue[idx] if idx < len(queue) else None)
 
 
 def _draw_card(  # pragma: no cover
@@ -1028,9 +1068,9 @@ def _draw_card(  # pragma: no cover
   dv = default_verdict(item)
   enter_label = f"enter={dv}(default)  " if dv else ""
   if is_answer_shaped(item.shape, item.parser_fallback):
-    keybar = f"{enter_label}[h]it  [m]iss  [1-9]corr  [n]oise  [space]skip  [tab]expand  [u]  [q]  [?]"
+    keybar = f"{enter_label}[h]it  [m]iss  [1-9]corr  [n]oise  [?]defer  [space]skip  [tab]expand  [u]  [q]  [H]help"
   else:
-    keybar = f"{enter_label}[r]elevant  [t]hin  [n]oise  [space]skip  [tab]expand  [u]  [q]  [?]"
+    keybar = f"{enter_label}[r]elevant  [t]hin  [n]oise  [?]defer  [space]skip  [tab]expand  [u]  [q]  [H]help"
   line(foot + 1, keybar, curses.A_BOLD)
   if flash:
     line(foot + 2, flash, curses.A_REVERSE)

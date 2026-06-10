@@ -20,7 +20,13 @@ def discover() -> list[Migration]:
     read its module-level 'name' constant and 'apply' function.
     Sort by name for deterministic ordering.
     """
-    import yaams.migrations.versions as versions_pkg
+    import sys
+    import yaams.migrations.versions as _versions_pkg_unused  # noqa: F401
+
+    # Use sys.modules to respect monkeypatching in tests; a plain
+    # `import yaams.migrations.versions` would resolve via the parent-package
+    # attribute and bypass any sys.modules patch.
+    versions_pkg = sys.modules["yaams.migrations.versions"]
 
     migrations: list[Migration] = []
     prefix = versions_pkg.__name__ + "."

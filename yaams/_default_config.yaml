@@ -159,3 +159,15 @@ entities:
   #     {"canonical": "Example Org", "type": "org", "aliases": ["EX"]}
   #   ]
   dictionary_path: entities.json
+
+# Retrieval tuning.
+retrieve:
+  # Cross-lingual and domain synonym groups for FTS query expansion.
+  # Each entry is a list of interchangeable terms; any term in a group expands
+  # to the full set at query time.  Entity aliases from the entity dictionary
+  # are also loaded automatically — these groups cover concepts that aren't
+  # named entities, including Norwegian<->English equivalents.
+  synonyms:
+    - [vakt, shift]           # NO<->EN: work shift / duty period
+    - [øvelse, exercise]      # NO<->EN: training exercise / drill
+    - [hytte, cabin]          # NO<->EN: cabin / mountain hut

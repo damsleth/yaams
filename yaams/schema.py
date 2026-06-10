@@ -55,7 +55,10 @@ def init_schema(
         content,
         subject,
         sender,
-        tokenize = 'unicode61 remove_diacritics 2'
+        -- remove_diacritics 0: Norwegian diacritics are semantically significant.
+        -- vår (spring) != var (was); å/æ/ø carry meaning, not just accent.
+        -- Value 2 (fold diacritics) causes false matches across unrelated words.
+        tokenize = 'unicode61 remove_diacritics 0'
       );
 
       CREATE TABLE IF NOT EXISTS entities (
@@ -192,7 +195,8 @@ def init_schema(
         consolidation_id UNINDEXED,
         summary,
         participants,
-        tokenize = 'unicode61 remove_diacritics 2'
+        -- remove_diacritics 0: same rationale as items_fts above.
+        tokenize = 'unicode61 remove_diacritics 0'
       );
 
       CREATE TABLE IF NOT EXISTS queries (
@@ -248,6 +252,7 @@ def init_schema(
     _migrate_items_timestamp_inferred(conn)
     _migrate_promotion_candidates(conn)
     _migrate_query_structured_fields(conn)
+    _migrate_fts_tokenizer(conn)
     _init_vector_table(conn, embedding_dim, vector_enabled)
     _init_consolidations_vec(conn, embedding_dim, vector_enabled)
 
@@ -268,6 +273,28 @@ def _migrate_query_structured_fields(conn: sqlite3.Connection) -> None:
   for name, decl in additions:
     if name not in cols:
       conn.execute(f"ALTER TABLE queries ADD COLUMN {name} {decl}")
+
+
+def _migrate_fts_tokenizer(conn: sqlite3.Connection) -> None:
+  """Rebuild FTS tables if they were created with remove_diacritics 2.
+
+  Norwegian diacritics (å, æ, ø) are semantically significant: vår (spring)
+  != var (was).  The old setting conflated these, causing false FTS matches.
+  Rebuilding is safe — FTS content is derived from the items/consolidations
+  tables and can be regenerated without data loss.
+  """
+  for table in ("items_fts", "consolidations_fts"):
+    try:
+      row = conn.execute(
+        f"SELECT * FROM {table}_config WHERE k = 'tokenize'"
+      ).fetchone()
+    except Exception:
+      # Table not yet created or no _config shadow — skip.
+      continue
+    tokenize_val = row[1] if row else ""
+    if "remove_diacritics 2" in (tokenize_val or ""):
+      # Drop and rebuild — FTS content is reconstructed from base tables.
+      conn.execute(f"DROP TABLE IF EXISTS {table}")
 
 
 def _migrate_items_consolidated_into(conn: sqlite3.Connection) -> None:

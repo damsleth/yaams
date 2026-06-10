@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -44,21 +45,36 @@ DEFAULT_MAX_RETRIES = 5
 _BACKOFF_BASE_SEC = 1.0
 _BACKOFF_CAP_SEC = 30.0
 
+# Content-pattern filter: skip automated/system posts whose body starts with
+# well-known Microsoft admin digest / Message Center patterns.
+_AUTOMATED_CONTENT_RE = re.compile(
+  r"^(Message ID:\s*MC\d+|Published date:|Action required by:|"
+  r"(Type|Category):\s*(Message center|Advisory))",
+  re.IGNORECASE | re.MULTILINE,
+)
+
 
 @dataclass
 class TeamsChannelsAdapter:
   profile: str
   teams: tuple[str, ...] = ()      # team-id allowlist; empty = all joined teams
   limit_pages: int = 4             # owa-teams --limit (pages of ~50)
+  # Proper fix: owa-teams --since <date> would avoid pulling all pages; use
+  # backfill_limit_pages for now to enable a one-time deep backfill without
+  # changing the default steady-state page budget.
+  # Set teams_channels.backfill_limit_pages in config for first all-profile run.
+  backfill_limit_pages: int | None = None  # overrides limit_pages when set
   skip_bots: bool = True
   max_retries: int = DEFAULT_MAX_RETRIES  # retries per owa-teams verb on 429
   skipped_bots: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
+  skipped_automated: int = field(default=0, init=False)  # content-pattern filtered
   rate_limit_retries: int = field(default=0, init=False)  # 429 backoffs this run
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
     self.skipped_empty = 0
+    self.skipped_automated = 0
     self.rate_limit_retries = 0
     cutoff = ensure_utc(since)
     for team_id, team_name in self._teams():
@@ -75,10 +91,21 @@ class TeamsChannelsAdapter:
             continue
           # owa-teams returns chronological (oldest-first) and has no --since
           # yet, so drop pre-cutoff rows here rather than break early.
+          # TODO(watermark early-exit): once owa-teams exposes per-page newest
+          # timestamp, check after page 1 whether newest_ts <= cutoff and skip
+          # remaining pages. Depends on owa-teams --since or a page-envelope
+          # with newest_timestamp. See TODO 10.
           if ts <= cutoff:
             continue
           if self.skip_bots and _is_bot_row(row):
             self.skipped_bots += 1
+            continue
+          # Content-pattern filter: drop automated admin digest / connector posts
+          # whose body matches well-known machine-generated patterns (MC IDs,
+          # published-date headers, Message Center advisories).
+          content_raw = (row.get("content") or "").strip()
+          if _AUTOMATED_CONTENT_RE.search(content_raw):
+            self.skipped_automated += 1
             continue
           item = _to_item(row, self.profile, team_id, team_name, ch_name)
           if item is None:
@@ -114,11 +141,16 @@ class TeamsChannelsAdapter:
     return out
 
   def _messages(self, channel_id: str, team_id: str) -> list[dict]:
+    # Proper fix: owa-teams --since <date> would avoid pulling all pages; use
+    # backfill_limit_pages for now (set teams_channels.backfill_limit_pages in
+    # config for first all-profile run; crayon channels cap at ~190-199 msgs,
+    # so ~40 pages covers a full backfill).
+    pages = self.backfill_limit_pages if self.backfill_limit_pages is not None else self.limit_pages
     return self._run([
       "messages",
       "--channel", channel_id,
       "--team", team_id,
-      "--limit", str(self.limit_pages),
+      "--limit", str(pages),
     ])
 
   def _run(self, args: list[str]) -> list[dict]:

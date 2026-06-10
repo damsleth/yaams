@@ -16,6 +16,7 @@ from yaams.config import get_db_path, load_config
 from yaams.db import open_db
 from yaams.enrich import Embedder
 from yaams.render import (
+  DEFAULT_SNIPPET_CHARS,
   render_consolidation_snippet,
   short_participants,
   short_sender,
@@ -633,13 +634,13 @@ def _render_result(rank: int, r) -> None:
       meta += f" · {parts}"
     click.echo(f"{_BODY_INDENT}{meta}")
     body = render_consolidation_snippet(
-      r.content or "", multiline=True, max_chars=600
+      r.content or "", multiline=True, max_chars=DEFAULT_SNIPPET_CHARS
     )
   else:
     click.echo(f"{_BODY_INDENT}from {short_sender(r.sender or '')}")
     body = (r.content or "").strip()
-    if len(body) > 600:
-      body = body[:599].rstrip() + "…"
+    if len(body) > DEFAULT_SNIPPET_CHARS:
+      body = body[:DEFAULT_SNIPPET_CHARS - 1].rstrip() + "…"
 
   for raw_line in body.splitlines() or [""]:
     wrapped = textwrap.wrap(

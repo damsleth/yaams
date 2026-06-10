@@ -10,11 +10,26 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-10
+
 ### Added
 
 - Configured `retrieve.synonyms` concept groups for query-time FTS expansion,
   so Norwegian and English pairs like `vakt`/`shift` and `øvelse`/`exercise`
   can bridge zero-result lexical misses.
+
+- **ConflictChecker** (`promote.conflict_detection`): optional LLM-based
+  conflict classification for promotion candidates. Compares drafted candidates
+  against the existing Tier-2 note they would merge into and routes
+  contradictions to `_conflicts/` instead of the inbox. Off by default; enable
+  after turning on dedup. Adds `conflict_*` fields to `PromotionCandidate` and
+  a `promote.conflict_detection` config block (see `config.yaml.example`).
+
+### Changed
+
+- BM25 field weights tuned (`bm25w-s2`): subject field weighted 2× relative to
+  `items_fts`, lifting `mrr_partial` from 0.323 → 0.338 on the dev gold set
+  with zero regressions.
 
 ## [0.4.1] - 2026-06-09
 

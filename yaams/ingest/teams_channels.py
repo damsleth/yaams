@@ -41,6 +41,13 @@ logger = logging.getLogger("yaams.ingest.teams_channels")
 # bursts enough requests to trip chatsvc's rate limiter. owa-teams surfaces a
 # 429 as a non-zero exit rather than honoring Retry-After itself, so the
 # adapter retries rate-limited verbs with exponential backoff (1, 2, 4, … s).
+#
+# swon (chatsvc-gated tenant) status (verified 2026-06-10):
+#   owa-teams teams --profile swon exits rc=11 (auth expired / 401).
+#   The profile needs a fresh owa-piggy token before channel ingest can run.
+#   Run: owa-piggy setup --profile swon
+#   Once re-authed, swon should work like any other profile — chatsvc routing
+#   is handled inside owa-teams, not here.
 DEFAULT_MAX_RETRIES = 5
 _BACKOFF_BASE_SEC = 1.0
 _BACKOFF_CAP_SEC = 30.0

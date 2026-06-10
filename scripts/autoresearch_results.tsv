@@ -23,3 +23,6 @@ subjtok-all-1.1	hybrid	dev	0.5148	0.5778	0.3792	165.1	1	discard
 subjtok-all-1.07	hybrid	dev	0.4867	0.5556	0.3479	170.1	1	discard
 subjtok-cons-1.1	hybrid	dev	0.5051	0.5778	0.3375	160.6	0	discard
 recency-f0.9	hybrid	dev	0.4314	0.4889	0.3115	166.5	4	discard
+veck-1.5	hybrid	dev	0.5024	0.5778	0.3375	165.0	1	discard
+veck-1.25	hybrid	dev	0.5032	0.5778	0.3375	163.7	1	discard
+veck-0.75	hybrid	dev	0.5016	0.5778	0.3375	166.3	0	discard

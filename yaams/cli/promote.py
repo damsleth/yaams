@@ -112,6 +112,7 @@ def promote_generate(
   as_json: bool,
 ) -> None:
   from yaams.promote.candidates import PromoteConfig, generate_candidates, store_candidates
+  from yaams.promote.conflict import ConflictConfig
   from yaams.synthesize import llm_adapter_from_config
 
   t0 = time.monotonic()
@@ -152,10 +153,33 @@ def promote_generate(
     if not as_json:
       click.echo(f"Generating candidates (window={pcfg.window_days}d, min_cluster={pcfg.min_cluster_items}) ...")
     progress_sink = (lambda *_args, **_kwargs: None) if as_json else click.echo
-    candidates = generate_candidates(conn, adapter, pcfg, entity_filter=entity, on_progress=progress_sink)
+
+    # Build ConflictConfig from promote.conflict_detection config block
+    conflict_det_raw = promote_cfg_raw.get("conflict_detection") or {}
+    conflict_cfg = ConflictConfig(
+      enabled=bool(conflict_det_raw.get("enabled", False)),
+      only_for_merge_band=bool(conflict_det_raw.get("only_for_merge_band", True)),
+      confidence_threshold=float(conflict_det_raw.get("confidence_threshold", 0.7)),
+    )
+
+    candidates = generate_candidates(
+      conn, adapter, pcfg,
+      entity_filter=entity,
+      on_progress=progress_sink,
+      conflict_cfg=conflict_cfg,
+    )
     stored = store_candidates(conn, candidates)
   finally:
     conn.close()
+
+  # Conflict stats
+  conflicts_classified = sum(1 for c in candidates if c.conflict_classification is not None)
+  duplicates_skipped_llm = 0  # candidates already dropped; can't count post-hoc
+  merges_cleared_unrelated = sum(
+    1 for c in candidates
+    if c.conflict_classification == "unrelated" and c.merge_with is None
+  )
+
   duration_ms = (time.monotonic() - t0) * 1000.0
   if as_json:
     emit_action(action_envelope(
@@ -166,6 +190,9 @@ def promote_generate(
         "window_days": pcfg.window_days,
         "min_cluster_items": pcfg.min_cluster_items,
         "entity_filter": entity,
+        "conflicts_classified": conflicts_classified,
+        "duplicates_skipped_llm": duplicates_skipped_llm,
+        "merges_cleared_unrelated": merges_cleared_unrelated,
       },
       duration_ms=duration_ms,
     ))

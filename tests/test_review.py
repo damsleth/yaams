@@ -14,11 +14,13 @@ from yaams.signals import (
   ReviewResult,
   build_review_queue,
   dashboard_data,
+  default_verdict,
   detect_provenance,
   flush_session,
   log_feedback,
   log_query,
   noise_cascade,
+  render_card_lines,
   render_dashboard,
   run_review_tui,
   score_query,
@@ -560,3 +562,191 @@ def test_render_dashboard_smoke():
   text = render_dashboard(dashboard_data(conn))
   assert "Coverage" in text
   assert "Hit rate" in text
+
+
+# ---------------------------------------------------------------------------
+# default_verdict (step 2)
+# ---------------------------------------------------------------------------
+
+
+def _item_with_snippet(
+  text: str,
+  snippets: list[str],
+  shape: str | None = "factual",
+  parser_fallback: bool = False,
+) -> ReviewItem:
+  results = [
+    ReviewResult(
+      rank=i + 1,
+      result_id=f"r{i+1}",
+      kind="item",
+      source="imessage",
+      rrf_score=0.5,
+      snippet=snippets[i],
+      sender="alice",
+      timestamp="2026-04-01T12:00:00+00:00",
+      cited=False,
+    )
+    for i in range(len(snippets))
+  ]
+  return ReviewItem(
+    query_id="q_dv",
+    text=text,
+    ts="2026-04-01T12:00:00+00:00",
+    results_returned=len(snippets),
+    shape=shape,
+    confidence=None,
+    cited_count=0,
+    results=results,
+    parser_fallback=parser_fallback,
+  )
+
+
+def test_default_verdict_noise_for_probe_query():
+  # Very short query → noise.
+  item = _item_with_snippet("hi", ["anything relevant"], shape="factual")
+  assert default_verdict(item) == "noise"
+
+
+def test_default_verdict_noise_for_test_query():
+  item = _item_with_snippet("test something", ["some content about testing"], shape="factual")
+  assert default_verdict(item) == "noise"
+
+
+def test_default_verdict_noise_for_question_mark_prefix():
+  item = _item_with_snippet("?what is foo", ["foo bar baz"], shape="factual")
+  assert default_verdict(item) == "noise"
+
+
+def test_default_verdict_miss_when_no_tokens_in_any_snippet():
+  item = _item_with_snippet(
+    "crayon project budget",
+    ["unrelated text xyz", "another unrelated snippet"],
+    shape="factual",
+  )
+  assert default_verdict(item) == "miss"
+
+
+def test_default_verdict_hit_when_token_in_rank1_answer_shaped():
+  item = _item_with_snippet(
+    "crayon project budget",
+    ["crayon allocated budget for Q3", "something else"],
+    shape="factual",
+  )
+  assert default_verdict(item) == "hit"
+
+
+def test_default_verdict_relevant_when_token_in_rank1_recall_shaped():
+  item = _item_with_snippet(
+    "crayon project updates",
+    ["crayon sent project updates last week", "something else"],
+    shape="synthesis",
+  )
+  assert default_verdict(item) == "relevant"
+
+
+def test_default_verdict_none_when_token_only_in_lower_rank():
+  # Token in rank 2 but not rank 1 → no confident default.
+  item = _item_with_snippet(
+    "crayon project budget",
+    ["unrelated text here", "crayon project budget details"],
+    shape="factual",
+  )
+  assert default_verdict(item) is None
+
+
+def test_default_verdict_fallback_query_relevant_not_hit():
+  # parser_fallback → recall-shaped even if shape="factual".
+  item = _item_with_snippet(
+    "crayon project budget",
+    ["crayon project budget details"],
+    shape="factual",
+    parser_fallback=True,
+  )
+  assert default_verdict(item) == "relevant"
+
+
+# ---------------------------------------------------------------------------
+# render_card_lines (step 1 — pure renderer)
+# ---------------------------------------------------------------------------
+
+
+def test_render_card_lines_rank1_expanded_others_collapsed():
+  item = _item_with_snippet(
+    "what happened at crayon",
+    ["crayon had a big meeting", "another result snippet", "third result"],
+    shape="factual",
+  )
+  lines = render_card_lines(item, expanded_ranks={1}, width=80)
+  joined = "\n".join(lines)
+
+  # Rank 1 header and snippet should appear.
+  assert "crayon had a big meeting" in joined
+  # Ranks 2 and 3 should be collapsed to one-line summary.
+  assert "[2]" in joined
+  assert "[3]" in joined
+  # The collapsed lines should NOT contain the snippets for ranks 2/3.
+  assert "another result snippet" not in joined
+  assert "third result" not in joined
+
+
+def test_render_card_lines_all_expanded():
+  item = _item_with_snippet(
+    "what happened at crayon",
+    ["crayon had a big meeting", "another result snippet"],
+    shape="factual",
+  )
+  lines = render_card_lines(item, expanded_ranks={1, 2}, width=80)
+  joined = "\n".join(lines)
+  assert "crayon had a big meeting" in joined
+  assert "another result snippet" in joined
+
+
+def test_render_card_lines_default_is_rank1_only():
+  item = _item_with_snippet(
+    "what happened at crayon",
+    ["crayon had a big meeting", "another result snippet"],
+    shape="factual",
+  )
+  # Default: no expanded_ranks arg → only rank 1 shown.
+  lines = render_card_lines(item, width=80)
+  joined = "\n".join(lines)
+  assert "crayon had a big meeting" in joined
+  assert "another result snippet" not in joined
+
+
+def test_render_card_lines_shows_default_verdict_in_keybar():
+  item = _item_with_snippet(
+    "what happened at crayon",
+    ["crayon had a big meeting"],
+    shape="factual",
+  )
+  lines = render_card_lines(item, width=80)
+  keybar = lines[-1]
+  # default_verdict should be "hit" (token "crayon" in rank-1 snippet).
+  assert "enter=hit(default)" in keybar
+
+
+def test_render_card_lines_no_default_when_token_only_in_lower_rank():
+  # Token "crayon" appears only in rank 2, not rank 1 → no default verdict.
+  item = _item_with_snippet(
+    "crayon project budget",
+    ["completely unrelated content here", "crayon project budget details"],
+    shape="factual",
+  )
+  lines = render_card_lines(item, expanded_ranks={1}, width=80)
+  keybar = lines[-1]
+  assert "enter=" not in keybar
+
+
+def test_render_card_lines_rank1_snippet_truncated_to_480():
+  long_snippet = "word " * 200  # much longer than 480 chars
+  item = _item_with_snippet(
+    "word query here",
+    [long_snippet],
+    shape="factual",
+  )
+  lines = render_card_lines(item, expanded_ranks={1}, width=80)
+  joined = "\n".join(lines)
+  # The joined snippet section should be truncated.
+  assert "…" in joined

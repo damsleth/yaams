@@ -10,10 +10,61 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-10
+
+### Added
+
+- **`yaams promote commit`**: non-interactive verb to write promotion candidates
+  to the Tier-2 ledger without a human at the keyboard. Supports `--candidate
+  <id>` (repeatable), `--all`, `--min-score <float>`, and `--json`. Writes are
+  idempotent (re-committing the same candidate is a no-op). Unblocks automated
+  `ingest → promote` pipelines.
+
+- **Schema migrations** (`yaams/migrations/`): numbered, journaled migration
+  system replaces the old ad-hoc `_migrate_*` functions in `schema.py`.
+  Migrations live in `yaams/migrations/versions/` as individual Python modules
+  (`0001_baseline.py` … `0005_query_structured_fields.py`). Existing databases
+  at `user_version=4` are automatically stamped on first open — no DDL re-runs.
+  Adding a schema change is now one new file, zero edits to `schema.py`.
+
+- **Review TUI speedup**: the scan-and-judge labeling interface is faster to
+  use. Rank 1 expands on open; ranks 2–5 collapse to a one-line header (tab to
+  expand). `enter` applies a heuristic default verdict (`hit` if query tokens
+  appear in the snippet, `miss` otherwise). `?` defers a card to a later pass
+  (`--deferred` flag surfaces it). Cards whose query has a `cited=1` result
+  pre-populate with `hit` as the default, converting the cited signal into
+  training labels retroactively.
+
+- FTS prefix-star expansion: query terms ≥ 4 characters are expanded with `*`
+  at search time, improving Norwegian morphology recall (øvelse → øvelse*
+  matches øvelsen, øvelsene, etc.).
+
+- `teams_channels` bot/automated post filter: new content-pattern filter drops
+  Microsoft 365 message-centre posts (`Message ID: MC\d+`, `Published date:`,
+  etc.). `_BOT_LIKE_NAMES` extended with `github`, `jira`, `azure devops`,
+  `power automate`, `servicenow`, `jenkins`, `confluence`.
+
+- `teams_channels.backfill_limit_pages` config key: one-time deep-backfill
+  override for channels that were truncated at the default page limit.
+
+- Autoresearch fixture DB now defaults to a stable path outside `/tmp` so it
+  survives reboots.
+
 ### Changed
 
-- Removed stale external-orchestrator references from active planning and todo
-  notes so YAAMS planning remains standalone.
+- Snippet length constants unified: `yaams.render.DEFAULT_SNIPPET_CHARS` is now
+  the single source of truth; `signals.review._SNIPPET_LEN` and the CLI query
+  body cap import from it.
+
+- `reactions` and `reaksjoner` added to `NOISE_WORDS`; the teams reaction
+  folding format changed to lowercase so `Reactions` is no longer tagged as an
+  org entity (~300 spurious links removed on next retag).
+
+- `teams_channels` steady-state: early-exit after page 1 when the newest item
+  is at or behind the channel watermark, avoiding redundant page fetches on
+  daily runs for up-to-date channels.
+
+- Removed stale external-orchestrator references from planning notes.
 
 ## [0.5.0] - 2026-06-10
 

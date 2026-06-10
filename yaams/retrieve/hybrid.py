@@ -26,6 +26,10 @@ RRF_K = 30
 HIGH_QUALITY_FETCH_MULTIPLIER = 2
 TIMESTAMP_SORT_FETCH_MULTIPLIER = 4
 ENTITY_FILTER_FETCH_MULTIPLIER = 4
+# Per-field bm25 weights (FTS5 bm25() takes one weight per column, in
+# table-declaration order; UNINDEXED columns get 0).
+FTS_ITEM_WEIGHTS = (0.0, 1.0, 2.0, 1.0)  # item_id, content, subject, sender
+FTS_CONS_WEIGHTS = (0.0, 1.0, 1.0)  # consolidation_id, summary, participants
 
 
 @dataclass
@@ -349,9 +353,10 @@ def _fts_search_items(
   match = _fts_query(text, cfg.synonyms)
   if not match:
     return []
+  item_w = ", ".join(str(w) for w in FTS_ITEM_WEIGHTS)
   rows = conn.execute(
-    """
-    SELECT items_fts.item_id AS id, bm25(items_fts) AS score
+    f"""
+    SELECT items_fts.item_id AS id, bm25(items_fts, {item_w}) AS score
     FROM items_fts
     JOIN items ON items.id = items_fts.item_id
     WHERE items_fts MATCH ?

@@ -12,6 +12,7 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+.serena/
 
 # Local-only configuration with personal addresses, paths, and dictionary entries.
 # Track config.yaml.example instead.

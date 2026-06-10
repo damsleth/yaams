@@ -1,6 +1,6 @@
 [project]
 name = "yaams"
-version = "0.4.1"
+version = "0.5.0"
 description = "Yet Another Agent Memory System"
 readme = "README.md"
 requires-python = ">=3.11"

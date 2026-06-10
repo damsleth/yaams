@@ -10,6 +10,11 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Changed
+
+- Removed stale external-orchestrator references from active planning and todo
+  notes so YAAMS planning remains standalone.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added

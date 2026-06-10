@@ -13,3 +13,5 @@ pk80-keep	hybrid	dev	0.4379	0.5333	0.2208	110.4	0	ok
 fts-prefix	hybrid	dev	0.4393	0.5556	0.3318	164.6	1	discard
 prefix5-keep	hybrid	dev	0.459	0.5778	0.3229	157.1	0	ok
 bm25w-s2-keep	hybrid	dev	0.504	0.5778	0.3375	159.7	0	ok
+bm25w-s3	hybrid	dev	0.4777	0.5556	0.3063	161.9	1	discard
+bm25w-s2.5	hybrid	dev	0.5046	0.5778	0.3375	157.3	0	discard

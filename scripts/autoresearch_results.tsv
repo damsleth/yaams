@@ -26,3 +26,4 @@ recency-f0.9	hybrid	dev	0.4314	0.4889	0.3115	166.5	4	discard
 veck-1.5	hybrid	dev	0.5024	0.5778	0.3375	165.0	1	discard
 veck-1.25	hybrid	dev	0.5032	0.5778	0.3375	163.7	1	discard
 veck-0.75	hybrid	dev	0.5016	0.5778	0.3375	166.3	0	discard
+bm25w-s2-test	hybrid	test	0.185	0.25	0.0333	217.4	0	ok

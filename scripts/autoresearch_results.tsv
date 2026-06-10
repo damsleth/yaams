@@ -16,3 +16,9 @@ bm25w-s2-keep	hybrid	dev	0.504	0.5778	0.3375	159.7	0	ok
 bm25w-s3	hybrid	dev	0.4777	0.5556	0.3063	161.9	1	discard
 bm25w-s2.5	hybrid	dev	0.5046	0.5778	0.3375	157.3	0	discard
 bm25w-p2	hybrid	dev	0.5023	0.5778	0.3375	165.1	0	discard
+subjtok-1.1	hybrid	dev	0.5026	0.5556	0.3792	157.8	2	discard
+subjtok-1.05	hybrid	dev	0.5035	0.5778	0.3375	163.2	0	discard
+subjtok-1.08	hybrid	dev	0.4722	0.5333	0.3479	168.5	2	discard
+subjtok-all-1.1	hybrid	dev	0.5148	0.5778	0.3792	165.1	1	discard
+subjtok-all-1.07	hybrid	dev	0.4867	0.5556	0.3479	170.1	1	discard
+subjtok-cons-1.1	hybrid	dev	0.5051	0.5778	0.3375	160.6	0	discard

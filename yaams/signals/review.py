@@ -970,7 +970,7 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
       continue
     entries.append(entry)
     history.append((idx, 1))
-    flash = f"deferred — revisit with: yaams review --deferred" if entry.get("kind") == "deferred" else flash
+    flash = "deferred — revisit with: yaams review --deferred" if entry.get("kind") == "deferred" else flash
     idx += 1
     _reset_card_state(queue[idx] if idx < len(queue) else None)
 

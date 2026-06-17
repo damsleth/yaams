@@ -12,8 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from yaams.migrations import Migration, apply_pending, applied, discover
-
+from yaams.migrations import Migration, applied, apply_pending, discover
 
 # ---------------------------------------------------------------------------
 # Helpers

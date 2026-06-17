@@ -13,12 +13,10 @@ from yaams.promote.candidates import (
   PromotionCandidate,
   fetch_pending,
   store_candidates,
-  update_status,
 )
 from yaams.promote.review import write_candidate_to_ledger
 from yaams.schema import init_schema
 from yaams.store import store_items
-
 
 # ---------------------------------------------------------------------------
 # Helpers

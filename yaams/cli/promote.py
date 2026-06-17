@@ -278,7 +278,6 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
     format_note,
     render_candidate,
     write_candidate_to_ledger,
-    write_to_inbox,
   )
 
   cfg = load_config(config_path)
@@ -321,9 +320,11 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
         if choice in ("a", "e"):
           if choice == "e":
             note_content = click.edit(format_note(c)) or format_note(c)
-            from yaams.promote.review import write_to_inbox as _wti
-            from yaams.promote.candidates import mark_items_promoted, update_status as _us
             import json as _j
+
+            from yaams.promote.candidates import mark_items_promoted
+            from yaams.promote.candidates import update_status as _us
+            from yaams.promote.review import write_to_inbox as _wti
             dest = _wti(c, inbox_path, content=note_content)
             try:
               item_ids = _j.loads(c.get("source_item_ids") or "[]")
@@ -481,7 +482,6 @@ def promote_commit(
 
     if as_json:
       import json as _json
-      import sys as _sys
       envelope = {
         "tool": "yaams",
         "command": command,

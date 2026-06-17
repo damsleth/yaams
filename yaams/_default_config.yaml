@@ -137,6 +137,15 @@ embed:
 synth:
   backend: dummy
 
+trust:
+  # Attach a display-only trust verdict (high|medium|low + reason) to each
+  # query result. Never affects ranking or result order.
+  show_trust_verdict: true
+  # Discount a result's confidence by its provenance class (source channel)
+  # when deriving the verdict. Off by default until A/B validated; flip on to
+  # let conversational/imported sources read as lower trust than authored ones.
+  provenance_weighting_enabled: false
+
 promote:
   conflict_detection:
     enabled: false

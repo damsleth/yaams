@@ -102,6 +102,10 @@ class HybridResult:
   # result reached only through an associated entity. Drives the exact-before-
   # associated partition so associated docs never outrank exact ones.
   assoc_weight: float = 1.0
+  # Display-only trust verdict (yaams.trust.TrustVerdict | None); never feeds
+  # ranking. None until populated post-scoring by attach_trust_verdicts. Typed
+  # loosely to avoid importing yaams.trust into the hot retrieval path.
+  trust: object | None = None
 
 
 def query(

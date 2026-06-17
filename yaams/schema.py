@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 # Informational only; schema_migrations table is the source of truth
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_EMBEDDING_DIM = 1024
 
 

@@ -150,6 +150,7 @@ workflow, query flags, and best practices — see the
 | `signals` | inspect recent query history |
 | `consolidate` | group conversational items into sessions |
 | `promote` | review and accept atomic-note candidates into the Tier 2 ledger |
+| `mcp` | run the MCP server over stdio (exposes query verbs as MCP tools) |
 | `reset-db` | drop and recreate the database (asks first) |
 | `version` | print version (`--json` for machine-readable) |
 
@@ -257,11 +258,27 @@ classification, and vulnerability disclosure flow. See
 [docs/privacy-security.md](docs/privacy-security.md) for the operational
 detail on what is written, what is not, and how to scrub.
 
+## MCP server
+
+`yaams mcp` exposes the query verbs as [MCP](https://modelcontextprotocol.io)
+tools over stdio, so any MCP client (Claude Desktop, Claude Code, Cursor, …)
+can search your Tier-1 store natively:
+
+```bash
+pip install 'yaams[mcp]'   # optional extra
+yaams mcp                  # read-only: yaams_query, yaams_answer
+yaams mcp --allow-write    # also expose the write-gated yaams_feedback tool
+```
+
+See [docs/mcp-server.md](docs/mcp-server.md) for tools and client setup.
+
 ## Documentation
 
 - **[User Guide](docs/user-guide.md)** - the end-to-end manual: every
   feature, the entity-curation workflow, query power-flags, best practices,
   and troubleshooting.
+- [MCP server](docs/mcp-server.md) - run YAAMS as an MCP server; tool reference
+  and client configuration.
 - [Implementation status](docs/implementation-status.md) - architecture and
   what's shipped.
 - [Scheduling](docs/scheduling.md) - unattended nightly ingest via `launchd`.

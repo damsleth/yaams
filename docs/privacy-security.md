@@ -13,6 +13,12 @@ The intended Phase A execution path is local:
 
 Do not configure cloud embedding, cloud NER, or hosted LLM services for this repo unless a later design explicitly allows it.
 
+The MCP server (`yaams mcp`) is likewise local-only: it serves over stdio with
+no network listener and no auth. Every tool response is routed through an egress
+scrub that strips `<private>…</private>` spans before it leaves the process, and
+write tools are gated behind `--allow-write`. See
+[mcp-server.md](mcp-server.md).
+
 ## Data Written
 
 Phase A writes:

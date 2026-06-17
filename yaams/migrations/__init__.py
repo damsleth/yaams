@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable
 import importlib
 import pkgutil
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Callable
 
 
 @dataclass
@@ -21,6 +21,7 @@ def discover() -> list[Migration]:
     Sort by name for deterministic ordering.
     """
     import sys
+
     import yaams.migrations.versions as _versions_pkg_unused  # noqa: F401
 
     # Use sys.modules to respect monkeypatching in tests; a plain

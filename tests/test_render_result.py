@@ -6,9 +6,8 @@ Pins the exact TTY output produced by _render_result for:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 from yaams.cli.query import _render_result
 

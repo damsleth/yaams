@@ -26,6 +26,7 @@ then come back here.
 12. [Health checks and maintenance](#12-health-checks-and-maintenance)
 13. [Best practices](#13-best-practices)
 14. [Troubleshooting](#14-troubleshooting)
+15. [MCP server](#15-mcp-server)
 
 ---
 
@@ -320,6 +321,25 @@ yaams query --high-quality "..."# synthesis-grade depth (higher top_k)
 
 `--explain` is your window into what the parser understood — use it whenever
 results surprise you (see [Troubleshooting](#14-troubleshooting)).
+
+### Trust verdicts
+
+Each result carries a **display-only trust verdict** — a `high` / `medium` /
+`low` level plus a one-line reason — shown under the result in text mode and as
+a `trust` object in `--json`. The verdict is derived from the item's
+*provenance* (the source channel it arrived through), any affirming or
+contradicting [feedback](#feedback) you've logged, whether it was rolled into a
+consolidation, and its age. It is **purely informational: it never changes
+ranking or result order.**
+
+Provenance weighting (so a chat message reads as lower trust than an authored
+email) is off by default until validated; turn it on in `config.yaml`:
+
+```yaml
+trust:
+  show_trust_verdict: true            # default; set false to hide verdicts
+  provenance_weighting_enabled: true  # default false
+```
 
 ---
 
@@ -721,6 +741,25 @@ re-tag everything with the current dictionary and NER model.
 **Too many junk entities.**
 Run `yaams entities suggest-prune` (read-only) to see the worst offenders with
 reasons, then `yaams entities prune ...` to remove them durably.
+
+---
+
+## 15. MCP server
+
+`yaams mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio so any MCP client — Claude Desktop, Claude Code, Cursor,
+Cline, or another agent — can search your Tier-1 store natively. It reads the
+same `config.yaml` and database as the CLI.
+
+```bash
+pip install 'yaams[mcp]'     # the mcp dependency is an optional extra
+yaams mcp                    # read-only tools (yaams_query, yaams_answer)
+yaams mcp --allow-write      # also expose the write-gated yaams_feedback tool
+```
+
+Every response is scrubbed of `<private>…</private>` content before it leaves
+the process. For the full tool reference and client configuration, see
+[mcp-server.md](mcp-server.md).
 
 ---
 

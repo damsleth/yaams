@@ -23,8 +23,10 @@ from yaams.render import (
 )
 from yaams.retrieve import (
   HybridQueryConfig,
+  attach_trust_verdicts,
   filter_results_by_entities,
   parse_query,
+  trust_to_dict,
 )
 from yaams.retrieve import (
   query as run_query,
@@ -365,6 +367,17 @@ def query_cmd(
         results = filter_results_by_entities(results, conn_ro, qcfg.entity_filter)
       if tier_raw_exclude:
         results = [r for r in results if r.source != _LEDGER_SOURCE_ID]
+      # Display-only trust verdicts; annotates in place, never reorders.
+      _trust_raw = cfg.get("trust")
+      trust_cfg = _trust_raw if isinstance(_trust_raw, dict) else {}
+      attach_trust_verdicts(
+        results,
+        conn_ro,
+        show_trust_verdict=trust_cfg.get("show_trust_verdict", True),
+        provenance_weighting_enabled=trust_cfg.get(
+          "provenance_weighting_enabled", False
+        ),
+      )
     finally:
       conn_ro.close()
     retrieval_ms = (_time.perf_counter() - retrieve_start) * 1000
@@ -610,6 +623,7 @@ def _result_to_dict(r) -> dict:
     "item_count": r.item_count,
     "participants": r.participants,
     "content_preview": (r.content or "")[:400],
+    "trust": trust_to_dict(getattr(r, "trust", None)),
   }
 
 
@@ -626,6 +640,9 @@ def _render_result(rank: int, r) -> None:
     else str(r.timestamp)
   )
   click.echo(f"[{rank:>2}] {r.source} · {ts} · score {r.score:.3f}")
+  trust = getattr(r, "trust", None)
+  if trust is not None:
+    click.echo(f"{_BODY_INDENT}trust: {trust.level} — {trust.reason}")
 
   if r.kind == "consolidation":
     parts = short_participants(r.participants or [])

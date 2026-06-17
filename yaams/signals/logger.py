@@ -147,6 +147,45 @@ def log_feedback(
   return int(cursor.lastrowid or 0)
 
 
+# Feedback kinds that affirm a result vs. flag it as wrong. Used to derive
+# validation / contradiction counts for trust verdicts (yaams.trust).
+_VALIDATION_KINDS = ("hit", "relevant")
+_CONTRADICTION_KINDS = ("correction",)
+
+
+def feedback_counts(
+  conn: sqlite3.Connection, result_ids: Sequence[str]
+) -> dict[str, tuple[int, int]]:
+  """Return ``{result_id: (validations, contradictions)}`` for *result_ids*.
+
+  Validations are affirming feedback (hit / relevant); contradictions are
+  corrections. Ids with no feedback are returned as ``(0, 0)``. Batched into a
+  single GROUP BY scan over ``query_feedback``.
+  """
+  counts: dict[str, tuple[int, int]] = {rid: (0, 0) for rid in result_ids}
+  if not counts:
+    return counts
+  placeholders = ",".join("?" for _ in counts)
+  rows = conn.execute(
+    f"""
+    SELECT result_id, kind, COUNT(*) AS n
+    FROM query_feedback
+    WHERE result_id IN ({placeholders})
+    GROUP BY result_id, kind
+    """,
+    tuple(counts),
+  ).fetchall()
+  for row in rows:
+    rid, kind, n = row[0], row[1], int(row[2])
+    valid, contra = counts.get(rid, (0, 0))
+    if kind in _VALIDATION_KINDS:
+      valid += n
+    elif kind in _CONTRADICTION_KINDS:
+      contra += n
+    counts[rid] = (valid, contra)
+  return counts
+
+
 def recent_queries(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
   rows = conn.execute(
     """

@@ -22,6 +22,9 @@ dev = [
   "ruff>=0.6",
   "pyright>=1.1.380",
 ]
+mcp = [
+  "mcp>=1.0",
+]
 
 [project.scripts]
 yaams = "yaams.cli:cli"

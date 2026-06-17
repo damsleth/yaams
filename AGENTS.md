@@ -138,12 +138,20 @@ Other agents may be working in this repo at the same time as you - running A/B t
 - Default to no comments. Only add one when the why is non-obvious.
 - Match the language the user initiates in. The dictionary, NER, and embeddings handle both Norwegian and English; assume mixed-language content throughout.
 - Research before editing. Never change code you haven't read.
-- **Update `CHANGELOG.md` and the docs with every meaningful change.** Add an
-  entry under `[Unreleased]` (Keep a Changelog categories: Added / Changed /
-  Fixed / Removed) in the same commit as the change, and update whatever
-  `docs/` pages and `config.yaml.example` describe the behavior you touched
-  (`docs/user-guide.md` for anything user-facing). A change without a
-  changelog entry and current docs is not done.
+- **Always update every documentation surface before committing any meaningful
+  body of work.** This is not optional and not deferrable to a follow-up commit.
+  In the same commit as the change, update *all* surfaces the work touches:
+  - `CHANGELOG.md` — an entry under `[Unreleased]` (Keep a Changelog
+    categories: Added / Changed / Fixed / Removed).
+  - `docs/` — every page that describes behavior you changed
+    (`docs/user-guide.md` for anything user-facing, plus the relevant
+    subsystem page, e.g. `docs/schema-migrations.md` for schema work).
+  - `config.yaml.example` — any new or changed config keys.
+  - `AGENTS.md` and `README` — when the workflow, layout, or conventions move.
+
+  A change without a changelog entry and current docs across every affected
+  surface is not done. Before staging, re-scan the diff and ask which surfaces
+  it touches.
 
 ## Quick start for a new agent in this repo
 

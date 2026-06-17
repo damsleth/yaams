@@ -113,6 +113,16 @@ embed:
 synth:
   backend: dummy
 
+trust:
+  # Attach a display-only trust verdict (high|medium|low + a one-line reason)
+  # to each query result. Never affects ranking or result order.
+  show_trust_verdict: true
+  # Discount a result's confidence by its provenance class (the ingest source
+  # it arrived through) when deriving the verdict, so conversational/imported
+  # sources read as lower trust than authored/curated ones. Off by default
+  # until A/B validated.
+  provenance_weighting_enabled: false
+
 promote:
   # LLM-based conflict classification: compares drafted candidates against the
   # existing Tier 2 note they would merge into. Requires an LLM backend in the

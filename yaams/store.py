@@ -10,6 +10,7 @@ from typing import Iterable, Sequence, cast
 from yaams.consolidate.session import Consolidation
 from yaams.ingest.base import Item
 from yaams.time import ensure_utc
+from yaams.trust import derive_provenance
 
 EntityTag = tuple[str, str, float, str]
 
@@ -497,6 +498,12 @@ def database_stats(conn: sqlite3.Connection) -> dict:
 
 def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
   exists = conn.execute("SELECT 1 FROM items WHERE id = ?", (item.id,)).fetchone()
+  # Origin-trust class for the item, derived from its ingest source. Stored so
+  # trust verdicts (yaams.trust) need not re-derive it per query; legacy rows
+  # written before this column fall back to derivation at query time.
+  provenance = derive_provenance(
+    item.source, timestamp_inferred=item.timestamp_inferred
+  )
   params = (
     item.id,
     item.source,
@@ -511,14 +518,16 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
     json.dumps(item.raw_metadata, ensure_ascii=False),
     ensure_utc(item.ingested_at).isoformat(),
     1 if item.timestamp_inferred else 0,
+    provenance,
   )
   if exists is None:
     conn.execute(
       """
       INSERT INTO items
         (id, source, source_id, timestamp, sender, recipients, content,
-         subject, thread_id, lang, raw_metadata, ingested_at, timestamp_inferred)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         subject, thread_id, lang, raw_metadata, ingested_at, timestamp_inferred,
+         provenance)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       params,
     )
@@ -536,7 +545,8 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
       thread_id = ?,
       lang = ?,
       raw_metadata = ?,
-      timestamp_inferred = ?
+      timestamp_inferred = ?,
+      provenance = ?
     WHERE id = ?
     """,
     (
@@ -551,6 +561,7 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
       item.lang,
       json.dumps(item.raw_metadata, ensure_ascii=False),
       1 if item.timestamp_inferred else 0,
+      provenance,
       item.id,
     ),
   )

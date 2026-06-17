@@ -23,6 +23,11 @@ SQLite schema with the following tables:
   signals
 - `promotion_candidates` - Tier 2 promotion queue
 
+`items.provenance` records each item's origin-trust class (derived from its
+ingest source) for trust verdicts. Schema changes run through a numbered,
+journaled migration runtime (`yaams/migrations/`); see
+[schema-migrations.md](schema-migrations.md).
+
 Storage is append-only and idempotent: deterministic item IDs
 (`sha256(source:source_id)`) with `INSERT OR IGNORE` on items and replacement
 FTS/vector rows. sqlite-vec loads with a plain-table fallback for test and
@@ -63,6 +68,9 @@ through `pending_review`.
 - Cross-tier fusion with a Tier 2 (cognitive-ledger) boost
 - LLM synthesis of grounded, cited answers (`synthesize/answer.py`),
   pluggable backend: `claude`, `codex`, `ollama`, `subprocess`, `dummy`
+- Display-only trust verdicts on results (`trust.py`, `retrieve/trust.py`):
+  high/medium/low derived from provenance, feedback, supersession, and
+  recency; never affects ranking
 
 ## Consolidation, signals, promotion
 
@@ -76,7 +84,8 @@ through `pending_review`.
 `init` / `init-db` / `setup` / `reset-db` / `stats` / `version`, plus
 `ingest`, `refresh`, `curate`, `query`, `feedback`, `signals`, `consolidate`,
 `promote {generate,list,review}`, `entities {list,add,remove,discover,denied,manage}`,
-`enrich retag`, `sources` (TUI), and `doctor`. Machine-capable action
+`enrich retag`, `sources` (TUI), `mcp` (MCP server over stdio; see
+[mcp-server.md](mcp-server.md)), and `doctor`. Machine-capable action
 commands emit byte-identical JSON envelopes under the YAAMS CLI contract;
 interactive commands reject `--json` with an actionable error.
 

@@ -10,6 +10,27 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server** (`yaams mcp`): exposes Tier-1 query verbs as Model Context
+  Protocol tools over stdio so any MCP client (Claude Desktop, Cursor, agents)
+  can search the raw store directly — superseding the subprocess shim the
+  cognitive-ledger MCP server used to wrap it. Tools: `yaams_query` (ranked
+  results with trust verdicts), `yaams_answer` (grounded, cited synthesis), and
+  the write-gated `yaams_feedback` (enabled with `--allow-write`). Every
+  response passes through an egress scrub that strips `<private>…</private>`
+  spans. Requires the optional `mcp` extra: `pip install 'yaams[mcp]'`.
+
+- **Trust verdicts + provenance** (Tier-1 store): query results now carry a
+  display-only trust verdict (`high|medium|low` + one-line reason) derived from
+  the item's provenance class, affirming/contradicting feedback, supersession,
+  and recency. Verdicts never affect ranking or result order. A new nullable
+  `items.provenance` column (migration `0006_items_provenance`, schema v7)
+  records each item's origin-trust class at ingest, derived from its source
+  channel; legacy rows derive it at query time. New `trust:` config block:
+  `show_trust_verdict` (default on) and `provenance_weighting_enabled` (default
+  off until A/B validated). Ported from cognitive-ledger plans 42 & 46.
+
 ## [0.6.0] - 2026-06-10
 
 ### Added

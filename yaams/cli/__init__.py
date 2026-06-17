@@ -5,6 +5,7 @@ from yaams.cli import (  # noqa: F401
   enrich,
   entities,
   main,
+  mcp,
   promote,
   query,
   review,

@@ -10,6 +10,8 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-17
+
 ### Added
 
 - **MCP server** (`yaams mcp`): exposes Tier-1 query verbs as Model Context

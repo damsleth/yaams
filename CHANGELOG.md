@@ -10,6 +10,19 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-18
+
+### Added
+
+- **`chats` source** ("agent chats"): ingests Claude Code session summaries
+  written by the `capture-chat.sh` `SessionEnd` hook — one markdown file per
+  session, with YAML frontmatter. Reads `ingest.chats.chats_path` (default
+  `~/brain/chats`), skips `.git`/`.obsidian`/`.claude` and `README.md`/
+  `AGENTS.md`, and resolves timestamps from frontmatter (`created`/`date`/…) or
+  the filename date, falling back to mtime. Disabled by default; enable under
+  `ingest.chats` in `config.yaml`. Surfaced in docs as "agent chats" to
+  disambiguate from messaging-chat sources (iMessage, Teams).
+
 ## [0.7.0] - 2026-06-17
 
 ### Added

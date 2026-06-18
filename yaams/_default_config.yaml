@@ -36,6 +36,14 @@ ingest:
     # Defaults to .obsidian, .git, .smartchats, .smart-env, .claude.
     # skip_dirs: [.obsidian, .git, archive]
 
+  # Claude Code session summaries written by the capture-chat.sh SessionEnd
+  # hook (one markdown file per session, with YAML frontmatter).
+  chats:
+    enabled: false
+    chats_path: ~/brain/chats
+    # Optional. Defaults to .git, .obsidian, .claude
+    # skip_dirs: [.git, .obsidian]
+
   # Generic recursive folder ingestion. Reads .txt and .md natively;
   # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
   # Files of unsupported types (or types with the dep missing) are skipped.

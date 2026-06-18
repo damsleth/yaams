@@ -43,6 +43,8 @@ Adapters for:
   quoted-reply / HTML-blockquote trimming
 - `notes` - Obsidian vault markdown
 - `tier2_ledger` - curated atomic notes from cognitive-ledger
+- `chats` - agent chats — Claude Code session summaries written by the
+  `SessionEnd` hook (one markdown file per session, with YAML frontmatter)
 - `github` - issues and PRs across repos
 - `calendar` / `calendar_<profile>` - Outlook via `owa-cal`
 - `teams` / `teams_<profile>` - Microsoft Teams via Graph or the `chatsvc`

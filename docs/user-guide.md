@@ -184,6 +184,7 @@ yaams refresh              # ingest + safe maintenance + associations
 | `notes` | Obsidian vault markdown |
 | `folders` | generic recursive file walker (`.txt`, `.md`, `.pdf`, `.docx`) |
 | `tier2_ledger` | curated atomic notes from cognitive-ledger |
+| `chats` | agent chats — Claude Code session summaries written by the `SessionEnd` hook (one markdown file per session) |
 | `github` | issues and PRs across your repos |
 | `calendar` / `calendar_<profile>` | Outlook calendar via `owa-cal` |
 | `mail` / `mail_<profile>` | Microsoft 365 mail via `owa-mail` |

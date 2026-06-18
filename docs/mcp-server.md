@@ -54,7 +54,7 @@ Add `"--allow-write"` to the `args` array to enable `yaams_feedback`.
 - `tier`: `both` (default), `raw` (everything except the curated Tier-2
   ledger), or `ledger` (only Tier-2 notes).
 - `source`: restrict to a single ingest source (e.g. `email`, `github`,
-  `imessage`). Overrides `tier` when set.
+  `imessage`, `chats`). Overrides `tier` when set.
 
 Returns `{"results": [ ... ]}` where each result mirrors the
 `yaams query --format json` shape and carries a `trust` object.

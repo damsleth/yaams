@@ -163,6 +163,7 @@ workflow, query flags, and best practices — see the
 | `email` | `ingest.email` | `.emlx` (Apple Mail) or `.mbox` |
 | `notes` | `ingest.notes` | Obsidian vault markdown |
 | `tier2_ledger` | `ingest.tier2_ledger` | curated atomic notes from cognitive-ledger |
+| `chats` | `ingest.chats` | agent chats — Claude Code session summaries (one markdown file per session) |
 | `github` | `ingest.github` | GitHub issues and PRs across your repos |
 | `calendar` / `calendar_<profile>` | `ingest.calendar` | Outlook calendar via `owa-cal` |
 | `teams` / `teams_<profile>` | `ingest.teams` | Microsoft Teams via Graph API |

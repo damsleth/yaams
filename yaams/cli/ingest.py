@@ -37,6 +37,7 @@ from yaams.db import open_db
 from yaams.enrich.entities import detect_lang
 from yaams.ingest import Adapter, Item
 from yaams.ingest.calendar import CalendarAdapter
+from yaams.ingest.chats import ChatsAdapter
 from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.folder import FolderAdapter
 from yaams.ingest.github import GitHubAdapter
@@ -611,6 +612,18 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     )
   if source == "github":
     return GitHubAdapter(username=cfg.get("username", ""))
+  if source == "chats":
+    from yaams.ingest.chats import DEFAULT_SKIP_DIRS as _CHATS_SKIP_DIRS
+    chats_path = cfg.get("chats_path")
+    if not chats_path:
+      raise ValueError(
+        "chats source requires ingest.chats.chats_path in config.yaml"
+      )
+    skip_dirs = set(cfg.get("skip_dirs") or _CHATS_SKIP_DIRS)
+    return ChatsAdapter(
+      chats_path=Path(chats_path),
+      skip_dirs=skip_dirs,
+    )
   if source.startswith("calendar_"):
     profile = source[len("calendar_"):]
     return CalendarAdapter(
@@ -868,7 +881,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github",
+      "github", "chats",
       *_piggy_sources("teams", "teams_"),
       *_piggy_sources("teams_channels", "teams_channels_"),
       *_piggy_sources("calendar", "calendar_"),
@@ -958,6 +971,11 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
   if source == "github":
     return [f"github: {source_cfg.get('username', 'unknown')} (events)"]
+  if source == "chats":
+    path = source_cfg.get("chats_path")
+    return [
+      f"agent chats: {Path(path).expanduser()}" if path else "agent chats: n/a"
+    ]
   if source.startswith("calendar_"):
     profile = source[len("calendar_"):]
     return [f"owa-cal profile: {profile}"]

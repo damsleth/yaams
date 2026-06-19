@@ -13,10 +13,10 @@ bottom of **Backlog**; once run, move the line to **Tried** with its verdict.
 ## Backlog (untried — pick the top-value one)
 
 - untried | recall: why do common-term golds ("deployment", "damsleth") land rank=None — is per-index-k too small, or vec/FTS fusion dropping them? | — | — | rank=None means NOT retrieved; reranking can't help. OUT OF SCOPE this campaign (ranking-only) but log findings.
-- untried | DEFAULT_PER_INDEX_K re-sweep on denser set (was 60→80) | — | — | same rationale — re-validate against 68-gold scenario.
 
 ## Tried
 
+- kept | per_index_k_resweep: DEFAULT_PER_INDEX_K 80→50 + consolidation_boost 1.1→1.05 | +0.0057 dev (0.5406→0.5463) | — | jun19 round 3. Re-validated on 68-gold set; k=50 outperforms k=80 on the denser set.
 - kept | consolidation_boost_resweep: consolidation_boost 1.1→1.05 | +0.0093 dev (0.5313→0.5406) | — | jun19. Temporal regression no longer applies after narrow-date de-boost was gated separately; global knob moved freely and yielded quality gain.
 - discarded | RRF_K re-sweep on denser gold set | -0.0093 (3 runs, 1 had a regression) | campaign-jun19 | RRF_K=30 confirmed still optimal on the 68-gold set; every off-30 value lost quality. DO NOT REVISIT.
 - parked | event_anchored narrow-window cons de-boost | noisy: -0.0027 then +0.0096 across two runs | campaign-jun19 | within noise on the dev set; +0.0096 doesn't justify the added branch by the simplicity criterion. Revisit only if event-anchored golds grow.

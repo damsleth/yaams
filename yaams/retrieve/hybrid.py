@@ -567,46 +567,20 @@ def _embedding_to_blob(embedding: object) -> bytes:
   return array("f", [float(v) for v in cast(Iterable[float], embedding)]).tobytes()
 
 
-_BM25_MAGNITUDE_ALPHA = 0.05
-
-
 def _fuse(
   ranked_lists: Sequence[list[tuple[str, str, int, float]]],
   cfg: HybridQueryConfig,
 ) -> dict[tuple[str, str], ScoreComponents]:
   fused: dict[tuple[str, str], ScoreComponents] = {}
-  for idx, ranking in enumerate(ranked_lists):
-    is_fts = idx < 2  # first two lists are FTS (items, cons); last two are vec
-    # For FTS lists, precompute normalized bm25 magnitude per entry so that the
-    # confidence gap between a strong exact-match and a marginal hit is visible
-    # to the ranker instead of being discarded by pure rank-based RRF.
-    # bm25() in FTS5 is negative (more negative = better), so we negate and
-    # normalize by the list range: best_normed=1.0, worst_normed=0.0.
-    bm25_normed: list[float] = []
-    if is_fts and ranking:
-      raw_scores = [entry[3] for entry in ranking]
-      # Negate: best match has the largest magnitude (most negative raw).
-      magnitudes = [-s for s in raw_scores]
-      lo, hi = min(magnitudes), max(magnitudes)
-      span = hi - lo
-      if span > 0.0:
-        bm25_normed = [(m - lo) / span for m in magnitudes]
-      else:
-        bm25_normed = [0.0] * len(ranking)
-    for entry_idx, (kind, identifier, rank, raw_score) in enumerate(ranking):
+  for ranking in ranked_lists:
+    for kind, identifier, rank, raw_score in ranking:
       key = (kind, identifier)
       comp = fused.setdefault(key, ScoreComponents())
       contribution = 1.0 / (cfg.rrf_k + rank + 1)
-      if is_fts and bm25_normed:
-        # Add a small fraction of the normalized bm25 magnitude on top of the
-        # RRF rank contribution so exact-lexical-match confidence gaps are
-        # visible (e.g. "deployment" rank-0 with bm25=-8 vs rank-0 with
-        # bm25=-0.5 now differ slightly in their FTS contribution).
-        contribution += _BM25_MAGNITUDE_ALPHA * bm25_normed[entry_idx] * contribution
       if kind == "consolidation" and cfg.prefer_consolidations:
         contribution *= cfg.consolidation_boost
       comp.rrf_score += contribution
-      _stash_component(comp, is_fts, rank, raw_score, kind == "item")
+      _stash_component(comp, ranking is ranked_lists[0] or ranking is ranked_lists[1], rank, raw_score, kind == "item")
   return fused
 
 

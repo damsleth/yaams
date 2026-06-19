@@ -29,8 +29,9 @@ const BASELINE = {
     p95: { type: 'number' },
     rank1: { type: 'number' },
     gold: { type: 'number' },
+    head: { type: 'string' }, // campaign-branch HEAD sha — the base every experiment must sync to
   },
-  required: ['quality', 'p95'],
+  required: ['quality', 'p95', 'head'],
 }
 const PLAN = {
   type: 'object',
@@ -67,12 +68,14 @@ phase('Baseline')
 const base = await agent(
   `${PROGRAM}\nRun the harness once to establish the anchor (no edits):\n` +
     `  ${HARNESS} --no-write\n` +
-    `Return the quality, retrieval_p95_ms (as p95), rank1, and gold_queries (as gold) from its JSON.`,
+    `Return the quality, retrieval_p95_ms (as p95), rank1, and gold_queries (as gold) from its JSON, ` +
+    `and the campaign-branch HEAD sha as head (\`git rev-parse HEAD\`).`,
   { label: 'baseline', phase: 'Baseline', schema: BASELINE },
 )
 let anchor = base.quality
 let anchorP95 = base.p95 || 1e9
-log(`anchor quality=${anchor} p95=${anchorP95}ms rank1=${base.rank1}/${base.gold}`)
+const HEAD = base.head // every experiment syncs retrieve/* to this before editing
+log(`anchor quality=${anchor} p95=${anchorP95}ms rank1=${base.rank1}/${base.gold} head=${HEAD.slice(0, 8)}`)
 
 let dry = 0
 const kept = []
@@ -105,13 +108,18 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       agent(
         `${PROGRAM}\nYou are running ONE experiment, autonomously, per the org code.\n` +
           `IDEA (${it.key}): ${it.idea}\n` +
-          `Steps: (1) edit only yaams/retrieve/* (not parse.py, not the harness/fixture); ` +
+          `CRITICAL — you may be in a git worktree based on an OLD commit. FIRST sync the code under ` +
+          `test to the campaign HEAD so you measure against current code, not stale code:\n` +
+          `  git checkout ${HEAD} -- yaams/retrieve/\n` +
+          `Verify (e.g. \`grep -c TEMPORAL_CONS_BOOST yaams/retrieve/route.py\` should be > 0).\n` +
+          `Then: (1) edit only yaams/retrieve/* (not parse.py, not the harness/fixture); ` +
           `(2) run \`${HARNESS} --no-write\`; fix a dumb crash once, else report status=crash; ` +
           `(3) if it looks like a win, run again \`${HARNESS} --tag ${it.key}\` to confirm.\n` +
           `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${anchor} ` +
           `AND regressions == 0 AND p95 <= ${2 * anchorP95}.\n` +
-          `Return: key, status, quality, p95, regressions, the unified \`git diff -- yaams/retrieve/\` ` +
-          `as diff (EMPTY string if the gate failed and you reverted), and a one-line note.`,
+          `Return: key, status, quality, p95, regressions, and the diff as ` +
+          `\`git diff ${HEAD} -- yaams/retrieve/\` (relative to campaign HEAD, so it applies cleanly; ` +
+          `EMPTY string if the gate failed and you reverted), plus a one-line note.`,
         { label: `exp:${it.key}`, phase: PH, model: 'sonnet', isolation: 'worktree', schema: EXPERIMENT },
       ),
     ),

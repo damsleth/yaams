@@ -124,6 +124,18 @@ trust:
   provenance_weighting_enabled: false
 
 promote:
+  # Semantic dedup: before accepting a drafted candidate, call `ledger embed
+  # search` to check whether an equivalent note already exists in Tier 2.
+  # Requires cognitive-ledger installed and `ledger embed build` run first.
+  # Off by default; flip `enabled: true` once the index is built.
+  semantic_dedup:
+    enabled: false
+    duplicate_threshold: 0.92   # >= this -> skip (already exists)
+    merge_threshold: 0.80       # >= this and < duplicate -> flag for merge
+    embed_backend: local        # passed as --embed-backend to ledger
+    ledger_cli: ledger          # path/name of the ledger binary
+    timeout_s: 15               # subprocess timeout in seconds
+
   # LLM-based conflict classification: compares drafted candidates against the
   # existing Tier 2 note they would merge into. Requires an LLM backend in the
   # `synth` section. Off by default; flip `enabled: true` after enabling dedup.

@@ -13,6 +13,12 @@ from yaams.synthesize.llm import LLMAdapter
 
 if TYPE_CHECKING:
   from yaams.promote.conflict import ConflictConfig
+  from yaams.promote.dedup import DedupConfig
+
+
+def _default_dedup_config() -> "DedupConfig":
+  from yaams.promote.dedup import DedupConfig
+  return DedupConfig()
 
 GENERATE_PROMPT = """\
 You are drafting an atomic note for a personal knowledge base.
@@ -97,6 +103,7 @@ class PromoteConfig:
   cluster_fetch_k: int = 10
   note_index_path: Path | None = None
   rejected_log_path: Path | None = None
+  dedup: "DedupConfig" = field(default_factory=lambda: _default_dedup_config())
 
 
 def generate_candidates(
@@ -107,10 +114,12 @@ def generate_candidates(
   on_progress: Callable[[str], None] | None = None,
   conflict_cfg: "ConflictConfig | None" = None,
 ) -> list[PromotionCandidate]:
+  from yaams.promote.dedup import DedupChecker
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
   index_texts = _load_index_texts(config.note_index_path)
   rejected = _load_rejected(config.rejected_log_path)
+  dedup_checker = DedupChecker(config.dedup)
   candidates: list[PromotionCandidate] = []
   total = len(entities)
 
@@ -148,9 +157,6 @@ def generate_candidates(
           on_progress("  skipped (previously rejected)")
         continue
       # --- Phase C: dedup check -------------------------------------------
-      from yaams.promote.dedup import DedupChecker, DedupConfig
-      dedup_cfg = DedupConfig()
-      dedup_checker = DedupChecker(dedup_cfg)
       verdict = dedup_checker.check(candidate.draft_statement)
       if verdict.decision == "duplicate":
         if on_progress:

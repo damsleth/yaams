@@ -138,6 +138,36 @@ def promote_generate(
   rejected_log_path = _resolve_rejected_log_path(
     tier2_cfg_raw, promote_cfg_raw, note_index_path
   )
+  from yaams.promote.dedup import DedupConfig
+  sd = promote_cfg_raw.get("semantic_dedup") or {}
+  dedup_cfg = DedupConfig(
+    enabled=bool(sd.get("enabled", False)),
+    duplicate_threshold=float(sd.get("duplicate_threshold", 0.92)),
+    merge_threshold=float(sd.get("merge_threshold", 0.80)),
+    embed_backend=str(sd.get("embed_backend", "local")),
+    ledger_cli=str(sd.get("ledger_cli", "ledger")),
+    timeout_s=int(sd.get("timeout_s", 15)),
+  )
+  if not as_json and dedup_cfg.enabled:
+    import shutil
+    import subprocess as _sp
+    ledger_exe = shutil.which(dedup_cfg.ledger_cli)
+    if ledger_exe is None:
+      click.echo(
+        f"WARNING: semantic_dedup enabled but '{dedup_cfg.ledger_cli}' not found on PATH - dedup unavailable",
+        err=True,
+      )
+    else:
+      try:
+        _sp.run(
+          [ledger_exe, "embed", "--help"],
+          capture_output=True, text=True, timeout=5,
+        )
+      except Exception:
+        click.echo(
+          "WARNING: 'ledger embed --help' failed - semantic dedup may be unavailable",
+          err=True,
+        )
   pcfg = PromoteConfig(
     window_days=days or int(promote_cfg_raw.get("window_days", 90)),
     window_days_by_type=dict(promote_cfg_raw.get("window_days_by_type") or {"person": 365}),
@@ -145,6 +175,7 @@ def promote_generate(
     cluster_fetch_k=int(promote_cfg_raw.get("cluster_fetch_k", 10)),
     note_index_path=note_index_path,
     rejected_log_path=rejected_log_path,
+    dedup=dedup_cfg,
   )
   conn = open_db(db_path)
   try:

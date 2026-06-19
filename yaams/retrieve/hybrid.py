@@ -61,7 +61,7 @@ class HybridQueryConfig:
   # Soft metadata boost: documents linked to any of these entities have their
   # score multiplied by boost_factor (does not filter the candidate set).
   boost_entities: list[str] | None = None
-  boost_factor: float = 1.5
+  boost_factor: float = 3.0
   lang_filter: str | None = None
   # Restrict candidates to items the user took part in — sender or a recipient
   # matches one of these identities (casefolded), consolidations match via

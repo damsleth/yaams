@@ -73,11 +73,23 @@ const EXPERIMENT = {
 }
 
 phase('Baseline')
+// ponytail: the harness measures `regressions` vs the PREVIOUS state-writing run, not a
+// fixed golden baseline. A discarded experiment (esp. across resume/rate-limit retries) can
+// leave that state pointing at code that was never committed, so the committed baseline then
+// shows a phantom regression -> status fail:regression -> anchor poisoned -> 0 keeps.
+// Fix: re-seed the regression reference from committed HEAD here (run WITHOUT --no-write so
+// the harness writes _STATE), on a verified-clean tree, before any experiment is gated.
 const base = await agent(
-  `${PROGRAM}\nRun the harness once to establish the anchor (no edits):\n` +
-    `  ${HARNESS} --no-write\n` +
+  `${PROGRAM}\nEstablish the anchor AND re-seed the regression reference from the committed ` +
+    `baseline (no edits). The harness scores regressions against the previous state-writing run, ` +
+    `so a discarded experiment can poison it — re-seeding here makes the reference match HEAD.\n` +
+    `STEP 0 — verified-clean tree: \`git checkout HEAD -- yaams/retrieve/\` (discard any stray edits).\n` +
+    `Then run the harness WITHOUT --no-write (this writes _STATE = committed-baseline ranks):\n` +
+    `  ${HARNESS} --tag baseline-anchor\n` +
     `Return the quality, retrieval_p95_ms (as p95), rank1, and gold_queries (as gold) from its JSON, ` +
-    `and the campaign-branch HEAD sha as head (\`git rev-parse HEAD\`).`,
+    `and the campaign-branch HEAD sha as head (\`git rev-parse HEAD\`). ` +
+    `Ignore the run's own status field — the anchor quality is valid regardless; its purpose here ` +
+    `is to reset the reference.`,
   { label: 'baseline', phase: 'Baseline', model: 'sonnet', schema: BASELINE },
 )
 let anchor = base.quality

@@ -21,7 +21,7 @@ from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.time import ensure_utc
 
 DEFAULT_TOP_K = 20
-DEFAULT_PER_INDEX_K = 80
+DEFAULT_PER_INDEX_K = 50
 RRF_K = 30
 HIGH_QUALITY_FETCH_MULTIPLIER = 2
 TIMESTAMP_SORT_FETCH_MULTIPLIER = 4
@@ -44,7 +44,7 @@ class HybridQueryConfig:
   until: datetime | None = None
   sender_filter: list[str] | None = None
   rrf_k: int = RRF_K
-  consolidation_boost: float = 1.1
+  consolidation_boost: float = 1.05
   tier2_source: str = "tier2_ledger"
   tier2_boost: float = 1.2
   sort: str = "relevance"

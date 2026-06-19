@@ -33,3 +33,4 @@ baseline-denser-jun19	hybrid	dev	0.4878	0.569	0.2985	143.7	0	ok
 temporal-deboost-keep	hybrid	dev	0.5243	0.6034	0.3629	153.6	0	ok
 anchor-reset-jun19	hybrid	dev	0.5276	0.6034	0.3629	152.9	1	fail:regression
 consolidation_boost_resweep-keep	hybrid	dev	0.5406	0.6034	0.3939	150.2	0	ok
+per_index_k_resweep-keep	hybrid	dev	0.5463	0.6034	0.4129	138.8	0	ok

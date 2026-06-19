@@ -198,6 +198,13 @@ def render_candidate(candidate: dict[str, Any], index: int, total: int) -> str:
     f"  Statement: {candidate.get('draft_statement', '')}",
     f"  Tags:      {tags}",
     f"  Sources:   {n_sources} items",
-    "",
   ]
+
+  merge_with = candidate.get("merge_with")
+  if merge_with:
+    sim = candidate.get("dedup_similarity")
+    sim_str = f" (sim {sim:.2f})" if sim is not None else ""
+    lines.append(f"  Merge:     merge -> {merge_with}{sim_str}")
+
+  lines.append("")
   return "\n".join(lines)

@@ -155,6 +155,13 @@ trust:
   provenance_weighting_enabled: false
 
 promote:
+  semantic_dedup:
+    enabled: false
+    duplicate_threshold: 0.92
+    merge_threshold: 0.80
+    embed_backend: local
+    ledger_cli: ledger
+    timeout_s: 15
   conflict_detection:
     enabled: false
     only_for_merge_band: true

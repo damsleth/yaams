@@ -177,6 +177,19 @@ def query(
   )
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
+  if (
+    not hydrated
+    and (cfg.since is not None or cfg.until is not None)
+    and not cfg.entity_filter
+    and not cfg.participant_filter
+  ):
+    # Browse fallback: a time-windowed query whose text matched nothing in
+    # either index ("list all new items last 24 hrs", "torsdag 14 mai") still
+    # wants the items *in that window*, sorted by time — not zero results.
+    # Fires only when we'd otherwise return nothing, so it can never displace
+    # a real match. Skipped when an entity/participant filter is set: there the
+    # user asked for a specific thing, and a whole-window dump would be noise.
+    hydrated = _browse_window(conn, cfg, cap=hydrate_cap)
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity
     # without removing anything else from the result set.
@@ -607,6 +620,66 @@ def _hydrate(
     if result is not None:
       results.append(result)
   return results
+
+
+def _browse_window(
+  conn: sqlite3.Connection,
+  cfg: HybridQueryConfig,
+  cap: int,
+) -> list[HybridResult]:
+  """List items + consolidations inside cfg's [since, until] window by time.
+
+  The no-match fallback for time-windowed queries (see caller). Pure metadata
+  scan, no FTS/vector — score is 0.0 since there is no relevance signal; the
+  caller's timestamp sort orders them. Honors the same source/lang/inferred
+  filters as the index searches so a browse never surfaces what a search would
+  have hidden."""
+  results: list[HybridResult] = []
+  empty = ScoreComponents()
+  if cfg.include_items:
+    rows = conn.execute(
+      """
+      SELECT id FROM items
+      WHERE (? = '' OR source IN (SELECT value FROM json_each(?)))
+        AND (? IS NULL OR timestamp >= ?)
+        AND (? IS NULL OR timestamp <= ?)
+        AND (? IS NULL OR lang = ?)
+        AND (? = 0 OR timestamp_inferred = 0)
+        AND consolidated_into IS NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+      """,
+      _window_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), cap),
+    ).fetchall()
+    for row in rows:
+      r = _hydrate_item(conn, row["id"], empty, cfg)
+      if r is not None:
+        results.append(r)
+  if cfg.include_consolidations:
+    rows = conn.execute(
+      """
+      SELECT id FROM consolidations
+      WHERE (? = '' OR source IN (SELECT value FROM json_each(?)))
+        AND (? IS NULL OR start_timestamp >= ?)
+        AND (? IS NULL OR end_timestamp <= ?)
+      ORDER BY start_timestamp DESC
+      LIMIT ?
+      """,
+      _window_params(cfg) + (cap,),
+    ).fetchall()
+    for row in rows:
+      r = _hydrate_consolidation(conn, row["id"], empty, cfg)
+      if r is not None:
+        results.append(r)
+  return results
+
+
+def _window_params(cfg: HybridQueryConfig):
+  source_json = json.dumps(cfg.source_filter or [])
+  source_flag = "" if not cfg.source_filter else "filter"
+  since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
+  until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
+  return (source_flag, source_json, since_iso, since_iso, until_iso, until_iso)
 
 
 def _hydrate_item(

@@ -4,6 +4,32 @@
 
 This file is the entry point for any agent working in this repo. Read it before touching code.
 
+## Overarching goal
+
+YAAMS works toward the highest possible retrieval quality for a local,
+general-purpose personal memory system.
+
+Every agent working in this repo should improve, preserve, or clearly protect
+the system's ability to:
+
+- ingest high-volume raw context without losing source traceability;
+- retrieve the right evidence with high recall across messy personal data;
+- rank and fuse results well enough that useful evidence surfaces early;
+- synthesize grounded answers with citations and visible uncertainty;
+- keep raw history append-only and local-first;
+- reserve promotion into curated memory for human-reviewed knowledge.
+
+Retrieval quality is the product. It is judged primarily by whether YAAMS
+answers real questions over the owner's personal data with better recall,
+grounding, and usefulness. Automation, performance, schema changes, entity
+cleanup, and UI work are valuable only insofar as they support that goal or
+protect the system's ability to reach it.
+
+When in doubt, choose the path that improves retrieval quality or protects the
+evidence needed to measure it. Do not optimize for convenience, cleverness,
+automation, or broad architectural neatness ahead of recall, grounding,
+traceability, locality, and human review boundaries.
+
 ## What YAAMS is (and isn't)
 
 YAAMS ingests everything: messages, emails, transcripts, documents, browsing context. It normalizes each item to a common schema, embeds, entity-tags, and stores in SQLite. A query interface routes natural-language questions across the store, fuses dense + sparse results, has a local LLM synthesize a grounded answer, and logs structured signals for an offline improvement loop.

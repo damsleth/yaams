@@ -44,7 +44,7 @@ class HybridQueryConfig:
   until: datetime | None = None
   sender_filter: list[str] | None = None
   rrf_k: int = RRF_K
-  consolidation_boost: float = 1.1
+  consolidation_boost: float = 1.05
   tier2_source: str = "tier2_ledger"
   tier2_boost: float = 1.2
   sort: str = "relevance"

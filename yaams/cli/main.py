@@ -37,6 +37,7 @@ def version_cmd(as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 def setup_cmd(config_path: str, as_json: bool) -> None:
   """Install runtime assets (spaCy NER models) into the active Python env."""
+  import shutil
   import subprocess
 
   t0 = time.monotonic()
@@ -104,8 +105,15 @@ def setup_cmd(config_path: str, as_json: bool) -> None:
         click.echo(f"  {model}: FAILED ({detail})", err=True)
       continue
     url = resolve.stdout.strip()
+    # uv-built venvs ship no `pip` module, so prefer `uv pip install` targeting
+    # this interpreter; fall back to `python -m pip` where uv isn't installed.
+    uv = shutil.which("uv")
+    install_cmd = (
+      [uv, "pip", "install", "--python", sys.executable, url] if uv
+      else [sys.executable, "-m", "pip", "install", url]
+    )
     result = subprocess.run(
-      [sys.executable, "-m", "pip", "install", url],
+      install_cmd,
       check=False,
       capture_output=as_json,
     )

@@ -64,6 +64,8 @@ const EXPERIMENT = {
     mrr: { type: 'number' },                   // mrr_partial from the harness JSON
     p95: { type: 'number' },
     regressions: { type: 'number' },
+    recall_dropped: { type: 'boolean' },       // harness recall@10 floor breached
+
     diff: { type: 'string' },                  // `git diff <HEAD> -- yaams/retrieve/` (empty if reverted)
     note: { type: 'string' },
   },
@@ -122,11 +124,13 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
           `fix a dumb crash once, else report status=crash; (3) if it looks like a win, run ` +
           `\`${HARNESS} --no-write\` once more to confirm the number repeats.\n` +
           `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${anchor} ` +
-          `AND regressions == 0 AND p95 <= ${2 * anchorP95}.\n` +
+          `AND regressions == 0 AND recall_dropped == false (harness recall@10 floor) ` +
+          `AND p95 <= ${2 * anchorP95}.\n` +
           `STEP FINAL — capture \`git diff ${HEAD} -- yaams/retrieve/\` as the diff, THEN ALWAYS run ` +
           `\`git checkout ${HEAD} -- yaams/retrieve/\` to leave the working tree clean (the win, if any, ` +
           `is applied centrally from your returned diff; this keeps serial runs isolated).\n` +
-          `Return: key, status, quality, hit_rate, mrr (mrr_partial), p95, regressions, the captured diff ` +
+          `Return: key, status, quality, hit_rate, mrr (mrr_partial), p95, regressions, recall_dropped ` +
+          `(the harness recall_dropped field), the captured diff ` +
           `(EMPTY string only if you made no change; a REGRESSING experiment still returns its diff + ` +
           `metrics so we can track what regressed), plus a one-line note.`,
         { label: `exp:${it.key}`, phase: PH, model: 'sonnet', isolation: ISOLATION, schema: EXPERIMENT },
@@ -147,6 +151,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
         typeof r.quality === 'number' &&
         r.quality > anchor &&
         r.regressions === 0 &&
+        r.recall_dropped !== true &&
         (r.p95 || 0) <= 2 * anchorP95,
     )
   log(

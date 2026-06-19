@@ -34,3 +34,8 @@ temporal-deboost-keep	hybrid	dev	0.5243	0.6034	0.3629	153.6	0	ok
 anchor-reset-jun19	hybrid	dev	0.5276	0.6034	0.3629	152.9	1	fail:regression
 consolidation_boost_resweep-keep	hybrid	dev	0.5406	0.6034	0.3939	150.2	0	ok
 per_index_k_resweep-keep	hybrid	dev	0.5463	0.6034	0.4129	138.8	0	ok
+k80-cons105-anchor	hybrid	dev	0.529	0.6034	0.3939	154.8	0	ok
+baseline-reseed-jun19	hybrid	dev	0.5423	0.6034	0.4129	161.0	0	ok
+true-baseline	hybrid	dev	0.5313	0.6034	0.3629	142.9	0	fail:recall
+recall-floor-baseline	hybrid	dev	0.5294	0.6034	0.3629	145.6	0	ok
+main-anchor-jun19	hybrid	dev	0.5463	0.6034	0.4129	142.6	0	ok

@@ -13,7 +13,6 @@ bottom of **Backlog**; once run, move the line to **Tried** with its verdict.
 ## Backlog (untried — pick the top-value one)
 
 - untried | recall: why do common-term golds ("deployment", "damsleth") land rank=None — is per-index-k too small, or vec/FTS fusion dropping them? | — | — | rank=None means NOT retrieved; reranking can't help. OUT OF SCOPE this campaign (ranking-only) but log findings.
-- untried | per-field bm25: sender weight currently 1.0 — does lowering it reduce false matches on chatty senders? | — | — | FTS_ITEM_WEIGHTS in hybrid.py.
 - untried | DEFAULT_PER_INDEX_K re-sweep on denser set (was 60→80) | — | — | same rationale — re-validate against 68-gold scenario.
 
 ## Tried
@@ -25,6 +24,7 @@ bottom of **Backlog**; once run, move the line to **Tried** with its verdict.
 - kept | browse-window fallback for empty time-windowed queries | +0 (fixes zero-result misses, not scored) | b192ca3 | jun19. Fires only on empty results, can't regress.
 - kept | entity boost_factor 1.5→3.0 | +0.0047 dev | 74deedd | jun19. Saturates at 3.0 (identical 4/5/8).
 - kept | narrow-date (≤3d) consolidation de-boost 0.85 | +0.043 dev (0.4878→0.5313) | 6e3b8a5 | jun19. Window-width gate is essential — flat de-boost regressed the month-range hit.
+- discarded | per_field_bm25_sender_weight: sender weight currently 1.0 — lowering it did not reduce false matches on chatty senders | -0.0128 | — | round 2 jun19. FTS_ITEM_WEIGHTS in hybrid.py. DO NOT REVISIT.
 - discarded | phrase / NEAR(...,N) clause in _fts_query | +0.000 (neutral) | — | jun19. bm25 over OR-tokens already ranks co-occurrence high; redundant. DO NOT REVISIT.
 - parked | subject-token rerank | promising hit_rate but 1 regression | — | revisit only if the regression policy changes to net-neutral.
 - parked | large tier2_boost changes | regressed several golds | — | jun8/10.

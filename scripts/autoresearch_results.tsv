@@ -30,3 +30,4 @@ bm25w-s2-test	hybrid	test	0.185	0.25	0.0333	217.4	0	ok
 baseline-jun19	hybrid	dev	0.5121	0.587	0.3375	159.1	0	ok
 boost3.0-keep	hybrid	dev	0.5109	0.587	0.3531	168.5	0	ok
 baseline-denser-jun19	hybrid	dev	0.4878	0.569	0.2985	143.7	0	ok
+temporal-deboost-keep	hybrid	dev	0.5243	0.6034	0.3629	153.6	0	ok

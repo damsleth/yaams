@@ -35,6 +35,27 @@ def test_route_factual_is_passthrough():
   assert cfg.entity_filter is None
 
 
+def test_route_temporal_narrow_window_deboosts_consolidations():
+  # A single-day query wants that day's item, not the broad session rollup.
+  base = HybridQueryConfig(top_k=10)
+  day = datetime(2026, 4, 4, tzinfo=UTC)
+  cfg = route(_parsed(shape="temporal_range", date_range=(day, day)), base)
+  assert cfg.consolidation_boost < 1.0
+
+
+def test_route_temporal_wide_window_keeps_consolidation_boost():
+  # A month-wide "activity in May" query is a summary — keep consolidations up.
+  base = HybridQueryConfig(top_k=10)
+  cfg = route(
+    _parsed(
+      shape="temporal_range",
+      date_range=(datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 5, 31, tzinfo=UTC)),
+    ),
+    base,
+  )
+  assert cfg.consolidation_boost == base.consolidation_boost
+
+
 def test_route_synthesis_bumps_top_k_and_high_quality():
   base = HybridQueryConfig(top_k=5)
   cfg = route(_parsed(shape="synthesis"), base)

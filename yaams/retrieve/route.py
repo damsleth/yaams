@@ -7,6 +7,8 @@ adjustments applied. Explicit user flags always win over parsed inference.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from dataclasses import replace
 from typing import Iterable
 
@@ -18,6 +20,12 @@ EVENT_TOP_K = 8
 TIER2_BOOST_PREFERRED = 1.6
 TIER2_BOOST_RAW = 1.0
 EVENT_CONS_BOOST = 1.3
+# Date-anchored queries ("4 april 2026", "27 april mandag UNE") want the atomic
+# daily item, not the broad session consolidation that shares the date. The
+# default consolidation boost out-promotes the day-item even when it tops both
+# indices, so de-boost consolidations for temporal shapes.
+TEMPORAL_CONS_BOOST = 0.85
+TEMPORAL_NARROW = timedelta(days=3)
 # Shapes that sort by timestamp rather than relevance. A soft entity *boost*
 # is invisible to a timestamp sort, so these must keep the hard entity filter;
 # intent terms narrow *within* the entity set (FTS scoring + relevance floor).
@@ -68,6 +76,12 @@ def route(
   elif parsed.shape == "event_anchored":
     cfg.top_k = min(cfg.top_k, EVENT_TOP_K) if cfg.top_k > EVENT_TOP_K else cfg.top_k
     cfg.consolidation_boost = max(cfg.consolidation_boost, EVENT_CONS_BOOST)
+  elif parsed.shape == "temporal_range":
+    # Only de-boost for a *narrow* window: "4 april 2026" wants that day's item,
+    # but "aktivitet mai 2026" (a month) is a summary question whose right answer
+    # is the session consolidation — leave that one boosted.
+    if start is not None and end is not None and (end - start) <= TEMPORAL_NARROW:
+      cfg.consolidation_boost = TEMPORAL_CONS_BOOST
 
   if parsed.high_quality:
     cfg.high_quality = True

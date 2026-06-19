@@ -13,13 +13,14 @@ bottom of **Backlog**; once run, move the line to **Tried** with its verdict.
 ## Backlog (untried — pick the top-value one)
 
 - untried | recall: why do common-term golds ("deployment", "damsleth") land rank=None — is per-index-k too small, or vec/FTS fusion dropping them? | — | — | rank=None means NOT retrieved; reranking can't help. OUT OF SCOPE this campaign (ranking-only) but log findings.
-- untried | event_anchored gold-item buried by 1.3 cons boost ("27 april UNE Vibeke") — apply the narrow-window de-boost to event_anchored too? | — | — | risk: other event golds rely on the 1.3 boost; gate on window width like temporal_range.
 - untried | per-field bm25: sender weight currently 1.0 — does lowering it reduce false matches on chatty senders? | — | — | FTS_ITEM_WEIGHTS in hybrid.py.
-- untried | RRF_K re-sweep on the DENSER gold set (was tuned 60→30 on the sparse set) | — | — | params were "mined out" on the OLD label set; the jun19 densification may have moved the optimum.
 - untried | DEFAULT_PER_INDEX_K re-sweep on denser set (was 60→80) | — | — | same rationale — re-validate against 68-gold scenario.
 - untried | consolidation_boost default (1.1) re-sweep now that temporal is gated separately | — | — | the global value may now move freely without the temporal regression that blocked it before.
 
 ## Tried
+
+- discarded | RRF_K re-sweep on denser gold set | -0.0093 (3 runs, 1 had a regression) | campaign-jun19 | RRF_K=30 confirmed still optimal on the 68-gold set; every off-30 value lost quality. DO NOT REVISIT.
+- parked | event_anchored narrow-window cons de-boost | noisy: -0.0027 then +0.0096 across two runs | campaign-jun19 | within noise on the dev set; +0.0096 doesn't justify the added branch by the simplicity criterion. Revisit only if event-anchored golds grow.
 
 - kept | browse-window fallback for empty time-windowed queries | +0 (fixes zero-result misses, not scored) | b192ca3 | jun19. Fires only on empty results, can't regress.
 - kept | entity boost_factor 1.5→3.0 | +0.0047 dev | 74deedd | jun19. Saturates at 3.0 (identical 4/5/8).

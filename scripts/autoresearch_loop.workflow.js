@@ -56,9 +56,11 @@ const EXPERIMENT = {
     key: { type: 'string' },
     status: { type: 'string' },               // ok | crash | fail:regression | fail:latency
     quality: { type: 'number' },
+    hit_rate: { type: 'number' },
+    mrr: { type: 'number' },                   // mrr_partial from the harness JSON
     p95: { type: 'number' },
     regressions: { type: 'number' },
-    diff: { type: 'string' },                 // `git diff -- yaams/retrieve/` (empty if no change/discarded)
+    diff: { type: 'string' },                  // `git diff <HEAD> -- yaams/retrieve/` (empty if reverted)
     note: { type: 'string' },
   },
   required: ['key', 'status', 'quality', 'regressions', 'diff'],
@@ -70,7 +72,7 @@ const base = await agent(
     `  ${HARNESS} --no-write\n` +
     `Return the quality, retrieval_p95_ms (as p95), rank1, and gold_queries (as gold) from its JSON, ` +
     `and the campaign-branch HEAD sha as head (\`git rev-parse HEAD\`).`,
-  { label: 'baseline', phase: 'Baseline', schema: BASELINE },
+  { label: 'baseline', phase: 'Baseline', model: 'sonnet', schema: BASELINE },
 )
 let anchor = base.quality
 let anchorP95 = base.p95 || 1e9
@@ -93,7 +95,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
     `${PROGRAM}\nPick the ${FANOUT} highest-value DISTINCT untried Backlog ideas from the ledger ` +
       `that are in scope (ranking-only; editable surface = yaams/retrieve/* excluding parse.py). ` +
       `Skip anything marked discarded/parked. Return them as {key, idea}.`,
-    { label: 'plan', phase: PH, schema: PLAN },
+    { label: 'plan', phase: PH, model: 'sonnet', schema: PLAN },
   )
   const ideas = (plan.ideas || []).slice(0, FANOUT)
   if (!ideas.length) {
@@ -117,9 +119,10 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
           `(3) if it looks like a win, run again \`${HARNESS} --tag ${it.key}\` to confirm.\n` +
           `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${anchor} ` +
           `AND regressions == 0 AND p95 <= ${2 * anchorP95}.\n` +
-          `Return: key, status, quality, p95, regressions, and the diff as ` +
+          `Return: key, status, quality, hit_rate, mrr (mrr_partial), p95, regressions, and the diff as ` +
           `\`git diff ${HEAD} -- yaams/retrieve/\` (relative to campaign HEAD, so it applies cleanly; ` +
-          `EMPTY string if the gate failed and you reverted), plus a one-line note.`,
+          `EMPTY string ONLY if you reverted — note a regressing/failed experiment STILL returns its ` +
+          `metrics so we can track what regressed), plus a one-line note.`,
         { label: `exp:${it.key}`, phase: PH, model: 'sonnet', isolation: 'worktree', schema: EXPERIMENT },
       ),
     ),
@@ -141,32 +144,48 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
     `round ${round}: ${results.filter(Boolean).length} ran, ${wins.length} clear the gate ` +
       `(best ${wins.length ? Math.max(...wins.map((w) => w.quality)).toFixed(4) : '—'} vs anchor ${anchor.toFixed(4)})`,
   )
-  if (!wins.length) {
-    dry++
-    continue
-  }
-  dry = 0
-  const best = wins.reduce((a, b) => (b.quality > a.quality ? b : a))
+  const best = wins.length ? wins.reduce((a, b) => (b.quality > a.quality ? b : a)) : null
 
-  // Apply the winner's diff to the campaign branch (main worktree), log + commit.
-  const applied = await agent(
-    `${PROGRAM}\nApply this winning experiment to the campaign branch.\n` +
-      `Write the following unified diff to a temp file and \`git apply\` it to yaams/retrieve/. ` +
-      `If git apply fails, report applied=false and stop (do not hand-edit).\n` +
-      `Then run \`${HARNESS} --tag ${best.key}-keep\` (NO --no-write) to update the regression anchor ` +
-      `state and append results.tsv. Move idea "${best.key}" to the Tried section of ` +
-      `scripts/autoresearch_ideas.md as kept with its fitness delta. Commit yaams/retrieve/* + ` +
-      `scripts/autoresearch_ideas.md + scripts/autoresearch_results.tsv with message ` +
-      `"feat(retrieve): ${best.key} (autoresearch, q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". ` +
-      `Confirm the logged quality. Return JSON {applied: bool, quality: number}.\n\n--- DIFF ---\n${best.diff}`,
-    { label: `keep:${best.key}`, phase: PH, schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' } }, required: ['applied'] } },
+  // ALWAYS record every experiment's metrics (improve AND regress), then apply
+  // the winner if there is one. Runs in the main checkout so the stats file
+  // survives (worktree results.tsv writes are discarded). Stats columns:
+  // round  key  quality  delta_vs_anchor  hit_rate  mrr  p95  regressions  status  verdict  note
+  const ideaByKey = Object.fromEntries(ideas.map((it) => [it.key, it.idea]))
+  const statRows = results
+    .filter(Boolean)
+    .map((r) => ({
+      round, key: r.key, idea: ideaByKey[r.key] || '',
+      quality: r.quality, delta: +(r.quality - anchor).toFixed(4),
+      hit_rate: r.hit_rate ?? '', mrr: r.mrr ?? '', p95: r.p95 ?? '',
+      regressions: r.regressions, status: r.status,
+      verdict: best && r.key === best.key ? 'WIN' : 'discard',
+    }))
+  const recorded = await agent(
+    `${PROGRAM}\nRecord this round's experiment statistics, then apply the winner if any.\n` +
+      `1. Append one TSV row per experiment to scripts/autoresearch_campaign.tsv (create with a header ` +
+      `row if missing: round\\tkey\\tquality\\tdelta\\thit_rate\\tmrr\\tp95\\tregressions\\tstatus\\tverdict\\tnote). ` +
+      `Rows (JSON): ${JSON.stringify(statRows)}\n` +
+      (best
+        ? `2. Apply the winning diff below: write it to a temp file and \`git apply\` it to yaams/retrieve/. ` +
+          `If git apply fails, set applied=false, change that row's verdict to "apply-failed", and skip to commit. ` +
+          `Then run \`${HARNESS} --tag ${best.key}-keep\` (NO --no-write) to update the anchor state + results.tsv. ` +
+          `Move idea "${best.key}" to the Tried section of scripts/autoresearch_ideas.md as kept (with delta). ` +
+          `3. Commit yaams/retrieve/*, scripts/autoresearch_ideas.md, scripts/autoresearch_results.tsv, and ` +
+          `scripts/autoresearch_campaign.tsv with message "feat(retrieve): ${best.key} (autoresearch, ` +
+          `q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". Return {applied: bool, quality: number}.\n` +
+          `\n--- DIFF ---\n${best.diff}`
+        : `2. No winner this round. Commit just scripts/autoresearch_campaign.tsv with message ` +
+          `"chore(autoresearch): round ${round} stats (dry)". Return {applied: false}.`),
+    { label: best ? `keep:${best.key}` : `record:r${round}`, phase: PH, model: 'sonnet',
+      schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' } }, required: ['applied'] } },
   )
-  if (applied && applied.applied) {
-    anchor = (applied.quality && applied.quality > anchor) ? applied.quality : best.quality
+  if (best && recorded && recorded.applied) {
+    anchor = recorded.quality && recorded.quality > anchor ? recorded.quality : best.quality
     kept.push({ key: best.key, quality: anchor, note: best.note })
+    dry = 0
     log(`KEPT ${best.key} — anchor now ${anchor.toFixed(4)}`)
   } else {
-    log(`apply failed for ${best.key} — treating round as dry`)
+    if (best) log(`apply failed for ${best.key} — round counts as dry`)
     dry++
   }
 

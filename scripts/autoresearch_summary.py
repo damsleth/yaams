@@ -14,6 +14,34 @@ import csv
 from pathlib import Path
 
 TSV = Path(__file__).resolve().parent / "autoresearch_results.tsv"
+CAMPAIGN = Path(__file__).resolve().parent / "autoresearch_campaign.tsv"
+
+
+def _campaign_report() -> None:
+    """Per-experiment improve/regress table from the loop's stats file."""
+    if not CAMPAIGN.exists():
+        return
+    rows = list(csv.DictReader(CAMPAIGN.open(), delimiter="\t"))
+    if not rows:
+        return
+
+    def fl(r, k):
+        try:
+            return float(r[k])
+        except (ValueError, KeyError, TypeError):
+            return 0.0
+
+    wins = [r for r in rows if r.get("verdict") == "WIN"]
+    improved = [r for r in rows if fl(r, "delta") > 0 and r.get("verdict") != "WIN"]
+    regressed = [r for r in rows if int(r.get("regressions") or 0) > 0 or fl(r, "delta") < 0]
+    print(f"\nexperiment log  ({len(rows)} experiments across {len({r['round'] for r in rows})} rounds)")
+    print(f"  WIN (kept):        {len(wins)}")
+    print(f"  improved (not kept): {len(improved)}")
+    print(f"  regressed/worse:   {len(regressed)}")
+    print(f"  {'round':>5} {'delta':>8} {'regr':>4} {'verdict':>8}  key")
+    for r in sorted(rows, key=lambda r: fl(r, "delta"), reverse=True):
+        print(f"  {r.get('round',''):>5} {fl(r,'delta'):>+8.4f} {r.get('regressions',''):>4} "
+              f"{r.get('verdict',''):>8}  {r.get('key','')}")
 
 
 def main() -> int:
@@ -48,6 +76,7 @@ def main() -> int:
     print(f"  latest     {latest['tag']:28} fitness={fit(latest):.4f}")
     print(f"  net delta  baseline -> latest: {fit(latest) - fit(baseline):+.4f}")
     print(f"             baseline -> best:   {fit(best) - fit(baseline):+.4f}")
+    _campaign_report()
     return 0
 
 

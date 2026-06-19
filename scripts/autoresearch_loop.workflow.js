@@ -1,3 +1,7 @@
+// Resume: just re-invoke this workflow — each run re-measures the anchor and
+// re-reads the ledger/results.tsv/git from disk, so it continues the campaign
+// from wherever the last run left it. Report progress any time with:
+//   .venv/bin/python scripts/autoresearch_summary.py
 export const meta = {
   name: 'autoresearch-loop',
   description: 'Autonomous retrieval-tuning loop: fan out Sonnet experiments, keep the best non-regressing win, iterate until dry',

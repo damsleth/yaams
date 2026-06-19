@@ -275,6 +275,13 @@ def main() -> int:
         if pr == 1 and ranks.get(qid) not in (1,)
     ]
     prev_p95 = (prev.get(prev_key) or {}).get("p95_ms")
+    # Recall floor: aggregate recall@10 must not drop below the anchor. The
+    # rank-1 check protects precision; this protects retrievability, so the loop
+    # can't trade away recall for a higher rank on other queries. Aggregate (not
+    # per-gold) so a net-positive reshuffle that swaps which golds sit in the
+    # top 10 isn't blocked — only a real overall recall loss is.
+    prev_recall10 = (prev.get(prev_key) or {}).get("recall10")
+    recall_dropped = prev_recall10 is not None and recall10 < prev_recall10 - 1e-9
 
     latency_penalty = 0.0
     if prev_p95:
@@ -283,6 +290,8 @@ def main() -> int:
     if prev_p95 and p95 > _HARD_FAIL_LATENCY_MULT * prev_p95:
         status = "fail:latency"
         fitness = 0.0
+    if recall_dropped:
+        status = "fail:recall"
     if regressions:
         status = "fail:regression"
 
@@ -302,6 +311,7 @@ def main() -> int:
         "rank1": n_rank1,
         "corrections_in_split": n_corr_total,
         "regressions": len(regressions),
+        "recall_dropped": bool(recall_dropped),
         "miss_labels_excluded": n_miss,
         "miss_zero_result": n_miss_zero,
         "status": status,
@@ -313,8 +323,8 @@ def main() -> int:
         print("\n---")
         for k in ("fitness", "quality", "hit_rate", "mrr", "mrr_partial", "recall@10",
                   "retrieval_p50_ms", "retrieval_p95_ms", "gold_queries", "rank1",
-                  "corrections_in_split", "regressions", "miss_labels_excluded",
-                  "miss_zero_result", "status"):
+                  "corrections_in_split", "regressions", "recall_dropped",
+                  "miss_labels_excluded", "miss_zero_result", "status"):
             print(f"{k+':':22} {summary[k]}")
         if regressions:
             print(f"regressed_query_ids:   {regressions[:10]}")
@@ -330,7 +340,7 @@ def main() -> int:
                 f"{summary['hit_rate']}\t{summary['mrr_partial']}\t{summary['retrieval_p95_ms']}\t"
                 f"{summary['regressions']}\t{status}\n"
             )
-        prev[prev_key] = {"ranks": ranks, "p95_ms": p95, "tag": args.tag}
+        prev[prev_key] = {"ranks": ranks, "p95_ms": p95, "recall10": recall10, "tag": args.tag}
         _STATE.write_text(json.dumps(prev))
 
     return 0

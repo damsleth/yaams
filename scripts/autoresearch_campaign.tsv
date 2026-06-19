@@ -1,2 +1,3 @@
 round	key	quality	delta	hit_rate	mrr	p95	regressions	status	verdict	note
 1	event_anchored_deboost	0.5502	-0.0027	0.6207	0.3856	209	0	discarded	discard	event_anchored gold buried by 1.3 cons boost ('27 april UNE Vibeke') — apply the narrow-window de-boost (≤3d window, factor 0.85) to event_anchored items too, gated on window width just like temporal_range to avoid regressing broader event golds.
+1	rrf_k_resweep_dense	0.5313	-0.0093	0.6034	0.3629	141.5	0	no_change	discard	RRF_K re-sweep on the denser gold set: the parameter was last tuned (60→30) on the sparse label set; the jun19 densification to 68 golds may have moved the optimum. Sweep RRF_K over [20, 25, 30, 40, 50] in yaams/retrieve/hybrid.py and keep the value that maximises dev quality without regression.

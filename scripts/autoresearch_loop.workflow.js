@@ -15,6 +15,10 @@ export const meta = {
 
 // --- knobs (override via args) ---
 const FANOUT = (args && args.fanout) || 3            // experiments per round
+// Worktrees are only needed to isolate CONCURRENT edits. At fanout 1 the loop is
+// serial, so it runs experiments in the main checkout (no worktree) — which also
+// dodges the stale-base / main-checkout-contamination issues worktrees caused.
+const ISOLATION = FANOUT > 1 ? 'worktree' : undefined
 const MAX_ROUNDS = (args && args.rounds) || 20       // hard cap
 const CRITIC_EVERY = (args && args.criticEvery) || 5 // Opus critic cadence
 const DRY_LIMIT = (args && args.dryLimit) || 2       // stop after N dry rounds
@@ -110,20 +114,22 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       agent(
         `${PROGRAM}\nYou are running ONE experiment, autonomously, per the org code.\n` +
           `IDEA (${it.key}): ${it.idea}\n` +
-          `CRITICAL — you may be in a git worktree based on an OLD commit. FIRST sync the code under ` +
-          `test to the campaign HEAD so you measure against current code, not stale code:\n` +
-          `  git checkout ${HEAD} -- yaams/retrieve/\n` +
+          `STEP 0 — start from clean, current code. Run \`git checkout ${HEAD} -- yaams/retrieve/\` ` +
+          `(syncs to campaign HEAD whether you're in a stale worktree or the main checkout). ` +
           `Verify (e.g. \`grep -c TEMPORAL_CONS_BOOST yaams/retrieve/route.py\` should be > 0).\n` +
           `Then: (1) edit only yaams/retrieve/* (not parse.py, not the harness/fixture); ` +
-          `(2) run \`${HARNESS} --no-write\`; fix a dumb crash once, else report status=crash; ` +
-          `(3) if it looks like a win, run again \`${HARNESS} --tag ${it.key}\` to confirm.\n` +
+          `(2) run \`${HARNESS} --no-write\` (NEVER without --no-write — do not write results.tsv); ` +
+          `fix a dumb crash once, else report status=crash; (3) if it looks like a win, run ` +
+          `\`${HARNESS} --no-write\` once more to confirm the number repeats.\n` +
           `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${anchor} ` +
           `AND regressions == 0 AND p95 <= ${2 * anchorP95}.\n` +
-          `Return: key, status, quality, hit_rate, mrr (mrr_partial), p95, regressions, and the diff as ` +
-          `\`git diff ${HEAD} -- yaams/retrieve/\` (relative to campaign HEAD, so it applies cleanly; ` +
-          `EMPTY string ONLY if you reverted — note a regressing/failed experiment STILL returns its ` +
+          `STEP FINAL — capture \`git diff ${HEAD} -- yaams/retrieve/\` as the diff, THEN ALWAYS run ` +
+          `\`git checkout ${HEAD} -- yaams/retrieve/\` to leave the working tree clean (the win, if any, ` +
+          `is applied centrally from your returned diff; this keeps serial runs isolated).\n` +
+          `Return: key, status, quality, hit_rate, mrr (mrr_partial), p95, regressions, the captured diff ` +
+          `(EMPTY string only if you made no change; a REGRESSING experiment still returns its diff + ` +
           `metrics so we can track what regressed), plus a one-line note.`,
-        { label: `exp:${it.key}`, phase: PH, model: 'sonnet', isolation: 'worktree', schema: EXPERIMENT },
+        { label: `exp:${it.key}`, phase: PH, model: 'sonnet', isolation: ISOLATION, schema: EXPERIMENT },
       ),
     ),
   )
@@ -162,6 +168,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
     }))
   const recorded = await agent(
     `${PROGRAM}\nRecord this round's experiment statistics, then apply the winner if any.\n` +
+      `STEP 0 — ensure a clean tree: \`git checkout ${HEAD} -- yaams/retrieve/\` (discard any stray edits).\n` +
       `1. Append one TSV row per experiment to scripts/autoresearch_campaign.tsv (create with a header ` +
       `row if missing: round\\tkey\\tquality\\tdelta\\thit_rate\\tmrr\\tp95\\tregressions\\tstatus\\tverdict\\tnote). ` +
       `Rows (JSON): ${JSON.stringify(statRows)}\n` +

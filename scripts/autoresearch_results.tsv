@@ -39,3 +39,5 @@ baseline-reseed-jun19	hybrid	dev	0.5423	0.6034	0.4129	161.0	0	ok
 true-baseline	hybrid	dev	0.5313	0.6034	0.3629	142.9	0	fail:recall
 recall-floor-baseline	hybrid	dev	0.5294	0.6034	0.3629	145.6	0	ok
 main-anchor-jun19	hybrid	dev	0.5463	0.6034	0.4129	142.6	0	ok
+campaign2-anchor	hybrid	dev	0.518	0.6034	0.4129	183.0	0	ok
+campaign-jun20-anchor	hybrid	dev	0.5463	0.6034	0.4129	147.4	0	ok

@@ -135,13 +135,16 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
   )
 
   // Arbiter: keep the single best win that clears every gate.
+  // Gate on the NUMBERS, not the agent's free-text status (a non-empty diff that
+  // strictly beats the anchor with 0 regressions and acceptable p95 IS a win —
+  // crashes have no usable diff, regressions/latency are caught explicitly).
   const wins = results
     .filter(Boolean)
     .filter(
       (r) =>
-        r.status === 'ok' &&
         r.diff &&
         r.diff.trim() &&
+        typeof r.quality === 'number' &&
         r.quality > anchor &&
         r.regressions === 0 &&
         (r.p95 || 0) <= 2 * anchorP95,
@@ -172,6 +175,10 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       `1. Append one TSV row per experiment to scripts/autoresearch_campaign.tsv (create with a header ` +
       `row if missing: round\\tkey\\tquality\\tdelta\\thit_rate\\tmrr\\tp95\\tregressions\\tstatus\\tverdict\\tnote). ` +
       `Rows (JSON): ${JSON.stringify(statRows)}\n` +
+      `1b. CRITICAL — move EVERY idea tried this round (keys: ${ideas.map((it) => it.key).join(', ')}) ` +
+      `from the Backlog to the Tried section of scripts/autoresearch_ideas.md with its verdict ` +
+      `(kept / discarded / crashed) and delta, so the planner never re-picks a tried idea. ` +
+      `Do this for discards too, not just wins.\n` +
       (best
         ? `2. Apply the winning diff below: write it to a temp file and \`git apply\` it to yaams/retrieve/. ` +
           `If git apply fails, set applied=false, change that row's verdict to "apply-failed", and skip to commit. ` +
@@ -181,7 +188,8 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
           `scripts/autoresearch_campaign.tsv with message "feat(retrieve): ${best.key} (autoresearch, ` +
           `q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". Return {applied: bool, quality: number}.\n` +
           `\n--- DIFF ---\n${best.diff}`
-        : `2. No winner this round. Commit just scripts/autoresearch_campaign.tsv with message ` +
+        : `2. No winner this round. Commit scripts/autoresearch_campaign.tsv AND ` +
+          `scripts/autoresearch_ideas.md with message ` +
           `"chore(autoresearch): round ${round} stats (dry)". Return {applied: false}.`),
     { label: best ? `keep:${best.key}` : `record:r${round}`, phase: PH, model: 'sonnet',
       schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' } }, required: ['applied'] } },

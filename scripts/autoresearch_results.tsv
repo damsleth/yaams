@@ -41,3 +41,6 @@ recall-floor-baseline	hybrid	dev	0.5294	0.6034	0.3629	145.6	0	ok
 main-anchor-jun19	hybrid	dev	0.5463	0.6034	0.4129	142.6	0	ok
 campaign2-anchor	hybrid	dev	0.518	0.6034	0.4129	183.0	0	ok
 campaign-jun20-anchor	hybrid	dev	0.5463	0.6034	0.4129	147.4	0	ok
+baseline-anchor	hybrid	dev	0.5438	0.6034	0.4129	151.1	0	ok
+bm25_magnitude_blend-keep	hybrid	dev	0.4461	0.4828	0.3606	140.9	11	fail:regression
+bm25_magnitude_blend-keep	hybrid	dev	0.5427	0.6034	0.4311	153.6	4	fail:regression

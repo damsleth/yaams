@@ -68,6 +68,41 @@ def test_fts_only_returns_matching_items():
   assert any("apple" in r.content.lower() for r in results)
 
 
+def test_browse_window_fallback_when_text_matches_nothing():
+  # A time-windowed query whose text matches no item should fall back to
+  # listing the items inside the window, not return zero.
+  conn = _open_db()
+  base = datetime(2026, 5, 14, 9, 0, tzinfo=UTC)
+  items = [
+    _make_item(content="standup notes alpha", ts=base, msg_id="in1"),
+    _make_item(content="lunch plans beta", ts=base + timedelta(hours=2), msg_id="in2"),
+    _make_item(content="outside the window", ts=base + timedelta(days=10), msg_id="out"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(
+    since=datetime(2026, 5, 14, 0, 0, tzinfo=UTC),
+    until=datetime(2026, 5, 14, 23, 59, tzinfo=UTC),
+    sort="desc",
+  )
+  results = query(conn, "zzz nonmatching gibberish", config=cfg)
+  assert len(results) == 2  # only the two in-window items, not the out-of-window one
+  assert all(r.timestamp.date() == base.date() for r in results)
+
+
+def test_browse_window_skipped_when_entity_filter_set():
+  # Entity-filtered queries must NOT dump the whole window when nothing matches.
+  conn = _open_db()
+  items = [_make_item(content="something", ts=datetime(2026, 5, 14, 9, 0, tzinfo=UTC))]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+  cfg = HybridQueryConfig(
+    since=datetime(2026, 5, 14, 0, 0, tzinfo=UTC),
+    until=datetime(2026, 5, 14, 23, 59, tzinfo=UTC),
+    entity_filter=["nonexistent_entity"],
+  )
+  assert query(conn, "zzz nonmatching", config=cfg) == []
+
+
 def test_query_filters_by_source():
   conn = _open_db()
   items = [

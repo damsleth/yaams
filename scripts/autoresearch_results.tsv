@@ -59,3 +59,4 @@ anchor-jun21-densified	hybrid	dev	0.5213	0.5909	0.3975	179.4	0	ok
 baseline-anchor	hybrid	dev	0.5329	0.5909	0.3975	171.2	0	ok
 tier2_factual_coverage_recovery-keep	hybrid	dev	0.5816	0.6364	0.4539	167.7	0	ok
 thread_coherence_credit-keep	hybrid	dev	0.6144	0.6667	0.4924	145.1	0	ok
+tier2_boost_fused_order_cap-keep	hybrid	dev	0.6082	0.6818	0.4924	169.4	0	ok

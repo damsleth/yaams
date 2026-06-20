@@ -215,6 +215,37 @@ def query(
     hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=cfg.sort == "desc")
   else:
     hydrated.sort(key=lambda r: r.score, reverse=True)
+    # tier2_boost_fused_order_cap: single stable adjacent-swap pass that demotes
+    # a tier2 ITEM A below the next candidate B when B is non-tier2 AND
+    # B's pre-boost score is strictly greater than A's pre-boost score.  The
+    # flat tier2_boost multiplier (applied only in _hydrate_item, not to cons)
+    # is the ONLY reason A outranks B in this case.  Guards:
+    #   1. A must be kind==item (cons never receive tier2_boost).
+    #   2. Skip when A.vector_rank is None AND query_shape=="factual" — these
+    #      are tier2_factual_coverage_recovery beneficiaries (FTS-exact, vector-
+    #      absent factual golds e.g. "did Production Deployment") kept high by
+    #      deliberate coverage recovery; the flat swap cap must not undo that.
+    # Derive A's pre-boost score as a.score/cfg.tier2_boost so that additive
+    # coverage credit (folded into a.score before multiplication) is counted;
+    # B's base = b.components.rrf_score (non-tier2, unmodified).
+    # Ordering-only — no score mutation.
+    if cfg.tier2_boost != 1.0:
+      for i in range(len(hydrated) - 1):
+        a = hydrated[i]
+        b = hydrated[i + 1]
+        if (
+          a.kind == "item"
+          and a.source == cfg.tier2_source
+          and b.source != cfg.tier2_source
+          and not (
+            a.components.vector_rank is None
+            and cfg.query_shape == "factual"
+          )
+        ):
+          a_pre_boost = a.score / cfg.tier2_boost
+          b_pre_boost = b.components.rrf_score
+          if b_pre_boost > a_pre_boost:
+            hydrated[i], hydrated[i + 1] = b, a
   if cfg.assoc_weights:
     # Stable partition AFTER the chosen ordering: exact entity matches
     # (weight 1.0) always sit above associated-only results, whatever their

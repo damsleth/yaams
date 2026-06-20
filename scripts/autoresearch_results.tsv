@@ -57,3 +57,4 @@ baseline-anchor	hybrid	dev	0.5508	0.6034	0.428	164.5	0	ok
 reanchor-jun20	hybrid	dev	0.5539	0.6034	0.4383	160.8	0	ok
 anchor-jun21-densified	hybrid	dev	0.5213	0.5909	0.3975	179.4	0	ok
 baseline-anchor	hybrid	dev	0.5329	0.5909	0.3975	171.2	0	ok
+tier2_factual_coverage_recovery-keep	hybrid	dev	0.5816	0.6364	0.4539	167.7	0	ok

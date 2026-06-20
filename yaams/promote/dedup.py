@@ -79,13 +79,13 @@ def check_candidate(statement: str, config: DedupConfig) -> DedupVerdict:
     reason = payload.get("reason", "missing_index")
     return DedupVerdict("new", None, 0.0, f"dedup unavailable: {reason}")
 
-  hits = payload.get("hits") or []
-  if not hits:
+  results = payload.get("results") or []
+  if not results:
     return DedupVerdict("new", None, 0.0, "sim=0.00")
 
-  top = hits[0]
-  sim = float(top.get("score", 0.0))
-  rel_path = top.get("rel_path") or top.get("path") or None
+  top = results[0]
+  sim = float(top.get("cosine_similarity", 0.0))
+  rel_path = top.get("rel_path") or None
 
   if sim >= config.duplicate_threshold:
     return DedupVerdict("duplicate", rel_path, sim, f"sim={sim:.2f}")

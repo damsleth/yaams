@@ -73,6 +73,12 @@ class HybridQueryConfig:
   # tangential match can't win first/last just by being the oldest/newest.
   # 0 disables. Set by route() for first/last_occurrence, not by explicit sort.
   relevance_floor: float = 0.0
+  # Query shape forwarded from ParsedQuery so _hydrate_item can gate
+  # shape-specific credits (e.g. tier2_factual_coverage_recovery).
+  query_shape: str = "factual"
+  # Additive RRF credit for FTS-present/vector-absent tier2 factual items.
+  # Sized as GAMMA/(rrf_k + fts_rank + 1); sweep [0.5, 0.8, 1.0].
+  tier2_factual_coverage_gamma: float = 0.5
 
 
 @dataclass
@@ -715,6 +721,17 @@ def _hydrate_item(
     return None
   recipients = json.loads(row["recipients"] or "[]")
   score = components.rrf_score
+  # tier2_factual_coverage_recovery: additive RRF credit for tier2 items that
+  # are FTS-present but vector-absent on factual queries, BEFORE tier2_boost.
+  if (
+    cfg.tier2_factual_coverage_gamma > 0.0
+    and cfg.query_shape == "factual"
+    and row["source"] == cfg.tier2_source
+    and components.fts_rank is not None
+    and components.fts_rank <= 5
+    and components.vector_rank is None
+  ):
+    score += cfg.tier2_factual_coverage_gamma / (cfg.rrf_k + components.fts_rank + 1)
   if cfg.tier2_boost != 1.0 and row["source"] == cfg.tier2_source:
     score *= cfg.tier2_boost
   return HybridResult(

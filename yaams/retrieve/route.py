@@ -47,6 +47,8 @@ def route(
   self_identities: list[str] | None = None,
 ) -> HybridQueryConfig:
   cfg = replace(base)
+  # Forward query shape so _hydrate_item can gate shape-specific credits.
+  cfg.query_shape = parsed.shape or "factual"
 
   start, end = parsed.date_range
   if start is not None and not explicit_since and cfg.since is None:

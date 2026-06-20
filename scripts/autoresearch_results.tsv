@@ -52,3 +52,6 @@ campaign2-anchor	hybrid	dev	0.5463	0.6034	0.4129	148.1	0	ok
 baseline-anchor	hybrid	dev	0.5445	0.6034	0.4129	150.9	0	ok
 verify-final	hybrid	dev	0.5463	0.6034	0.4129	148.6	0	ok
 rank_agreement_multiplier-keep	hybrid	dev	0.5508	0.6034	0.428	146.4	0	ok
+main-merged	hybrid	dev	0.5373	0.6034	0.428	166.2	0	ok
+baseline-anchor	hybrid	dev	0.5508	0.6034	0.428	164.5	0	ok
+reanchor-jun20	hybrid	dev	0.5539	0.6034	0.4383	160.8	0	ok

@@ -24,7 +24,7 @@ const CRITIC_EVERY = (args && args.criticEvery) || 5 // Opus critic cadence
 const DRY_LIMIT = (args && args.dryLimit) || 2       // stop after N dry rounds
 const HARNESS =
   '.venv/bin/python scripts/autoresearch_retrieval.py --split dev --json'
-const PROGRAM = 'Read .plans/program-retrieve.md (the org code) and scripts/autoresearch_ideas.md (the ledger) first.'
+const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code) and scripts/autoresearch_ideas.md (the ledger) first.'
 
 const BASELINE = {
   type: 'object',
@@ -100,6 +100,7 @@ let HEAD = base.head // experiments sync retrieve/* to this; UPDATED after each 
 log(`anchor quality=${anchor} p95=${anchorP95}ms rank1=${base.rank1}/${base.gold} head=${HEAD.slice(0, 8)}`)
 
 let dry = 0
+let transientFails = 0 // consecutive planner deaths (rate limits); bounded so we don't spin
 const kept = []
 
 for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
@@ -117,6 +118,18 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       `Skip anything marked discarded/parked. Return them as {key, idea}.`,
     { label: 'plan', phase: PH, model: 'sonnet', schema: PLAN },
   )
+  // ponytail: agent() returns null when the agent dies on a terminal API error
+  // (e.g. rate limit) after its own retries. A null plan must not crash the run
+  // (`plan.ideas` throws) nor count as "dry" (that would end a long campaign on a
+  // transient blip). Retry the round up to 3x, then stop cleanly (resumable).
+  if (!plan) {
+    transientFails++
+    log(`round ${round}: planner died (transient, likely rate limit) ${transientFails}/3`)
+    if (transientFails >= 3) { log('too many consecutive planner failures — stopping (resume later)'); break }
+    round-- // retry this round number rather than consuming it
+    continue
+  }
+  transientFails = 0
   const ideas = (plan.ideas || []).slice(0, FANOUT)
   if (!ideas.length) {
     log(`round ${round}: planner found no untried ideas — dry`)

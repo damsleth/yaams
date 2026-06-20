@@ -572,6 +572,12 @@ def _embedding_to_blob(embedding: object) -> bytes:
     return embedding
   return array("f", [float(v) for v in cast(Iterable[float], embedding)]).tobytes()
 
+# thread_coherence_credit: additive RRF credit for an atomic item whose
+# thread_id matches a consolidation that ranks in the current top-3, gated to
+# items that also have fts_rank is not None (lexically on-topic).
+# credit = OMEGA * top3_cons_rrf_score.  Sweep OMEGA in [0.10, 0.20].
+_THREAD_COHERENCE_OMEGA = 0.15
+
 _RANK_AGREEMENT_DELTA = 0.05
 
 
@@ -631,6 +637,37 @@ def _hydrate(
     return []
   cap = hydrate_cap if hydrate_cap is not None else cfg.top_k * 2
   ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
+
+  # thread_coherence_credit: find thread_ids of top-3 consolidations, then
+  # give a small additive credit to atomic items that (a) share that thread_id
+  # and (b) are lexically present (fts_rank is not None), so only on-topic
+  # thread members are lifted.
+  if _THREAD_COHERENCE_OMEGA > 0.0:
+    top3_cons_thread: dict[str, float] = {}  # thread_id -> cons rrf_score
+    for (kind, identifier), comp in ordered[:3]:
+      if kind == "consolidation":
+        t_row = conn.execute(
+          "SELECT thread_id FROM consolidations WHERE id = ?", (identifier,)
+        ).fetchone()
+        if t_row is not None:
+          tid = t_row[0] if not hasattr(t_row, "keys") else t_row["thread_id"]
+          if tid is not None:
+            # Keep the highest-scoring cons rrf_score for this thread
+            if comp.rrf_score > top3_cons_thread.get(tid, 0.0):
+              top3_cons_thread[tid] = comp.rrf_score
+    if top3_cons_thread:
+      for (kind, identifier), comp in ordered:
+        if kind == "item" and comp.fts_rank is not None:
+          t_row = conn.execute(
+            "SELECT thread_id FROM items WHERE id = ?", (identifier,)
+          ).fetchone()
+          if t_row is not None:
+            tid = t_row[0] if not hasattr(t_row, "keys") else t_row["thread_id"]
+            if tid is not None and tid in top3_cons_thread:
+              comp.rrf_score += _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
+      # Re-sort after credit injection
+      ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
+
   results: list[HybridResult] = []
   for (kind, identifier), components in ordered[:cap]:
     if kind == "item":

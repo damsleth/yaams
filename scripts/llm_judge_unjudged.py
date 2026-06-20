@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
-"""LLM-judge the unjudged answer-shaped queries to densify the gold set.
+"""LLM-judge queries to densify the gold set. Two lanes:
 
-Same provenance as the existing LLM-judged feedback (ids 99-163): replay each
-query, show the LLM the ranked results, let it name the correct rank (or none),
-write a hit/correction/miss row. Dry-run unless --apply. Additive only — never
-touches an already-judged query, never overwrites. Reverse with:
+* default — judge the *unjudged* answer-shaped queries (the original jun19 lane,
+  now largely drained: 1 query left).
+* ``--rejudge-misses`` — re-grade queries whose latest verdict is ``miss``
+  against *current* retrieval. A miss was recorded when the right doc wasn't
+  surfaced, but retrieval has improved since (entity boost, narrow-date de-boost,
+  rrf/k tuning). If the LLM now finds a correct doc we append a hit/correction
+  row; since the harness's _load_gold takes MAX(id) per query, the new row
+  supersedes the old miss and converts it into a scorable gold. This is the main
+  untapped densification lever (~46 re-judgeable misses).
+
+Replay each query, show the LLM the ranked results, let it name the correct rank
+(or none), write a hit/correction/miss row. Every written row stamps its
+provenance into ``payload`` (``llm-judge`` / ``llm-rejudge``) so the gold set is
+auditable by source, not just by id range. Dry-run unless ``--apply``. Additive
+only — never overwrites a row. Reverse with:
     DELETE FROM query_feedback WHERE id >= <first_new_id>;
+or, by provenance:
+    DELETE FROM query_feedback WHERE payload LIKE 'llm-rejudge%';
 
 Usage: .venv/bin/python scripts/llm_judge_unjudged.py [--apply] [--limit N]
+       .venv/bin/python scripts/llm_judge_unjudged.py --rejudge-misses [--apply]
+       .venv/bin/python scripts/llm_judge_unjudged.py --rejudge-misses --db ~/brain/autoresearch_fixture.db  # safe dry preview
 """
 from __future__ import annotations
 
@@ -55,13 +70,34 @@ Reply with ONLY one line of JSON, no prose:
 - "miss": no result correctly answers the query -> rank null
 """
 
+# Adversarial second pass — the first-pass verdicts are soft (a vague one-word
+# query like "kunde" happily "matches" any chatty message). This strict check
+# defaults to rejection so only a clearly-correct (query, doc) pair becomes gold.
+VERIFY_PROMPT = """Does this specific search result DIRECTLY and CORRECTLY answer the query? \
+Be strict: answer "no" if the result is only tangentially related, is a vague \
+or partial match, requires guessing, or if you are unsure.
+
+Query: {query}
+
+Candidate result:
+[{kind}] {subject} :: {content}
+
+Reply with ONLY one line of JSON: {{"correct": true|false}}
+"""
+
 
 def main() -> int:
   ap = argparse.ArgumentParser()
   ap.add_argument("--apply", action="store_true", help="write rows (else dry-run)")
   ap.add_argument("--limit", type=int, default=0)
   ap.add_argument("--top-k", type=int, default=8)
+  ap.add_argument("--rejudge-misses", action="store_true",
+                  help="re-grade queries whose latest verdict is miss against current retrieval")
+  ap.add_argument("--db", default=None, help="DB override (e.g. the fixture for a safe dry preview)")
+  ap.add_argument("--no-verify", action="store_true",
+                  help="skip the strict adversarial second pass (faster, noisier labels)")
   args = ap.parse_args()
+  prov = "llm-rejudge" if args.rejudge_misses else "llm-judge"
 
   cfg = load_config()
   rc = cfg.get("retrieve")
@@ -69,23 +105,39 @@ def main() -> int:
   self_ids = _self_identities(cfg)
   emb = Embedder(**_embed_config(cfg), quiet=True)
   llm = llm_adapter_from_config(cfg)
-  db_path = str(get_db_path(cfg))
+  db_path = args.db or str(get_db_path(cfg))
   conn = open_db(db_path, readonly=not args.apply)
 
-  rows = conn.execute(
-    """
-    SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape
-    FROM queries q
-    WHERE NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id=q.id)
-      AND q.shape IN ('factual','synthesis','event_anchored')
-      AND COALESCE(q.results_returned,0) > 0
-    ORDER BY q.id
-    """
-  ).fetchall()
+  if args.rejudge_misses:
+    # Queries whose *latest* verdict is a miss and that returned candidates the
+    # LLM can grade. A new hit/correction row supersedes the miss (harness uses
+    # MAX(id)), converting it into a scorable gold.
+    rows = conn.execute(
+      """
+      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape
+      FROM queries q
+      JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
+        ON last.query_id = q.id
+      JOIN query_feedback f ON f.id = last.mid
+      WHERE f.kind = 'miss' AND COALESCE(q.results_returned,0) > 0
+      ORDER BY q.id
+      """
+    ).fetchall()
+  else:
+    rows = conn.execute(
+      """
+      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape
+      FROM queries q
+      WHERE NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id=q.id)
+        AND q.shape IN ('factual','synthesis','event_anchored')
+        AND COALESCE(q.results_returned,0) > 0
+      ORDER BY q.id
+      """
+    ).fetchall()
   if args.limit:
     rows = rows[: args.limit]
 
-  counts = {"hit": 0, "correction": 0, "miss": 0, "skip": 0}
+  counts = {"hit": 0, "correction": 0, "miss": 0, "skip": 0, "rejected": 0}
   for r in rows:
     text = r["text"]
     parsed = _parsed_from_json(r["parsed_query"], text)
@@ -127,9 +179,41 @@ def main() -> int:
     if kind not in ("hit", "correction", "miss") or (kind != "miss" and not rank):
       counts["skip"] += 1
       continue
-    result_id = res[rank - 1].id if kind != "miss" and 1 <= (rank or 0) <= len(res) else None
     counts[kind] += 1
-    payload = f"rank {rank} is correct" if kind == "correction" else None
+    if args.rejudge_misses and kind == "miss":
+      # Still a miss after re-judging — leave the existing miss row untouched.
+      continue
+    result_id = res[rank - 1].id if kind != "miss" and 1 <= (rank or 0) <= len(res) else None
+
+    # Adversarial verification (on by default; --no-verify to skip): a strict
+    # second pass that defaults to rejection, so soft first-pass picks (vague
+    # one-word queries "matching" any chatty message) don't become false gold.
+    if not args.no_verify and result_id is not None:
+      cand = res[rank - 1]
+      try:
+        vout = llm.complete(
+          VERIFY_PROMPT.format(
+            query=text, kind=cand.kind,
+            subject=cand.subject[:80], content=(cand.content or "")[:300],
+          ),
+          max_tokens=30,
+        ).text
+        vm = re.search(r"\{.*\}", vout, re.DOTALL)
+        if not (vm and json.loads(vm.group(0)).get("correct") is True):
+          counts[kind] -= 1
+          counts["rejected"] += 1
+          print(f"  [reject    ] rank={rank} {text[:55]!r} (failed verify)")
+          continue
+      except Exception as exc:  # noqa: BLE001 — verify failure => don't write
+        counts[kind] -= 1
+        counts["rejected"] += 1
+        print(f"  ! {text[:50]!r}: verify error {exc}")
+        continue
+
+    # Stamp provenance into payload so every LLM-written row is auditable by
+    # source (not just by id range, which the original tool relied on).
+    detail = f"rank {rank} is correct" if kind == "correction" else f"rank {rank}"
+    payload = f"{prov}: {detail}" if kind != "miss" else prov
     print(f"  [{kind:10}] rank={rank} {text[:55]!r}")
     if args.apply:
       conn.execute(

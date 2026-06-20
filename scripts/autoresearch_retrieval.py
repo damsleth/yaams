@@ -87,6 +87,13 @@ from yaams.time import parse_iso_datetime  # noqa: E402
 _STATE = _REPO / "scripts" / ".autoresearch_state.json"
 _RESULTS_TSV = _REPO / "scripts" / "autoresearch_results.tsv"
 _TEST_FRACTION = 0.10  # held-out split, by stable hash of query_id
+# Eval retrieval depth. The stored per-query top_k is whatever the user happened
+# to type at query time (1..80) and truncates the result list *before* rank is
+# measured — so a gold at result #2 of a top_k=1 query scores as a total miss.
+# We replay at a fixed depth so rank is observable regardless of the original
+# top_k. Doesn't change top-10 ordering (top_k only truncates the sorted list);
+# it just stops the harness from hiding golds the user's small top_k cut off.
+_EVAL_TOP_K = 50
 
 # Fitness weights (mirror the plan).
 _W_HITRATE = 0.7
@@ -167,7 +174,7 @@ def _replay_one(
     parsed = _parsed_from_json(row["parsed_query"], text)
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
-        top_k=row["top_k"] or 10,
+        top_k=_EVAL_TOP_K,
         source_filter=sf,
         since=parse_iso_datetime(row["since"]) if row["since"] else None,
         until=parse_iso_datetime(row["until"]) if row["until"] else None,
@@ -177,6 +184,7 @@ def _replay_one(
         qcfg = route(parsed, base, self_identities=self_ids)
     else:
         qcfg = base
+    qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
 
     fts_text = (
         " ".join(parsed.topic_terms) if parsed is not None and parsed.topic_terms else text

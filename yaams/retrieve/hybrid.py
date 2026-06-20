@@ -566,6 +566,8 @@ def _embedding_to_blob(embedding: object) -> bytes:
     return embedding
   return array("f", [float(v) for v in cast(Iterable[float], embedding)]).tobytes()
 
+_RANK_AGREEMENT_DELTA = 0.05
+
 
 def _fuse(
   ranked_lists: Sequence[list[tuple[str, str, int, float]]],
@@ -581,6 +583,18 @@ def _fuse(
         contribution *= cfg.consolidation_boost
       comp.rrf_score += contribution
       _stash_component(comp, ranking is ranked_lists[0] or ranking is ranked_lists[1], rank, raw_score, kind == "item")
+  # Post-loop pass: reward mutual top-of-both-index agreement.
+  # Only fires when a doc is strongly ranked in BOTH FTS and vector (rank<=2
+  # in each), the cleanest "both modalities are confident" signal that RRF
+  # otherwise flattens.
+  for comp in fused.values():
+    if (
+      comp.fts_rank is not None
+      and comp.fts_rank <= 2
+      and comp.vector_rank is not None
+      and comp.vector_rank <= 2
+    ):
+      comp.rrf_score *= 1.0 + _RANK_AGREEMENT_DELTA
   return fused
 
 

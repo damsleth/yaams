@@ -45,3 +45,5 @@ baseline-anchor	hybrid	dev	0.5438	0.6034	0.4129	151.1	0	ok
 bm25_magnitude_blend-keep	hybrid	dev	0.4461	0.4828	0.3606	140.9	11	fail:regression
 bm25_magnitude_blend-keep	hybrid	dev	0.5427	0.6034	0.4311	153.6	4	fail:regression
 bm25_magnitude_fts_blend-keep	hybrid	dev	0.5469	0.6034	0.4167	154.4	0	fail:recall
+campaign-jun20b-anchor	hybrid	dev	0.5437	0.6034	0.4129	158.3	0	ok
+pre-blend-anchor	hybrid	dev	0.5463	0.6034	0.4129	151.7	0	ok

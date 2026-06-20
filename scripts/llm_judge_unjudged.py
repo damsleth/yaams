@@ -54,6 +54,29 @@ from datetime import UTC, datetime  # noqa: E402
 def now_iso() -> str:
   return datetime.now(UTC).isoformat()
 
+
+_VERIFY_VOTES = 3  # best-of-N majority to tame the soft/nondeterministic verdict
+
+
+def _verify_correct(llm, prompt: str, votes: int = _VERIFY_VOTES) -> bool:
+  """Strict adversarial check, best-of-N. Returns True only if a majority of
+  votes say the (query, doc) pair is correct. Each call samples independently,
+  so a label that flip-flops between runs fails the majority and is rejected —
+  precision over recall, by design. Any vote that errors counts as 'not correct'."""
+  yes = 0
+  need = votes // 2 + 1
+  for _ in range(votes):
+    try:
+      out = llm.complete(prompt, max_tokens=30).text
+      m = re.search(r"\{.*\}", out, re.DOTALL)
+      if m and json.loads(m.group(0)).get("correct") is True:
+        yes += 1
+    except Exception:  # noqa: BLE001 — a failed vote is a 'no'
+      pass
+    if yes >= need:  # early-out: majority reached
+      return True
+  return yes >= need
+
 PROMPT = """You are grading a personal-memory search result. The user's query and the \
 top ranked results are below. Decide which single result (if any) best and \
 correctly answers the query.
@@ -96,6 +119,8 @@ def main() -> int:
   ap.add_argument("--db", default=None, help="DB override (e.g. the fixture for a safe dry preview)")
   ap.add_argument("--no-verify", action="store_true",
                   help="skip the strict adversarial second pass (faster, noisier labels)")
+  ap.add_argument("--votes", type=int, default=_VERIFY_VOTES,
+                  help="best-of-N majority for the verify pass (default 3; 1 = single check)")
   args = ap.parse_args()
   prov = "llm-rejudge" if args.rejudge_misses else "llm-judge"
 
@@ -190,24 +215,14 @@ def main() -> int:
     # one-word queries "matching" any chatty message) don't become false gold.
     if not args.no_verify and result_id is not None:
       cand = res[rank - 1]
-      try:
-        vout = llm.complete(
-          VERIFY_PROMPT.format(
-            query=text, kind=cand.kind,
-            subject=cand.subject[:80], content=(cand.content or "")[:300],
-          ),
-          max_tokens=30,
-        ).text
-        vm = re.search(r"\{.*\}", vout, re.DOTALL)
-        if not (vm and json.loads(vm.group(0)).get("correct") is True):
-          counts[kind] -= 1
-          counts["rejected"] += 1
-          print(f"  [reject    ] rank={rank} {text[:55]!r} (failed verify)")
-          continue
-      except Exception as exc:  # noqa: BLE001 — verify failure => don't write
+      vprompt = VERIFY_PROMPT.format(
+        query=text, kind=cand.kind,
+        subject=cand.subject[:80], content=(cand.content or "")[:300],
+      )
+      if not _verify_correct(llm, vprompt, votes=args.votes):
         counts[kind] -= 1
         counts["rejected"] += 1
-        print(f"  ! {text[:50]!r}: verify error {exc}")
+        print(f"  [reject    ] rank={rank} {text[:55]!r} (failed best-of-{args.votes} verify)")
         continue
 
     # Stamp provenance into payload so every LLM-written row is auditable by

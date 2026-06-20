@@ -22,6 +22,8 @@ const ISOLATION = FANOUT > 1 ? 'worktree' : undefined
 const MAX_ROUNDS = (args && args.rounds) || 20       // hard cap
 const CRITIC_EVERY = (args && args.criticEvery) || 5 // Opus critic cadence
 const DRY_LIMIT = (args && args.dryLimit) || 2       // stop after N dry rounds
+const MIN_DELTA = (args && args.minDelta) || 0.01    // keep only if quality beats anchor by >= this (noise floor; dev metric jitter is ~±0.006)
+const MAX_PLAUSIBLE_QUALITY = 0.8 // anchor sanity bound: quality scale is ~0.4-0.55, so >0.8 means the baseline agent misreported (wrong field / cwd)
 const HARNESS =
   '.venv/bin/python scripts/autoresearch_retrieval.py --split dev --json'
 const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code) and scripts/autoresearch_ideas.md (the ledger) first.'
@@ -93,6 +95,16 @@ const base = await agent(
   { label: 'baseline', phase: 'Baseline', model: 'sonnet', schema: BASELINE },
 )
 let anchor = base.quality
+// ponytail: guard against a misreported anchor. A baseline agent that returns the wrong
+// field (e.g. recall@10 ~0.9) or runs in the wrong cwd sets an impossible bar -> every
+// experiment "fails" -> a silent 0-keep campaign. Fail loudly instead of wasting a run.
+if (!(typeof anchor === 'number' && anchor > 0 && anchor <= MAX_PLAUSIBLE_QUALITY)) {
+  throw new Error(
+    `baseline anchor quality=${anchor} is implausible (expected 0 < q <= ${MAX_PLAUSIBLE_QUALITY}); ` +
+      `the baseline agent likely returned the wrong field or ran in the wrong directory. ` +
+      `Aborting rather than gating a whole campaign against a bad anchor — recheck the baseline and re-run.`,
+  )
+}
 let anchorP95 = base.p95 || 1e9
 let HEAD = base.head // experiments sync retrieve/* to this; UPDATED after each kept win
 // (a stale HEAD makes later experiments revert a just-applied win on their sync,
@@ -150,7 +162,8 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
           `(2) run \`${HARNESS} --no-write\` (NEVER without --no-write — do not write results.tsv); ` +
           `fix a dumb crash once, else report status=crash; (3) if it looks like a win, run ` +
           `\`${HARNESS} --no-write\` once more to confirm the number repeats.\n` +
-          `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${anchor} ` +
+          `Apply the keep/revert gate from the org code. Anchor to beat: quality > ${(anchor + MIN_DELTA).toFixed(4)} ` +
+          `(= anchor ${anchor.toFixed(4)} + ${MIN_DELTA} min-delta noise floor; gains below that are jitter, not wins) ` +
           `AND regressions == 0 AND recall_dropped == false (harness recall@10 floor) ` +
           `AND p95 <= ${2 * anchorP95}.\n` +
           `STEP FINAL — capture \`git diff ${HEAD} -- yaams/retrieve/\` as the diff, THEN ALWAYS run ` +
@@ -176,7 +189,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
         r.diff &&
         r.diff.trim() &&
         typeof r.quality === 'number' &&
-        r.quality > anchor &&
+        r.quality > anchor + MIN_DELTA && // noise floor: gains below MIN_DELTA are jitter, not wins
         r.regressions === 0 &&
         r.recall_dropped !== true &&
         (r.p95 || 0) <= 2 * anchorP95,

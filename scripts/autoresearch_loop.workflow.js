@@ -94,7 +94,9 @@ const base = await agent(
 )
 let anchor = base.quality
 let anchorP95 = base.p95 || 1e9
-const HEAD = base.head // every experiment syncs retrieve/* to this before editing
+let HEAD = base.head // experiments sync retrieve/* to this; UPDATED after each kept win
+// (a stale HEAD makes later experiments revert a just-applied win on their sync,
+//  and the dry-round recorder then commits that reverted tree — clobbering the win)
 log(`anchor quality=${anchor} p95=${anchorP95}ms rank1=${base.rank1}/${base.gold} head=${HEAD.slice(0, 8)}`)
 
 let dry = 0
@@ -203,19 +205,21 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
           `Move idea "${best.key}" to the Tried section of scripts/autoresearch_ideas.md as kept (with delta). ` +
           `3. Commit yaams/retrieve/*, scripts/autoresearch_ideas.md, scripts/autoresearch_results.tsv, and ` +
           `scripts/autoresearch_campaign.tsv with message "feat(retrieve): ${best.key} (autoresearch, ` +
-          `q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". Return {applied: bool, quality: number}.\n` +
+          `q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". After committing, return ` +
+          `{applied: bool, quality: number, head: "<git rev-parse HEAD>"} — head is the NEW commit sha.\n` +
           `\n--- DIFF ---\n${best.diff}`
         : `2. No winner this round. Commit scripts/autoresearch_campaign.tsv AND ` +
           `scripts/autoresearch_ideas.md with message ` +
           `"chore(autoresearch): round ${round} stats (dry)". Return {applied: false}.`),
     { label: best ? `keep:${best.key}` : `record:r${round}`, phase: PH, model: 'sonnet',
-      schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' } }, required: ['applied'] } },
+      schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' }, head: { type: 'string' } }, required: ['applied'] } },
   )
   if (best && recorded && recorded.applied) {
     anchor = recorded.quality && recorded.quality > anchor ? recorded.quality : best.quality
+    if (recorded.head) HEAD = recorded.head // advance the sync target so the next round can't revert this win
     kept.push({ key: best.key, quality: anchor, note: best.note })
     dry = 0
-    log(`KEPT ${best.key} — anchor now ${anchor.toFixed(4)}`)
+    log(`KEPT ${best.key} — anchor now ${anchor.toFixed(4)}, HEAD ${HEAD.slice(0, 8)}`)
   } else {
     if (best) log(`apply failed for ${best.key} — round counts as dry`)
     dry++

@@ -7,9 +7,8 @@ adjustments applied. Explicit user flags always win over parsed inference.
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 from dataclasses import replace
+from datetime import timedelta
 from typing import Iterable
 
 from yaams.retrieve.hybrid import HybridQueryConfig

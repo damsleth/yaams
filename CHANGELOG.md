@@ -10,6 +10,31 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-21
+
+### Changed
+
+- **Retrieval ranking — two structural gains** (autoresearch campaign on a
+  densified 78-query gold set, dev quality 0.5329 → 0.6144, held-out test split
+  neutral, 0 regressions):
+  - `tier2_factual_coverage_recovery`: for factual-shape queries, an FTS-present
+    but vector-absent tier2 ledger item (curated identity/decision facts) gets
+    an additive RRF coverage credit before its tier2 boost, so single-modality
+    facts stop losing the dual-coverage RRF race.
+  - `thread_coherence_credit`: an atomic item whose `thread_id` matches a top-3
+    consolidation's thread is lifted by a fraction of that consolidation's
+    score — the focused member item rides the trust already earned by its
+    parent session.
+
+### Internal
+
+- Autoresearch harness: replay at a fixed evaluation depth instead of each
+  query's stored `top_k` (the latter truncated results before rank was measured,
+  hiding correctly-retrieved golds).
+- New `--rejudge-misses` lane in `llm_judge_unjudged.py` with a best-of-3
+  adversarial verification pass and provenance-stamped feedback rows; used to
+  densify the gold set from 68 to 78 labels.
+
 ## [0.7.1] - 2026-06-18
 
 ### Added

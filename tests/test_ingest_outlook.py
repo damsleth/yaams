@@ -11,8 +11,34 @@ from yaams.ingest.outlook_app import (
   OutlookCalendarAdapter,
   OutlookMailAdapter,
   _local_to_utc,
+  _new_outlook_warning,
   _parse_records,
 )
+
+
+def _detect(monkeypatch, osascript_out):
+  _new_outlook_warning.cache_clear()
+  monkeypatch.setattr(oa, "_run_osascript", lambda script: osascript_out)
+  try:
+    return _new_outlook_warning()
+  finally:
+    _new_outlook_warning.cache_clear()
+
+
+def test_new_outlook_detected_warns(monkeypatch):
+  # 0 exchange accounts but folders present == New Outlook's empty legacy shim.
+  warning = _detect(monkeypatch, FS.join(["0", "10"]))
+  assert warning is not None
+  assert "New Outlook" in warning
+
+
+def test_classic_outlook_with_accounts_no_warning(monkeypatch):
+  assert _detect(monkeypatch, FS.join(["2", "14"])) is None
+
+
+def test_unparseable_probe_stays_quiet(monkeypatch):
+  assert _detect(monkeypatch, "") is None
+  assert _detect(monkeypatch, FS.join(["x", "y"])) is None
 
 
 def _cal_rec(ev_id, start, end, subj, org, loc, body):

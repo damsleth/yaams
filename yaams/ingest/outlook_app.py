@@ -4,6 +4,13 @@ Talks to the classic Outlook for Mac (16.x) via its AppleScript dictionary
 instead of Microsoft Graph, so it works offline against the locally-synced
 store. Two yaams sources: ``outlook_calendar`` and ``outlook_mail``.
 
+CLASSIC OUTLOOK ONLY. "New Outlook" for Mac keeps account data in a cloud-sync
+store with no AppleScript access — the dictionary still resolves but exposes
+only the empty legacy "On My Computer" containers, so extraction returns
+nothing. ``_new_outlook_warning()`` detects this and logs why. New-Outlook
+users should ingest via the owa-piggy Graph ``mail`` / ``calendar`` sources, or
+toggle off "New Outlook" to fall back to Classic.
+
 Why AppleScript and not the on-disk ``Outlook.sqlite``: the SQLite schema is
 undocumented, version-volatile, and locked (RecordLocks.sqlite) while the app
 runs. AppleScript is the supported, stable contract.
@@ -24,6 +31,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import UTC, datetime
 from typing import Iterator
 
@@ -100,6 +108,40 @@ def _run_osascript(script: str) -> str:
   return result.stdout
 
 
+@lru_cache(maxsize=1)
+def _new_outlook_warning() -> str | None:
+  """One-shot check (per process) for "New Outlook" for Mac.
+
+  New Outlook keeps account data in its own cloud-sync store with NO
+  AppleScript access — the dictionary still resolves but exposes only the
+  empty legacy "On My Computer" containers (Inbox, Sent, Calendar, all 0). So
+  outlook_calendar / outlook_mail silently return nothing. Detect the
+  signature (0 Exchange accounts but folders present) and return a human
+  explanation; None when classic Outlook with accounts is present (or we
+  can't tell — don't cry wolf).
+  """
+  out = _run_osascript(
+    'tell application "Microsoft Outlook" to return '
+    "(count of exchange accounts as text) & FS & (count of mail folders as text)"
+  )
+  rec = out.strip().split(FS)
+  if len(rec) != 2:
+    return None
+  try:
+    accounts, folders = int(rec[0]), int(rec[1])
+  except ValueError:
+    return None
+  if accounts == 0 and folders > 0:
+    return (
+      "New Outlook for Mac detected: AppleScript exposes only the empty legacy "
+      "'On My Computer' store, not your synced accounts, so outlook_calendar / "
+      "outlook_mail will return nothing. Use the owa-piggy Graph 'mail' / "
+      "'calendar' sources instead, or toggle off 'New Outlook' (Settings ▸ New "
+      "Outlook) to fall back to Classic Outlook, which is AppleScript-readable."
+    )
+  return None
+
+
 def _parse_records(out: str, n_fields: int) -> Iterator[list[str]]:
   for rec in out.split(RS):
     if not rec:
@@ -154,6 +196,9 @@ return outStr
 @dataclass
 class OutlookCalendarAdapter:
   def extract(self, since: datetime) -> Iterator[Item]:
+    warning = _new_outlook_warning()
+    if warning:
+      logger.warning("%s", warning)
     out = _run_osascript(_since_block(since) + _CAL_SCRIPT)
     for f in _parse_records(out, 7):
       ev_id, start_c, end_c, subject, organizer, location, *rest = f
@@ -243,6 +288,9 @@ class OutlookMailAdapter:
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_newsletters = 0
     self.scanned_through = None
+    warning = _new_outlook_warning()
+    if warning:
+      logger.warning("%s", warning)
     out = _run_osascript(_since_block(since) + _MAIL_SCRIPT)
     for f in _parse_records(out, 6):
       msg_id, ts_c, subject, sender, folder, *rest = f

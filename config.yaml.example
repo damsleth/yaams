@@ -51,8 +51,10 @@ ingest:
     # skip_dirs: [.git, .obsidian, node_modules]
 
   # ---- Local Outlook.app (macOS) sources ----
-  # Reads the classic Outlook for Mac store via AppleScript — offline, no
-  # Graph. Outlook must be installed and have finished its initial sync.
+  # Reads the CLASSIC Outlook for Mac store via AppleScript — offline, no Graph.
+  # NOTE: "New Outlook" for Mac is NOT supported (no AppleScript access to
+  # account data) — these return nothing and log a warning. Use the owa-piggy
+  # mail/calendar Graph sources, or toggle off "New Outlook" for Classic.
   outlook_calendar:
     enabled: false
   outlook_mail:

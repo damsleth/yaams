@@ -50,6 +50,15 @@ ingest:
     # Optional. Directory names to skip anywhere in the tree.
     # skip_dirs: [.git, .obsidian, node_modules]
 
+  # ---- Local Outlook.app (macOS) sources ----
+  # Reads the classic Outlook for Mac store via AppleScript — offline, no
+  # Graph. Outlook must be installed and have finished its initial sync.
+  outlook_calendar:
+    enabled: false
+  outlook_mail:
+    enabled: false
+    skip_newsletters: true
+
   # ---- Microsoft 365 / Graph sources ----
   # All M365 sources authenticate via owa-piggy. Configure profiles once with
   # `owa-piggy setup --profile <name>` and reference them by alias below.

@@ -426,6 +426,11 @@ def _summary_for(key: str, block: dict) -> str:
   if key == "mail":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
+  if key == "outlook_calendar":
+    return "Outlook.app (local, AppleScript)"
+  if key == "outlook_mail":
+    skip = block.get("skip_newsletters", True)
+    return f"Outlook.app (local), skip_newsletters={str(bool(skip)).lower()}"
   return ""
 
 

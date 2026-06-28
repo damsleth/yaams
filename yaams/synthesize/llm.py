@@ -157,9 +157,15 @@ class ClaudeCliAdapter:
     self,
     model_name: str | None = None,
     timeout: float = 120.0,
+    safe_mode: bool = False,
   ):
     self.model_name = model_name
     self.timeout = timeout
+    # safe_mode adds --safe-mode, which disables the user's CLAUDE.md, skills,
+    # hooks, output styles, etc. for this invocation (auth is untouched, unlike
+    # --bare). Keeps the user's global config from leaking into programmatic
+    # completions like the post-ingest summary.
+    self.safe_mode = safe_mode
 
   def complete(
     self,
@@ -169,6 +175,8 @@ class ClaudeCliAdapter:
     temperature: float = 0.0,
   ) -> LLMResponse:
     cmd = ["claude", "-p", "--input-format", "text"]
+    if self.safe_mode:
+      cmd.append("--safe-mode")
     if self.model_name:
       cmd += ["--model", self.model_name]
     result = subprocess.run(
@@ -240,6 +248,7 @@ def llm_adapter_from_config(cfg: dict) -> LLMAdapter:
     return ClaudeCliAdapter(
       model_name=str(model) if model else None,
       timeout=timeout,
+      safe_mode=bool(synth.get("safe_mode", False)),
     )
   if backend == "codex":
     return CodexCliAdapter(

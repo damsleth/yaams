@@ -45,6 +45,7 @@ from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
 from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
+from yaams.ingest.outlook_app import OutlookCalendarAdapter, OutlookMailAdapter
 from yaams.ingest.signal import SignalAdapter
 from yaams.ingest.teams import GraphClient, OwaPiggyTokenSource, TeamsAdapter
 from yaams.ingest.teams_channels import TeamsChannelsAdapter
@@ -71,6 +72,7 @@ from yaams.watermark import get_watermark, update_watermark
   show_default=True,
   help=(
     "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
+    "outlook_calendar, outlook_mail, "
     "teams or teams_<profile>, teams-channels or teams_channels_<profile>, "
     "calendar or calendar_<profile>, mail or mail_<profile>"
   ),
@@ -657,6 +659,10 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       notes_path=Path(notes_path),
       index_path=Path(index_path),
     )
+  if source == "outlook_calendar":
+    return OutlookCalendarAdapter()
+  if source == "outlook_mail":
+    return OutlookMailAdapter(skip_newsletters=bool(cfg.get("skip_newsletters", True)))
   if source == "github":
     return GitHubAdapter(username=cfg.get("username", ""))
   if source == "chats":
@@ -928,7 +934,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github", "chats",
+      "github", "chats", "outlook_calendar", "outlook_mail",
       *_piggy_sources("teams", "teams_"),
       *_piggy_sources("teams_channels", "teams_channels_"),
       *_piggy_sources("calendar", "calendar_"),
@@ -1018,6 +1024,10 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
   if source == "github":
     return [f"github: {source_cfg.get('username', 'unknown')} (events)"]
+  if source == "outlook_calendar":
+    return ["Outlook.app (local): all calendars"]
+  if source == "outlook_mail":
+    return ["Outlook.app (local): Inbox + Sent of exchange accounts"]
   if source == "chats":
     path = source_cfg.get("chats_path")
     return [

@@ -145,6 +145,24 @@ embed:
 synth:
   backend: dummy
 
+# Post-ingest summary: after `yaams ingest` stores new items, an LLM agent
+# writes a holistic, topic-grouped digest of what just landed and prints it
+# (and files it into the cognitive-ledger inbox for fact promotion). On by
+# default; set enabled: false to turn off.
+summary:
+  enabled: true
+  # claude | codex | ollama | subprocess | dummy | synth
+  # `synth` reuses synth.backend above; `claude` drives the local `claude` CLI
+  # and works out of the box. dummy / a missing CLI just skips with a note.
+  backend: claude
+  model:                 # backend default if unset (e.g. claude's default)
+  timeout: 180
+  max_items: 400         # cap new items fed to the summary prompt
+  content_chars: 300     # per-item content truncation
+  to_inbox: true         # also drop the digest into the ledger 00_inbox
+  safe_mode: true        # claude backend: pass --safe-mode so the user's global
+                         # CLAUDE.md / skills / hooks don't leak into the digest
+
 trust:
   # Attach a display-only trust verdict (high|medium|low + reason) to each
   # query result. Never affects ranking or result order.

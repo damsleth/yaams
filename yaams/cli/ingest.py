@@ -58,6 +58,7 @@ from yaams.store import (
   seed_entities,
   store_items,
 )
+from yaams.synthesize.summarize import SummaryResult, summarize_ingest
 from yaams.time import parse_iso_datetime
 from yaams.watermark import get_watermark, update_watermark
 
@@ -108,6 +109,7 @@ def ingest(
   strict: bool,
 ) -> None:
   total_start = time.perf_counter()
+  run_started_at = datetime.now(UTC)
   try:
     cfg = load_config(config_path)
     db_path = get_db_path(cfg)
@@ -304,6 +306,15 @@ def ingest(
         strict=strict,
         entity_cleanup=entity_cleanup,
       )
+      summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
+      if summary is not None:
+        envelope["stats"]["summary"] = {
+          "text": summary.text,
+          "note": summary.note,
+          "backend": summary.backend,
+          "model": summary.model,
+          "inbox_path": summary.inbox_path,
+        }
       stream_result(envelope)
       conn.close()
       sys.exit(exit_code)
@@ -315,12 +326,48 @@ def ingest(
       total_duration_ms=total_duration_ms,
       entity_cleanup=entity_cleanup,
     )
+    summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
+    if summary is not None:
+      _print_summary(summary)
   finally:
     if conn is not None:
       try:
         conn.close()
       except Exception:
         pass
+
+
+def _post_ingest_summary(
+  conn,
+  cfg: dict,
+  run_started_at: datetime,
+  run_stats: dict[str, dict[str, object]],
+  dry_run: bool,
+) -> SummaryResult | None:
+  """Generate the post-ingest digest. None on dry runs (nothing was stored)."""
+  if dry_run:
+    return None
+  total_new = sum(int(s.get("new", 0) or 0) for s in run_stats.values())
+  return summarize_ingest(
+    conn, cfg, run_started_at=run_started_at, total_new=total_new
+  )
+
+
+def _print_summary(summary: SummaryResult) -> None:
+  if summary.text:
+    click.echo("")
+    label = summary.backend or "llm"
+    if summary.model:
+      label += f"/{summary.model}"
+    click.echo(f"  Summary ({label}):")
+    click.echo("")
+    click.echo(summary.text)
+    if summary.inbox_path:
+      click.echo("")
+      click.echo(f"  Filed to ledger inbox: {summary.inbox_path}")
+  elif summary.note and summary.note not in ("no new items", "disabled in config"):
+    # Surface why the summary is missing, but stay quiet on the boring cases.
+    click.echo(f"  Summary skipped: {summary.note}", err=True)
 
 
 def _cleanup_entity_dictionary(cfg: dict) -> dict | None:

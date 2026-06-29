@@ -31,8 +31,8 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from functools import lru_cache
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Iterator
 
 from yaams.ingest.base import Item, hash_id
@@ -89,7 +89,7 @@ def _since_block(since: datetime) -> str:
 def _run_osascript(script: str) -> str:
   full = (
     _ISO_HANDLER
-    + f'set FS to (ASCII character 31)\nset RS to (ASCII character 30)\n'
+    + 'set FS to (ASCII character 31)\nset RS to (ASCII character 30)\n'
     + f"with timeout of {_OSASCRIPT_TIMEOUT} seconds\n"
     + script
     + "\nend timeout\n"

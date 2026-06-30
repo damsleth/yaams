@@ -86,6 +86,9 @@ class HybridQueryConfig:
   rerank_enabled: bool = False
   reranker_model: str = "BAAI/bge-reranker-v2-m3"
   rerank_k: int = 50
+  # Reranker device. cpu by default: these cross-encoders crash mid-predict on
+  # Apple mps and a small pool is fast on CPU. Set cuda on a GPU box.
+  reranker_device: str | None = "cpu"
 
 
 @dataclass
@@ -212,7 +215,7 @@ def query(
     from yaams.retrieve.rerank import candidate_text, rerank_pairs
     pool = hydrated[: cfg.rerank_k]
     pairs = [(text, candidate_text(r.subject, r.content)) for r in pool]
-    scores = rerank_pairs(text, pairs, cfg.reranker_model)
+    scores = rerank_pairs(text, pairs, cfg.reranker_model, device=cfg.reranker_device)
     for r, s in zip(pool, scores):
       r.score = s
     hydrated = pool

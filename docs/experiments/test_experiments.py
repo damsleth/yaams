@@ -38,7 +38,40 @@ def test_seq_is_dense_and_ordered():
   assert seqs == sorted(seqs) and seqs == list(range(1, len(ROWS) + 1))
 
 
+def test_logger_disposition_mapping():
+  import log_experiment as le
+  assert le.disposition_for("rrf30-keep", "ok") == "keep"
+  assert le.disposition_for("baseline-jun19", "ok") == "baseline"
+  assert le.disposition_for("k80-cons105-anchor", "ok") == "baseline"
+  assert le.disposition_for("some_trial", "fail:regression") == "kill"
+
+
+def test_logger_append_roundtrip():
+  # Append into a throwaway file (don't touch the real dataset), no rebuild.
+  import json as _json
+
+  import log_experiment as le
+  orig = le.DATA
+  tmp = Path(__file__).with_name(".test_tmp.jsonl")
+  try:
+    le.DATA = tmp
+    if tmp.exists():
+      tmp.unlink()
+    r1 = le.append("a", "kill", {"mrr": 0.4}, era="E", rebuild=False)
+    r2 = le.append("b", "keep", {"hit_rate": 0.7}, era="E", rebuild=False)
+    assert r1["seq"] == 1 and r2["seq"] == 2
+    lines = [_json.loads(x) for x in tmp.read_text().splitlines()]
+    assert [x["key"] for x in lines] == ["a", "b"]
+    assert lines[0]["metrics"]["mrr"] == 0.4
+  finally:
+    le.DATA = orig
+    if tmp.exists():
+      tmp.unlink()
+
+
 if __name__ == "__main__":
+  import sys
+  sys.path.insert(0, str(Path(__file__).parent))
   for name, fn in sorted(globals().items()):
     if name.startswith("test_"):
       fn()

@@ -15,7 +15,9 @@ noise for a trend.
 |------|------|
 | `experiments.jsonl` | **Source of truth.** One experiment per line, append-only. |
 | `index.html` | Self-contained viewer (hand-rolled SVG, zero deps). Opens via `file://`. |
-| `build.py` | Inlines `experiments.jsonl` into `index.html`. Run after every append. |
+| `log_experiment.py` | Append an experiment + rebuild. The one entry point — used by the harnesses and the CLI. |
+| `build.py` | Inlines `experiments.jsonl` into `index.html`. Run by the logger; rarely run by hand. |
+| `CURRENT_ERA` | One line: the gold-set version new experiments are tagged with. Bump on reseed. |
 | `seed.py` | One-shot reconstruction of pre-2026-06-30 history from `scripts/autoresearch_*.tsv`. Provenance only. |
 
 ## View it
@@ -34,14 +36,29 @@ partial-credit MRR).
 ## Add an experiment (the rule)
 
 Every run that measures `quality` / `hit_rate` / `mrr` / `recall@10` /
-`latency_p95_ms` gets a line — win or lose. Append to `experiments.jsonl`:
+`latency_p95_ms` gets a line — win or lose.
 
-```json
-{"key":"my_idea","date":"2026-07-01","era":"78 gold (jun21)","disposition":"kill","status":"discard","delta":-0.004,"note":"why it failed","commit":"abc1234","metrics":{"quality":0.62,"hit_rate":0.667,"mrr":0.49,"recall@10":0.92,"latency_p95_ms":171}}
+**Automatic:** `scripts/autoresearch_retrieval.py` (recorded runs) and
+`scripts/rerank_sweep.py` already call `log_experiment.py` for you. Nothing to do.
+
+**Manual / ad-hoc:** use the logger (it appends and rebuilds):
+
+```sh
+python docs/experiments/log_experiment.py --key my_idea --disposition kill \
+  --quality 0.62 --hit-rate 0.667 --mrr 0.49 --recall10 0.92 --latency-p95 171 \
+  --note "why it failed"
 ```
 
-Then `python docs/experiments/build.py`.
-
 - `disposition`: `keep` (new accepted baseline) · `kill` (rejected) · `baseline` (re-measure / anchor). Record the **final** disposition — a win later reverted as overfit is a `kill`.
-- `era`: bump it whenever the gold set or the metric definition changes.
-- Omit / `null` any metric you didn't measure; the viewer skips gaps.
+- `era`: defaults to `CURRENT_ERA`; bump that file whenever the gold set or metric definition changes.
+- Omit any metric you didn't measure; the viewer skips gaps.
+- A git pre-commit hook rebuilds `index.html` if you hand-edit `experiments.jsonl`.
+
+### Why log every run, not just the wins
+
+The harness records *every* recorded run, so the timeline grows fast during an
+active campaign — each parameter trial is one `×`. That's deliberate: the cloud
+of kills around the accepted-baseline line is the point. It shows how well the
+current baseline holds up against everything we threw at it, and stops us
+re-trying dead ideas. We keep them all. If a campaign ever makes it too noisy to
+read, toggle individual metrics off rather than dropping points.

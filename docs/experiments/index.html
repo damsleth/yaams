@@ -38,7 +38,7 @@
 
 <div class="wrap">
   <div class="controls panel" id="legend"></div>
-  <div class="panel"><svg id="chart" viewBox="0 0 1000 620" preserveAspectRatio="xMinYMin meet"></svg></div>
+  <div class="panel"><svg id="chart" viewBox="0 0 1000 430" preserveAspectRatio="xMinYMin meet"></svg></div>
   <div class="legendnote">Markers: ● kept &nbsp; ○ baseline/anchor &nbsp; × killed.
     Hover a point for the full record. The rerank-sweep band uses full rank-1 MRR;
     earlier bands use partial-credit MRR — different metrics, hence the separate band.</div>
@@ -60,17 +60,18 @@ const SERIES = [
 ];
 const on = Object.fromEntries(SERIES.map(s=>[s.key, true]));
 
-// layout
-const W=1000, H=620, M={l:46,r:16,t:26,b:54};
-const RATE={top:M.t, bot:300};            // rates panel [0..1]
-const LAT ={top:340, bot:H-M.b};          // latency panel (log)
+// layout — single full-height plot, dual y-axes:
+//   left axis  = latency p95 (ms, log)
+//   right axis = rate metrics (quality/hit_rate/mrr/recall@10), 0..1
+const W=1000, H=430, M={l:52,r:50,t:30,b:46};
+const PLOT={top:M.t, bot:H-M.b};
 const X0=M.l, X1=W-M.r;
 const N=DATA.length;
 const xOf = i => X0 + (X1-X0) * (N<2?0.5:i/(N-1));
-const yRate = v => RATE.bot - (RATE.bot-RATE.top)*v;          // v in [0,1]
+const yRate = v => PLOT.bot - (PLOT.bot-PLOT.top)*v;          // v in [0,1] -> full height
 const LMIN=50, LMAX=15000;
 const yLat = v => { const t=(Math.log10(v)-Math.log10(LMIN))/(Math.log10(LMAX)-Math.log10(LMIN));
-                    return LAT.bot - (LAT.bot-LAT.top)*Math.max(0,Math.min(1,t)); };
+                    return PLOT.bot - (PLOT.bot-PLOT.top)*Math.max(0,Math.min(1,t)); };
 
 const NS='http://www.w3.org/2000/svg';
 const el=(n,a={})=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
@@ -85,7 +86,7 @@ function eraBands(){
     const xa=xOf(i)-(i>0?(xOf(i)-xOf(i-1))/2:8);
     const xb=xOf(j)+(j<N-1?(xOf(j+1)-xOf(j))/2:8);
     if(shade%2===0)
-      svg.appendChild(el('rect',{x:xa,y:M.t-6,width:xb-xa,height:(LAT.bot)-(M.t-6),
+      svg.appendChild(el('rect',{x:xa,y:M.t-6,width:xb-xa,height:PLOT.bot-(M.t-6),
         fill:'#000',opacity:0.025}));
     const lbl=el('text',{x:(xa+xb)/2,y:M.t-12,'text-anchor':'middle','class':'eralabel'});
     lbl.textContent=DATA[i].era; svg.appendChild(lbl);
@@ -94,21 +95,21 @@ function eraBands(){
 }
 
 function gridAxes(){
-  // rate gridlines 0,.25,.5,.75,1
+  // rate axis on the RIGHT: full-width gridlines + labels at 0,.25,.5,.75,1
   [0,.25,.5,.75,1].forEach(v=>{
     svg.appendChild(el('line',{x1:X0,x2:X1,y1:yRate(v),y2:yRate(v),'class':'grid'}));
-    const t=el('text',{x:X0-8,y:yRate(v)+3,'text-anchor':'end','class':'axis'});
+    const t=el('text',{x:X1+8,y:yRate(v)+3,'text-anchor':'start','class':'axis'});
     t.textContent=v.toFixed(2); svg.appendChild(t);
   });
-  // latency gridlines (log): 100,1000,10000
+  // latency axis on the LEFT (log): short ticks + labels at 100,1000,10000
   [100,1000,10000].forEach(v=>{
-    svg.appendChild(el('line',{x1:X0,x2:X1,y1:yLat(v),y2:yLat(v),'class':'grid'}));
+    svg.appendChild(el('line',{x1:X0-4,x2:X0,y1:yLat(v),y2:yLat(v),'class':'axis'}));
     const t=el('text',{x:X0-8,y:yLat(v)+3,'text-anchor':'end','class':'axis'});
     t.textContent=v>=1000?(v/1000)+'k':v; svg.appendChild(t);
   });
-  // panel titles
-  const a=el('text',{x:X0,y:M.t-12,'class':'axis'}); a.textContent='rate (0–1)';
-  const b=el('text',{x:X0,y:LAT.top-8,'class':'axis'}); b.textContent='latency p95 (ms, log)';
+  // axis titles at the bottom corners — the top row is reserved for era labels
+  const b=el('text',{x:X0,y:H-6,'class':'axis'}); b.textContent='← latency ms (log)';
+  const a=el('text',{x:X1,y:H-6,'text-anchor':'end','class':'axis'}); a.textContent='rate 0–1 →';
   svg.appendChild(a); svg.appendChild(b);
 }
 
@@ -141,16 +142,12 @@ function draw(){
       }
     });
   }
-  // x ticks: first experiment of each date
-  let lastDate=null;
-  DATA.forEach((d,i)=>{
-    if(d.date!==lastDate){
-      lastDate=d.date;
-      const t=el('text',{x:xOf(i),y:LAT.bot+18,'text-anchor':'middle','class':'axis'});
-      t.textContent=d.date.slice(5); svg.appendChild(t);
-      svg.appendChild(el('line',{x1:xOf(i),x2:xOf(i),y1:LAT.bot,y2:LAT.bot+5,'class':'axis'}));
-    }
-  });
+  // x ticks: uniform, unlabeled — sequence order is what matters, not wall-clock
+  const NT=Math.min(N,12);
+  for(let k=0;k<NT;k++){
+    const i=Math.round(k*(N-1)/(NT-1));
+    svg.appendChild(el('line',{x1:xOf(i),x2:xOf(i),y1:PLOT.bot,y2:PLOT.bot+5,'class':'axis'}));
+  }
   const xl=el('text',{x:(X0+X1)/2,y:H-6,'text-anchor':'middle','class':'axis'});
   xl.textContent='experiment sequence →'; svg.appendChild(xl);
   hoverLayer();
@@ -158,9 +155,9 @@ function draw(){
 
 function hoverLayer(){
   const tip=document.getElementById('tip');
-  const guide=el('line',{x1:0,x2:0,y1:M.t,y2:LAT.bot,stroke:'#9ca3af','stroke-dasharray':'3 3',
+  const guide=el('line',{x1:0,x2:0,y1:M.t,y2:PLOT.bot,stroke:'#9ca3af','stroke-dasharray':'3 3',
     'stroke-width':1,opacity:0}); svg.appendChild(guide);
-  const rect=el('rect',{x:X0,y:M.t,width:X1-X0,height:LAT.bot-M.t,fill:'transparent'});
+  const rect=el('rect',{x:X0,y:M.t,width:X1-X0,height:PLOT.bot-M.t,fill:'transparent'});
   svg.appendChild(rect);
   const pt=svg.createSVGPoint();
   function near(evt){

@@ -105,6 +105,18 @@ The raw `items` table is the firehose floor. These are rules, not preferences �
 - **Idempotent ingest.** `UNIQUE(source, source_id)` plus the `existing_ids()` pre-check (`yaams/store.py`) drop already-seen items before the expensive embed/tag step. Re-ingesting an unchanged item is a no-op — when a run re-sees only known ids the embedding model isn't even loaded. (Note: this is a pre-check + UPDATE-on-exists, **not** `INSERT OR IGNORE`.)
 - **Mutability is modelled by `source_id`, never by mutation.** A changed upstream item is ingested as a new `(source, source_id)` — the revision is encoded in `source_id` — so history survives as new rows. The UPDATE-on-exists path in `_insert_item` exists only to refresh derived fields for the *same* logical item; it must never overwrite the meaning of a fact.
 
+## Autoresearch experiment log (record every measured experiment)
+
+Any retrieval/promote experiment that *measures* fitness — `quality`, `hit_rate`, `mrr`, `recall@10`, `latency_p95_ms` — **must** be appended to the chart dataset, win or lose. The kills are as valuable as the keeps: the timeline exists so we never re-try a dead idea or mistake noise for a trend. This is a rule, not a courtesy.
+
+- **Dataset:** `docs/experiments/experiments.jsonl`, one JSON object per line, append-only. Schema: `key, date, era, disposition (keep|kill|baseline), status, delta, note, commit, metrics{quality,hit_rate,mrr,recall@10,latency_p95_ms}`. Omit a metric (or set `null`) when it wasn't measured.
+- **`era`** is the gold-set version the run was scored on (e.g. `78 gold (jun21)`). Metrics are **not comparable across eras** — the viewer bands them and never connects a line across a boundary. Tag a new era whenever the gold set changes or the metric definition changes (e.g. partial-credit vs full MRR).
+- **`disposition`** drives the chart: `keep`/`baseline` advance the accepted-baseline line; `kill` is plotted as a floating × off the line. Record the *final* disposition — a win later reverted as a held-out overfit is a `kill`, with the revert noted.
+- **After appending, run `python docs/experiments/build.py`** to re-inline the data into `docs/experiments/index.html` (self-contained, opens via `file://`). View it by opening that file.
+- The autoresearch loop already logs raw rows to `scripts/autoresearch_*.tsv`; those are the upstream ledgers. `docs/experiments/seed.py` shows how the pre-2026-06-30 history was reconstructed from them. New experiments go straight to `experiments.jsonl`.
+
+This module is self-contained under `docs/experiments/` so it can later be extracted to its own repo (like ux-loop).
+
 ## Stack
 
 - Python 3.11+
@@ -136,7 +148,8 @@ YAAMS/
 │   ├── store.py
 │   └── watermark.py
 ├── tests/
-└── scripts/                   # init_db, ingest, reset_db, analyze
+├── scripts/                   # init_db, ingest, reset_db, analyze, autoresearch_*.tsv
+└── docs/experiments/          # autoresearch experiment timeline (jsonl + self-contained viewer)
 ```
 
 ## Phases

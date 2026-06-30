@@ -34,5 +34,8 @@ class Adapter(Protocol):
 
 
 def hash_id(source: str, source_id: str) -> str:
+  # Deterministic, content-stable id: the same logical item always hashes the
+  # same, and mutable sources encode their revision in source_id so a change is
+  # a new id, not a rewrite. See AGENTS.md "Raw-store invariants".
   return sha256(f"{source}:{source_id}".encode("utf-8")).hexdigest()
 

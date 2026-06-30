@@ -176,6 +176,10 @@ def promote_generate(
     note_index_path=note_index_path,
     rejected_log_path=rejected_log_path,
     dedup=dedup_cfg,
+    admission_weights={
+      k: float(v)
+      for k, v in ((promote_cfg_raw.get("admission") or {}).get("weights") or {}).items()
+    },
   )
   conn = open_db(db_path)
   try:
@@ -350,6 +354,8 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
 
         if choice in ("a", "e"):
           if choice == "e":
+            from yaams.promote.review import enrich_candidate_event_time as _eet
+            _eet(conn, c)  # seed valid_from into the editor preview too
             note_content = click.edit(format_note(c)) or format_note(c)
             import json as _j
 
@@ -391,7 +397,7 @@ def promote_review(config_path: str, review_all: bool, as_json: bool) -> None:
   type=float,
   default=None,
   metavar="FLOAT",
-  help="Commit candidates with signal_score >= FLOAT.",
+  help="Commit candidates with admission_score >= FLOAT.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
 def promote_commit(
@@ -483,7 +489,7 @@ def promote_commit(
     # Apply min-score filter on the pending pool
     pool = list(all_pending)
     if min_score is not None:
-      pool = [c for c in pool if (c.get("signal_score") or 0.0) >= min_score]
+      pool = [c for c in pool if (c.get("admission_score") or 0.0) >= min_score]
 
     # Merge explicit + pool, deduplicate by id preserving order
     seen_ids: set[str] = set()

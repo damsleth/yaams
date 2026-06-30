@@ -9,11 +9,18 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from yaams.promote.score import admission_score
 from yaams.synthesize.llm import LLMAdapter
+from yaams.trust import derive_provenance
 
 if TYPE_CHECKING:
   from yaams.promote.conflict import ConflictConfig
   from yaams.promote.dedup import DedupConfig
+
+# Ledger taxonomy folders whose notes signal "future utility": things central to
+# the user's identity and current open work. A candidate whose terms overlap
+# these is worth promoting. Detected by rel_path in note_index.json.
+_UTILITY_FOLDERS = ("01_identity", "05_open_loops")
 
 
 def _default_dedup_config() -> "DedupConfig":
@@ -75,6 +82,9 @@ class PromotionCandidate:
   conflict_checked_at: str | None = None
   conflict_target_statement_hash: str | None = None
   conflict_prompt_version: int | None = None
+  # Admission control (plan 01): explicit multi-factor score + breakdown.
+  admission_score: float | None = None
+  admission_factors: dict[str, float] | None = None
 
 
 @dataclass
@@ -104,6 +114,8 @@ class PromoteConfig:
   note_index_path: Path | None = None
   rejected_log_path: Path | None = None
   dedup: "DedupConfig" = field(default_factory=lambda: _default_dedup_config())
+  # Admission-score factor weights (plan 01). Empty -> score.DEFAULT_WEIGHTS.
+  admission_weights: dict[str, float] = field(default_factory=dict)
 
 
 def generate_candidates(
@@ -118,6 +130,8 @@ def generate_candidates(
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
   index_texts = _load_index_texts(config.note_index_path)
+  utility_terms = _load_utility_terms(config.note_index_path)
+  weights = config.admission_weights or None
   rejected = _load_rejected(config.rejected_log_path)
   dedup_checker = DedupChecker(config.dedup)
   candidates: list[PromotionCandidate] = []
@@ -217,6 +231,27 @@ def generate_candidates(
           candidate.conflict_target_statement_hash = existing_stmt_hash
           candidate.conflict_prompt_version = cv.prompt_version
 
+      # --- Admission scoring (plan 01) -------------------------------------
+      # Score the candidate on novelty/utility/confidence/trust. Advisory only:
+      # it ranks and gates, never auto-rejects. `cluster` is still in scope for
+      # provenance (best evidence channel) and corroboration (source count).
+      provenances = [
+        (r.get("provenance") or derive_provenance(r["source"])) for r in cluster
+      ]
+      candidate_terms = _tokenize(candidate.entity)
+      for tag in candidate.draft_tags:
+        candidate_terms |= _tokenize(tag)
+      score, factors = admission_score(
+        dedup_similarity=candidate.dedup_similarity,
+        candidate_terms=candidate_terms,
+        utility_terms=utility_terms,
+        item_provenances=provenances,
+        source_count=len(candidate.source_item_ids),
+        weights=weights,
+      )
+      candidate.admission_score = score
+      candidate.admission_factors = factors
+
       candidates.append(candidate)
       if on_progress:
         on_progress(f"  drafted: {candidate.draft_title}")
@@ -241,8 +276,8 @@ def store_candidates(
            merge_with, dedup_similarity,
            conflict_classification, conflict_confidence, conflict_reason,
            conflict_model, conflict_checked_at, conflict_target_statement_hash,
-           conflict_prompt_version)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           conflict_prompt_version, admission_score, admission_factors)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
           c.id,
@@ -266,6 +301,8 @@ def store_candidates(
           c.conflict_checked_at,
           c.conflict_target_statement_hash,
           c.conflict_prompt_version,
+          c.admission_score,
+          json.dumps(c.admission_factors) if c.admission_factors is not None else None,
         ),
       )
       stored += 1
@@ -283,7 +320,7 @@ def fetch_pending(
     """
     SELECT * FROM promotion_candidates
     WHERE (? = 'all' OR status = ?)
-    ORDER BY created_at DESC
+    ORDER BY admission_score IS NULL, admission_score DESC, created_at DESC
     """,
     (status, status),
   ).fetchall()
@@ -393,6 +430,36 @@ def _load_index_texts(index_path: Path | None) -> list[str]:
     return texts
   except Exception:
     return []
+
+
+def _tokenize(text: str) -> set[str]:
+  """Lowercased word tokens of length >= 3 (drops most stopwords/punctuation)."""
+  return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) >= 3}
+
+
+def _load_utility_terms(index_path: Path | None) -> set[str]:
+  """Tokens from identity + open-loop ledger notes — the future-utility proxy.
+
+  Reads note_index.json, keeps entries whose rel_path sits under a
+  ``_UTILITY_FOLDERS`` taxonomy folder, and tokenizes their title+statement.
+  Empty on any failure (missing/unreadable index) so the utility factor simply
+  goes to 0 — degrade open, never raise."""
+  if not index_path:
+    return set()
+  try:
+    index = json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
+  except Exception:
+    return set()
+  terms: set[str] = set()
+  for key, entry in (index.get("entries") or {}).items():
+    parts = str(key).split("/")
+    folder = parts[1] if parts and parts[0] == "notes" and len(parts) > 1 else ""
+    if folder not in _UTILITY_FOLDERS:
+      continue
+    c = entry.get("candidate") or {}
+    for fld in ("title", "statement"):
+      terms |= _tokenize(c.get(fld) or "")
+  return terms
 
 
 def _load_note_from_index(
@@ -505,7 +572,7 @@ def _fetch_cluster(
   cutoff = _cutoff_iso(effective_window)
   rows = conn.execute(
     """
-    SELECT i.id, i.source, i.timestamp, i.sender, i.content, i.subject
+    SELECT i.id, i.source, i.provenance, i.timestamp, i.sender, i.content, i.subject
     FROM item_entities ie
     JOIN items i ON i.id = ie.item_id
     WHERE ie.entity_id = ?

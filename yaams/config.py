@@ -106,6 +106,7 @@ _NUMERIC_KNOBS: tuple[tuple[str, type | tuple[type, ...], bool], ...] = (
   ("ingest.teams_channels.backfill_limit_pages", int, True),
   ("ingest.teams_channels.max_retries", int, False),
   ("ingest.calendar.chunk_days", int, True),
+  ("retrieve.rerank.k", int, True),
 )
 
 

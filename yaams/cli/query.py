@@ -214,6 +214,14 @@ def _resolve_source_filter(
 @click.option("--explain", is_flag=True, help="Print the parsed query JSON before results")
 @click.option("--high-quality", is_flag=True, help="Force synthesis-grade depth (bumps top_k, future rerank hook)")
 @click.option(
+  "--rerank",
+  is_flag=True,
+  help="Re-rank the candidate pool with a cross-encoder (bge-reranker-v2-m3). "
+       "Higher top-1 precision at ~50-200ms extra latency. Opt-in; the default "
+       "and --no-vector paths are unchanged. Model/pool-size from "
+       "config retrieve.rerank.",
+)
+@click.option(
   "--lang",
   "lang_filter",
   type=click.Choice(["no", "en"]),
@@ -251,6 +259,7 @@ def query_cmd(
   no_parse: bool,
   explain: bool,
   high_quality: bool,
+  rerank: bool,
   lang_filter: str | None,
   feedback_prompt: bool | None,
 ) -> None:
@@ -334,6 +343,11 @@ def query_cmd(
         qcfg = base_cfg
       if high_quality:
         qcfg.high_quality = True
+      rerank_cfg = (cfg.get("retrieve") or {}).get("rerank") or {}
+      if rerank or rerank_cfg.get("enabled", False):
+        qcfg.rerank_enabled = True
+        qcfg.reranker_model = rerank_cfg.get("model") or qcfg.reranker_model
+        qcfg.rerank_k = int(rerank_cfg.get("k") or qcfg.rerank_k)
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

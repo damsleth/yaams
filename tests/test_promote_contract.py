@@ -7,10 +7,19 @@ cognitive-ledger/docs/yaams-cogled-interface.md.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from yaams.cli import promote as promote_cli
-from yaams.promote.review import CONTRACT_VERSION, format_note
+from yaams.db import open_db
+from yaams.ingest.base import Item, hash_id
+from yaams.promote.review import (
+  CONTRACT_VERSION,
+  enrich_candidate_event_time,
+  format_note,
+)
+from yaams.schema import init_schema
+from yaams.store import store_items
 
 
 def _candidate() -> dict:
@@ -55,6 +64,62 @@ def test_format_note_handles_empty_source_items():
   assert "yaams_source_item_ids: []\n" in note
   # missing id still emits the key (degrades to item-id / entity match in cogled)
   assert "yaams_candidate_id: \n" in note
+
+
+# --- Event-time bitemporal bridge (plan 04) -------------------------------
+
+
+def test_format_note_omits_validity_by_default():
+  # No valid_from keys on the candidate -> no validity frontmatter (v1 notes
+  # stay clean, ledger treats them as valid-for-all-time).
+  assert "valid_from" not in format_note(_candidate())
+
+
+def test_format_note_emits_valid_from_when_present():
+  c = _candidate()
+  c["valid_from"] = "2025-03-01T12:00:00Z"
+  note = format_note(c)
+  assert "valid_from: 2025-03-01T12:00:00Z\n" in note
+  assert "valid_from_confidence" not in note
+
+
+def test_format_note_flags_low_confidence_when_inferred():
+  c = _candidate()
+  c["valid_from_confidence"] = "low"
+  note = format_note(c)
+  assert "valid_from_confidence: low\n" in note
+  assert "valid_from:" not in note
+
+
+def _store_item(conn, sid, ts, inferred=False):
+  item = Item(
+    id=hash_id("imessage", sid), source="imessage", source_id=sid,
+    timestamp=ts, sender="a@x", recipients=["b@x"], content="c",
+    timestamp_inferred=inferred,
+  )
+  store_items(conn, [item], [[0.1]], [[]])
+  return item.id
+
+
+def test_enrich_sets_valid_from_to_earliest_source_event_time(tmp_path):
+  conn = open_db(tmp_path / "y.db")
+  init_schema(conn, use_vec=False)
+  id1 = _store_item(conn, "m1", datetime(2025, 3, 1, 12, tzinfo=UTC))
+  id2 = _store_item(conn, "m2", datetime(2025, 1, 15, 9, tzinfo=UTC))
+  c = {"source_item_ids": json.dumps([id1, id2])}
+  enrich_candidate_event_time(conn, c)
+  assert c["valid_from"] == "2025-01-15T09:00:00Z"
+  assert "valid_from_confidence" not in c
+
+
+def test_enrich_flags_low_confidence_when_any_source_inferred(tmp_path):
+  conn = open_db(tmp_path / "y.db")
+  init_schema(conn, use_vec=False)
+  id1 = _store_item(conn, "m1", datetime(2025, 3, 1, 12, tzinfo=UTC), inferred=True)
+  c = {"source_item_ids": json.dumps([id1])}
+  enrich_candidate_event_time(conn, c)
+  assert "valid_from" not in c
+  assert c["valid_from_confidence"] == "low"
 
 
 def test_resolve_inbox_path_explicit_config_wins(tmp_path, monkeypatch):

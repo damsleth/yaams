@@ -85,6 +85,21 @@ def format_note(candidate: dict[str, Any]) -> str:
       lines.append(f"dedup_similarity: {dedup_similarity:.2f}")
     conflict_block = "\n".join(lines) + "\n"
 
+  # Bitemporal event-time (plan 04). `valid_from` is the earliest *source*
+  # event-time of the cluster (when the fact became true in the world), so the
+  # ledger dates facts by event time, not note-creation time. Populated by
+  # enrich_candidate_event_time at write time; absent (-> ledger treats as
+  # valid-for-all-time) when the source timestamp was inferred/untrusted, in
+  # which case we record valid_from_confidence: low instead.
+  valid_from = candidate.get("valid_from")
+  valid_from_confidence = candidate.get("valid_from_confidence")
+  if valid_from:
+    validity_block = f"valid_from: {valid_from}\n"
+  elif valid_from_confidence:
+    validity_block = f"valid_from_confidence: {valid_from_confidence}\n"
+  else:
+    validity_block = ""
+
   return (
     f"---\n"
     f"created: {now}\n"
@@ -96,6 +111,7 @@ def format_note(candidate: dict[str, Any]) -> str:
     f"lang: en\n"
     f"contract_version: {CONTRACT_VERSION}\n"
     f"promoted_by: yaams\n"
+    f"{validity_block}"
     f"yaams_candidate_id: {candidate_id}\n"
     f"yaams_entity: {_json.dumps(entity, ensure_ascii=False)}\n"
     f"{item_ids_yaml}\n"
@@ -106,6 +122,55 @@ def format_note(candidate: dict[str, Any]) -> str:
     f"## Sources\n"
     f"- yaams:tier1 (promoted {now[:10]})\n"
   )
+
+
+def _event_time_fields(
+  conn: sqlite3.Connection,
+  source_item_ids_raw: Any,
+) -> tuple[str | None, bool]:
+  """Return (earliest source event-time as ...Z ISO, any_timestamp_inferred).
+
+  Looks up the candidate's source items and reduces their timestamps. Returns
+  (None, False) when there are no items or the lookup fails — degrade open."""
+  ids = _coerce_list(source_item_ids_raw)
+  if not ids:
+    return None, False
+  placeholders = ",".join("?" * len(ids))
+  try:
+    row = conn.execute(
+      f"SELECT min(timestamp) AS vf, max(timestamp_inferred) AS inf "
+      f"FROM items WHERE id IN ({placeholders})",
+      ids,
+    ).fetchone()
+  except Exception:
+    return None, False
+  if not row or row["vf"] is None:
+    return None, False
+  inferred = bool(row["inf"])
+  try:
+    dt = datetime.fromisoformat(row["vf"])
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), inferred
+  except Exception:
+    return None, False
+
+
+def enrich_candidate_event_time(
+  conn: sqlite3.Connection,
+  candidate: dict[str, Any],
+) -> dict[str, Any]:
+  """Populate ``valid_from`` (high confidence) or ``valid_from_confidence: low``
+  (inferred source timestamp) on the candidate dict, in place, for format_note.
+
+  Called on every persisted-note path (commit, TUI accept, TUI edit) so the
+  ledger's bitemporal axis is sourced from event-time, not note-creation time."""
+  vf, inferred = _event_time_fields(conn, candidate.get("source_item_ids"))
+  candidate.pop("valid_from", None)
+  candidate.pop("valid_from_confidence", None)
+  if vf is not None and not inferred:
+    candidate["valid_from"] = vf
+  elif vf is not None and inferred:
+    candidate["valid_from_confidence"] = "low"
+  return candidate
 
 
 def note_filename(candidate: dict[str, Any]) -> str:
@@ -169,6 +234,7 @@ def write_candidate_to_ledger(
       "status": "already_accepted",
     }
 
+  enrich_candidate_event_time(conn, candidate)
   note_content = format_note(candidate)
   dest = write_to_inbox(candidate, inbox_path, content=note_content)
 
@@ -205,6 +271,24 @@ def render_candidate(candidate: dict[str, Any], index: int, total: int) -> str:
     sim = candidate.get("dedup_similarity")
     sim_str = f" (sim {sim:.2f})" if sim is not None else ""
     lines.append(f"  Merge:     merge -> {merge_with}{sim_str}")
+
+  score = candidate.get("admission_score")
+  if score is not None:
+    factors = candidate.get("admission_factors")
+    if isinstance(factors, str):
+      try:
+        factors = _json.loads(factors)
+      except Exception:
+        factors = None
+    if isinstance(factors, dict):
+      breakdown = " · ".join(
+        f"{k} {factors[k]:.2f}"
+        for k in ("novelty", "utility", "confidence", "trust")
+        if k in factors
+      )
+      lines.append(f"  Score:     {score:.2f}  ({breakdown})")
+    else:
+      lines.append(f"  Score:     {score:.2f}")
 
   lines.append("")
   return "\n".join(lines)

@@ -497,6 +497,10 @@ def database_stats(conn: sqlite3.Connection) -> dict:
 
 
 def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
+  # UPDATE-on-exists refreshes derived fields for the SAME logical item only
+  # (id = hash(source:source_id)). It must never overwrite the meaning of a
+  # fact — mutable sources get a new id via revision-in-source_id. This is why
+  # the raw store stays append-only. See AGENTS.md "Raw-store invariants".
   exists = conn.execute("SELECT 1 FROM items WHERE id = ?", (item.id,)).fetchone()
   # Origin-trust class for the item, derived from its ingest source. Stored so
   # trust verdicts (yaams.trust) need not re-derive it per query; legacy rows

@@ -79,6 +79,13 @@ class HybridQueryConfig:
   # Additive RRF credit for FTS-present/vector-absent tier2 factual items.
   # Sized as GAMMA/(rrf_k + fts_rank + 1); sweep [0.5, 0.8, 1.0].
   tier2_factual_coverage_gamma: float = 0.5
+  # Opt-in cross-encoder rerank over the hydrated pool. Off by default so the
+  # fast path (and --no-vector) is byte-for-byte unchanged. When enabled, the
+  # top `rerank_k` hydrated candidates are re-scored by the cross-encoder and
+  # that score replaces the RRF score before the final sort.
+  rerank_enabled: bool = False
+  reranker_model: str = "BAAI/bge-reranker-v2-m3"
+  rerank_k: int = 50
 
 
 @dataclass
@@ -196,6 +203,19 @@ def query(
     # a real match. Skipped when an entity/participant filter is set: there the
     # user asked for a specific thing, and a whole-window dump would be noise.
     hydrated = _browse_window(conn, cfg, cap=hydrate_cap)
+  if cfg.rerank_enabled and hydrated:
+    # Opt-in cross-encoder rerank: re-score the top `rerank_k` candidates and
+    # let the cross-encoder score replace the RRF score. The pool becomes the
+    # result set (the tail beyond rerank_k can't outrank a reranked candidate),
+    # then the existing boost/assoc/sort below apply on top. Imported lazily so
+    # the default path never loads the cross-encoder.
+    from yaams.retrieve.rerank import candidate_text, rerank_pairs
+    pool = hydrated[: cfg.rerank_k]
+    pairs = [(text, candidate_text(r.subject, r.content)) for r in pool]
+    scores = rerank_pairs(text, pairs, cfg.reranker_model)
+    for r, s in zip(pool, scores):
+      r.score = s
+    hydrated = pool
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity
     # without removing anything else from the result set.

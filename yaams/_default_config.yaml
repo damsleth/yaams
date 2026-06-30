@@ -196,6 +196,17 @@ promote:
     enabled: false
     only_for_merge_band: true
     confidence_threshold: 0.7
+  # Multi-factor admission scoring (plan 01). `promote generate` scores each
+  # candidate on novelty/utility/confidence/trust and stores admission_score;
+  # `promote review` ranks best-first and shows the breakdown; `promote commit
+  # --min-score` gates on it. Scoring is advisory — acceptance stays human. The
+  # weights are the A/B surface (report T7); they need not sum to 1.
+  admission:
+    weights:
+      novelty: 0.35       # 1 - embedding similarity to the nearest ledger note
+      utility: 0.25       # overlap with identity + open-loop notes
+      confidence: 0.20    # corroboration: number of source items
+      trust: 0.20         # best provenance class across the source items
 
 entities:
   spacy_model: xx_ent_wiki_sm
@@ -216,6 +227,15 @@ entities:
 
 # Retrieval tuning.
 retrieve:
+  # Optional cross-encoder rerank stage over the hybrid candidate pool. Opt-in:
+  # the default and `--no-vector` paths are untouched. Enable per-query with
+  # `--rerank`, or flip `enabled: true` to make it the default once an A/B sweep
+  # (see .plans/06-rerank-pool-sweep.md) justifies it on this corpus.
+  rerank:
+    enabled: false
+    model: BAAI/bge-reranker-v2-m3   # cross-encoder sibling of the bge-m3 embedder
+    k: 50                            # candidate-pool size fed to the cross-encoder
+
   # Cross-lingual and domain synonym groups for FTS query expansion.
   # Each entry is a list of interchangeable terms; any term in a group expands
   # to the full set at query time.  Entity aliases from the entity dictionary

@@ -96,6 +96,15 @@ parse ── route ── retrieve ── fuse ── answer ── log signals
 
 Full spec: `.plans/yaams_architecture.md`, `.plans/yaams_phase_a_ingest.md`, `.plans/yaams_phase_b_query_grading.md`.
 
+## Raw-store invariants
+
+The raw `items` table is the firehose floor. These are rules, not preferences — retrieval, not storage, is the bottleneck (arXiv 2603.02473), so the raw tier stays dumb and durable. Abstraction belongs in derived layers (consolidations, ledger notes), never here.
+
+- **Append-only, chunk-based.** Never compress, summarize, or rewrite a raw item in place.
+- **Deterministic IDs.** `id = sha256("{source}:{source_id}")` (`yaams/ingest/base.py:hash_id`). The same logical item always hashes to the same id.
+- **Idempotent ingest.** `UNIQUE(source, source_id)` plus the `existing_ids()` pre-check (`yaams/store.py`) drop already-seen items before the expensive embed/tag step. Re-ingesting an unchanged item is a no-op — when a run re-sees only known ids the embedding model isn't even loaded. (Note: this is a pre-check + UPDATE-on-exists, **not** `INSERT OR IGNORE`.)
+- **Mutability is modelled by `source_id`, never by mutation.** A changed upstream item is ingested as a new `(source, source_id)` — the revision is encoded in `source_id` — so history survives as new rows. The UPDATE-on-exists path in `_insert_item` exists only to refresh derived fields for the *same* logical item; it must never overwrite the meaning of a fact.
+
 ## Stack
 
 - Python 3.11+

@@ -110,8 +110,11 @@ def main() -> int:
   ladder = [int(x) for x in args.ladder.split(",") if x.strip()]
   print("baseline (rerank off) ...", flush=True)
   baseline = _run_harness(None, args.split)
-  if baseline.get("status") != "ok":
-    print(f"baseline failed: {baseline.get('error')}", file=sys.stderr)
+  # Accept any baseline that produced metrics. With --no-write the harness still
+  # emits fail:regression / fail:recall by comparing against the stored anchor;
+  # that verdict is irrelevant to a sweep, only a crash (no mrr) is fatal.
+  if baseline.get("mrr") is None:
+    print(f"baseline failed: {baseline.get('error') or baseline.get('status')}", file=sys.stderr)
     return 1
   rows: list[dict] = []
   for k in ladder:

@@ -14,9 +14,15 @@ from typing import Any
 _RERANKER_CACHE: dict[str, Any] = {}
 
 
-def get_reranker(model_name: str, max_length: int = 512) -> Any:
-  """Load and cache a CrossEncoder. First call pays the model load cost."""
-  cache_key = f"{model_name}::{max_length}"
+def get_reranker(model_name: str, max_length: int = 512, device: str | None = None) -> Any:
+  """Load and cache a CrossEncoder. First call pays the model load cost.
+
+  ``device`` is passed through to sentence-transformers. Default None lets it
+  auto-pick, but the config default is ``cpu``: these cross-encoders are
+  unstable on Apple ``mps`` (crash mid-predict) and a ≤100-candidate pool is
+  fast enough on CPU. CUDA users can set ``retrieve.rerank.device: cuda``.
+  """
+  cache_key = f"{model_name}::{max_length}::{device}"
   cached = _RERANKER_CACHE.get(cache_key)
   if cached is not None:
     return cached
@@ -29,7 +35,7 @@ def get_reranker(model_name: str, max_length: int = 512) -> Any:
       "Reinstall with: pip install -e ."
     ) from exc
 
-  model = CrossEncoder(model_name, max_length=max_length)
+  model = CrossEncoder(model_name, max_length=max_length, device=device)
   _RERANKER_CACHE[cache_key] = model
   return model
 
@@ -58,12 +64,13 @@ def rerank_pairs(
   model_name: str,
   batch_size: int = 32,
   max_length: int = 512,
+  device: str | None = None,
 ) -> list[float]:
   """Score each (query, doc) pair. Returns scores in input order."""
   del query  # unused; pairs already contain the query as their first element
   if not pairs:
     return []
-  model = get_reranker(model_name, max_length=max_length)
+  model = get_reranker(model_name, max_length=max_length, device=device)
   scores = model.predict(
     pairs,
     batch_size=batch_size,

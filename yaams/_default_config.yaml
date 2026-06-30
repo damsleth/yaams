@@ -235,6 +235,8 @@ retrieve:
     enabled: false
     model: BAAI/bge-reranker-v2-m3   # cross-encoder sibling of the bge-m3 embedder
     k: 50                            # candidate-pool size fed to the cross-encoder
+    device: cpu                      # cross-encoder crashes on Apple mps; cpu is
+                                     # stable and fast enough for a small pool (set cuda on a GPU box)
 
   # Cross-lingual and domain synonym groups for FTS query expansion.
   # Each entry is a list of interchangeable terms; any term in a group expands

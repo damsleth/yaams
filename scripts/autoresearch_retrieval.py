@@ -170,6 +170,7 @@ def _replay_one(
     synonym_groups: list[list[str]],
     rerank_k: int | None = None,
     reranker_model: str = "BAAI/bge-reranker-v2-m3",
+    reranker_device: str | None = "cpu",
 ) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
@@ -191,6 +192,7 @@ def _replay_one(
         qcfg.rerank_enabled = True
         qcfg.reranker_model = reranker_model
         qcfg.rerank_k = rerank_k
+        qcfg.reranker_device = reranker_device
 
     fts_text = (
         " ".join(parsed.topic_terms) if parsed is not None and parsed.topic_terms else text
@@ -233,6 +235,8 @@ def main() -> int:
                          "(item 06 sweep). Requires the reranker model to be available.")
     ap.add_argument("--reranker-model", default=None,
                     help="Override reranker model (default: config retrieve.rerank.model).")
+    ap.add_argument("--reranker-device", default=None,
+                    help="Reranker device (default: config retrieve.rerank.device or cpu).")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -259,11 +263,13 @@ def main() -> int:
             raise RuntimeError("no gold (hit/correction) labels found for split")
 
         embedder = None if args.no_vector else Embedder(**_embed_config(cfg), quiet=True)
+        _rerank_cfg = (cfg.get("retrieve") or {}).get("rerank") or {}
         rerank_model = (
             args.reranker_model
-            or ((cfg.get("retrieve") or {}).get("rerank") or {}).get("model")
+            or _rerank_cfg.get("model")
             or "BAAI/bge-reranker-v2-m3"
         )
+        rerank_device = args.reranker_device or _rerank_cfg.get("device") or "cpu"
 
         ranks: dict[str, int | None] = {}
         latencies: list[float] = []
@@ -273,6 +279,7 @@ def main() -> int:
             rank, ms = _replay_one(
                 conn, embedder, self_ids, row, synonym_groups,
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
+                reranker_device=rerank_device,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)

@@ -33,7 +33,9 @@
   <div class="sub">Every measured retrieval experiment, in sequence. The line is the
     <b>accepted baseline</b> — it only advances through <b>kept</b> wins and re-measured
     baselines. <b>Killed</b> experiments are plotted as floating <b>×</b> markers off the
-    line. Shaded bands mark gold-set eras; metrics are not comparable across bands.</div>
+    line. Shaded bands mark gold-set eras; metrics are not comparable across bands.
+    Both axes read <b>lower&nbsp;=&nbsp;better</b> — the rate axis is inverted, so
+    every line sinking toward the floor is progress (squint and it's a loss curve).</div>
 </header>
 
 <div class="wrap">
@@ -68,7 +70,10 @@ const PLOT={top:M.t, bot:H-M.b};
 const X0=M.l, X1=W-M.r;
 const N=DATA.length;
 const xOf = i => X0 + (X1-X0) * (N<2?0.5:i/(N-1));
-const yRate = v => PLOT.bot - (PLOT.bot-PLOT.top)*v;          // v in [0,1] -> full height
+// rate axis is INVERTED: 1 at the bottom, 0 at the top, so "better" is always
+// toward the bottom on both axes (low latency / high accuracy) — reads like a
+// loss curve. Labels follow automatically since they're placed via yRate().
+const yRate = v => PLOT.top + (PLOT.bot-PLOT.top)*v;          // v in [0,1] -> full height
 const LMIN=50, LMAX=15000;
 const yLat = v => { const t=(Math.log10(v)-Math.log10(LMIN))/(Math.log10(LMAX)-Math.log10(LMIN));
                     return PLOT.bot - (PLOT.bot-PLOT.top)*Math.max(0,Math.min(1,t)); };
@@ -109,7 +114,7 @@ function gridAxes(){
   });
   // axis titles at the bottom corners — the top row is reserved for era labels
   const b=el('text',{x:X0,y:H-6,'class':'axis'}); b.textContent='← latency ms (log)';
-  const a=el('text',{x:X1,y:H-6,'text-anchor':'end','class':'axis'}); a.textContent='rate 0–1 →';
+  const a=el('text',{x:X1,y:H-6,'text-anchor':'end','class':'axis'}); a.textContent='rate 0–1 (inverted, ↓ better) →';
   svg.appendChild(a); svg.appendChild(b);
 }
 

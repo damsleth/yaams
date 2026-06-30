@@ -61,3 +61,4 @@ tier2_factual_coverage_recovery-keep	hybrid	dev	0.5816	0.6364	0.4539	167.7	0	ok
 thread_coherence_credit-keep	hybrid	dev	0.6144	0.6667	0.4924	145.1	0	ok
 anchor-jun21-wins12	hybrid	dev	0.6144	0.6667	0.4924	171.1	1	fail:regression
 anchor-jun21-wins12	hybrid	dev	0.6144	0.6667	0.4924	168.4	0	ok
+baseline-anchor	hybrid	dev	0.6144	0.6667	0.4924	148.2	0	ok

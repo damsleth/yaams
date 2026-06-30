@@ -168,6 +168,8 @@ def _replay_one(
     self_ids,
     row: dict,
     synonym_groups: list[list[str]],
+    rerank_k: int | None = None,
+    reranker_model: str = "BAAI/bge-reranker-v2-m3",
 ) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
@@ -185,6 +187,10 @@ def _replay_one(
     else:
         qcfg = base
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
+    if rerank_k:
+        qcfg.rerank_enabled = True
+        qcfg.reranker_model = reranker_model
+        qcfg.rerank_k = rerank_k
 
     fts_text = (
         " ".join(parsed.topic_terms) if parsed is not None and parsed.topic_terms else text
@@ -206,6 +212,13 @@ def _replay_one(
     return rank, ms
 
 
+def _mode_label(args) -> str:
+    """Run mode for the summary + regression-anchor key. rerank runs are keyed
+    separately so they never compare against (or overwrite) the baseline anchor."""
+    base = "fts" if args.no_vector else "hybrid"
+    return f"{base}+rerank{args.rerank_k}" if args.rerank_k else base
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-vector", action="store_true", help="FTS-only (floor baseline)")
@@ -215,6 +228,11 @@ def main() -> int:
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="dev",
                     help="Score only this bucket (loop should use 'dev').")
+    ap.add_argument("--rerank-k", type=int, default=None,
+                    help="Enable cross-encoder rerank with this candidate-pool size "
+                         "(item 06 sweep). Requires the reranker model to be available.")
+    ap.add_argument("--reranker-model", default=None,
+                    help="Override reranker model (default: config retrieve.rerank.model).")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -241,13 +259,21 @@ def main() -> int:
             raise RuntimeError("no gold (hit/correction) labels found for split")
 
         embedder = None if args.no_vector else Embedder(**_embed_config(cfg), quiet=True)
+        rerank_model = (
+            args.reranker_model
+            or ((cfg.get("retrieve") or {}).get("rerank") or {}).get("model")
+            or "BAAI/bge-reranker-v2-m3"
+        )
 
         ranks: dict[str, int | None] = {}
         latencies: list[float] = []
         n_corr_total = 0
         corr_recip: list[float] = []
         for row in gold:
-            rank, ms = _replay_one(conn, embedder, self_ids, row, synonym_groups)
+            rank, ms = _replay_one(
+                conn, embedder, self_ids, row, synonym_groups,
+                rerank_k=args.rerank_k, reranker_model=rerank_model,
+            )
             ranks[row["query_id"]] = rank
             latencies.append(ms)
             if row["kind"] == "correction":
@@ -276,7 +302,7 @@ def main() -> int:
             prev = json.loads(_STATE.read_text())
         except Exception:  # noqa: BLE001
             prev = {}
-    prev_key = f"{args.split}:{'fts' if args.no_vector else 'hybrid'}"
+    prev_key = f"{args.split}:{_mode_label(args)}"
     prev_ranks = (prev.get(prev_key) or {}).get("ranks", {})
     regressions = [
         qid for qid, pr in prev_ranks.items()
@@ -305,7 +331,7 @@ def main() -> int:
 
     summary = {
         "tag": args.tag,
-        "mode": "fts" if args.no_vector else "hybrid",
+        "mode": _mode_label(args),
         "split": args.split,
         "fitness": round(fitness, 4),
         "quality": round(quality, 4),

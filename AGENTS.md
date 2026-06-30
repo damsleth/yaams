@@ -109,11 +109,13 @@ The raw `items` table is the firehose floor. These are rules, not preferences �
 
 Any retrieval/promote experiment that *measures* fitness — `quality`, `hit_rate`, `mrr`, `recall@10`, `latency_p95_ms` — **must** be appended to the chart dataset, win or lose. The kills are as valuable as the keeps: the timeline exists so we never re-try a dead idea or mistake noise for a trend. This is a rule, not a courtesy.
 
-- **Dataset:** `docs/experiments/experiments.jsonl`, one JSON object per line, append-only. Schema: `key, date, era, disposition (keep|kill|baseline), status, delta, note, commit, metrics{quality,hit_rate,mrr,recall@10,latency_p95_ms}`. Omit a metric (or set `null`) when it wasn't measured.
-- **`era`** is the gold-set version the run was scored on (e.g. `78 gold (jun21)`). Metrics are **not comparable across eras** — the viewer bands them and never connects a line across a boundary. Tag a new era whenever the gold set changes or the metric definition changes (e.g. partial-credit vs full MRR).
-- **`disposition`** drives the chart: `keep`/`baseline` advance the accepted-baseline line; `kill` is plotted as a floating × off the line. Record the *final* disposition — a win later reverted as a held-out overfit is a `kill`, with the revert noted.
-- **After appending, run `python docs/experiments/build.py`** to re-inline the data into `docs/experiments/index.html` (self-contained, opens via `file://`). View it by opening that file.
-- The autoresearch loop already logs raw rows to `scripts/autoresearch_*.tsv`; those are the upstream ledgers. `docs/experiments/seed.py` shows how the pre-2026-06-30 history was reconstructed from them. New experiments go straight to `experiments.jsonl`.
+- **It is already automatic for the harnesses.** `scripts/autoresearch_retrieval.py` (any recorded run, i.e. not `--no-write`) and `scripts/rerank_sweep.py` both call `docs/experiments/log_experiment.py`, which appends the row and rebuilds the viewer. Dry runs (`--no-write`) are correctly skipped. You usually don't have to do anything.
+- **For a manual / ad-hoc experiment**, record it with the logger — never hand-edit the JSON unless you must:
+  `python docs/experiments/log_experiment.py --key my_idea --disposition kill --quality 0.62 --hit-rate 0.667 --mrr 0.49 --note "why"`
+- **`era`** is the gold-set version the run was scored on; it defaults to the contents of `docs/experiments/CURRENT_ERA`. **Bump that file** whenever the gold set changes or a metric definition changes (e.g. partial-credit vs full MRR) — metrics are *not* comparable across eras and the viewer bands them so no line is drawn across a boundary.
+- **`disposition`** drives the chart: `keep`/`baseline` advance the accepted-baseline line; `kill` is a floating × off it. The harness infers it from the tag (`-keep`/`-win` → keep, `baseline`/`anchor` → baseline, else kill); promote a trial by re-tagging or logging it manually. Record the *final* disposition — a win later reverted as a held-out overfit is a `kill`.
+- **Dataset:** `docs/experiments/experiments.jsonl`, append-only, one object per line. Schema: `key, date, era, disposition, status, delta, note, commit, metrics{quality,hit_rate,mrr,recall@10,latency_p95_ms}`; null any metric not measured. If you do hand-edit it, a git pre-commit hook rebuilds `index.html`.
+- The autoresearch loop also logs raw rows to `scripts/autoresearch_*.tsv` (the upstream ledgers). `docs/experiments/seed.py` shows how the pre-2026-06-30 history was reconstructed from them; new experiments flow through `log_experiment.py`.
 
 This module is self-contained under `docs/experiments/` so it can later be extracted to its own repo (like ux-loop).
 

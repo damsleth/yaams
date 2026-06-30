@@ -121,6 +121,26 @@ def main() -> int:
                  **{m: r.get(m) for m in _METRICS}})
   _print_table(baseline, rows)
   print("\n" + _verdict(baseline.get("mrr", 0.0), rows))
+
+  # Log the sweep onto the experiment timeline. Full rank-1 MRR on a separate
+  # gold set => its own era so the viewer never compares it to campaign MRR.
+  try:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "docs" / "experiments"))
+    import log_experiment
+
+    def _m(d):
+      return {"mrr": d.get("mrr"), "hit_rate": d.get("hit_rate"),
+              "recall@10": d.get("recall@10"), "latency_p95_ms": d.get("retrieval_p95_ms")}
+    era = "rerank sweep (full-MRR)"
+    log_experiment.append("rerank-off (hybrid baseline)", "baseline", _m(baseline),
+                          era=era, note="rerank-off baseline", rebuild=False)
+    for r in rows:
+      log_experiment.append(f"rerank-k{r['rerank_k']}", "kill", _m(r), era=era,
+                            note="cross-encoder rerank regresses; opt-in stays off",
+                            rebuild=False)
+    log_experiment.rebuild_chart()
+  except Exception as exc:  # noqa: BLE001
+    print(f"(experiment chart log skipped: {exc})", file=sys.stderr)
   return 0
 
 

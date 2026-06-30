@@ -384,6 +384,15 @@ def main() -> int:
         prev[prev_key] = {"ranks": ranks, "p95_ms": p95, "recall10": recall10, "tag": args.tag}
         _STATE.write_text(json.dumps(prev))
 
+        # Mirror the recorded run onto the experiment timeline chart. Best-effort:
+        # a logging failure must never break the harness.
+        try:
+            sys.path.insert(0, str(_REPO / "docs" / "experiments"))
+            import log_experiment
+            log_experiment.from_harness(args.tag, status, summary)
+        except Exception as exc:  # noqa: BLE001
+            print(f"(experiment chart log skipped: {exc})", file=sys.stderr)
+
     return 0
 
 

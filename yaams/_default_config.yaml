@@ -247,3 +247,4 @@ retrieve:
     - [vakt, shift]           # NO<->EN: work shift / duty period
     - [øvelse, exercise]      # NO<->EN: training exercise / drill
     - [hytte, cabin]          # NO<->EN: cabin / mountain hut
+    - [isbad, isbading, "ice bath", "ice bathing"]  # NO<->EN: cold-water immersion habit

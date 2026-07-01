@@ -11,6 +11,10 @@
   supersedes the old miss and converts it into a scorable gold. This is the main
   untapped densification lever (~46 re-judgeable misses).
 
+The rejudge lane re-parses each query's text fresh (rather than replaying its
+original cached ``parsed_query``) so a query stuck with a stale/fallback parse
+from its first run gets a real shot at the current entity/shape routing.
+
 Replay each query, show the LLM the ranked results, let it name the correct rank
 (or none), write a hit/correction/miss row. Every written row stamps its
 provenance into ``payload`` (``llm-judge`` / ``llm-rejudge``) so the gold set is
@@ -44,6 +48,7 @@ from yaams.db import open_db
 from yaams.enrich import Embedder
 from yaams.retrieve import HybridQueryConfig, filter_results_by_entities, route
 from yaams.retrieve import query as run_query
+from yaams.retrieve.parse import parse_query
 from yaams.retrieve.synonyms import normalize_synonym_groups
 from yaams.synthesize.llm import llm_adapter_from_config
 from yaams.time import parse_iso_datetime
@@ -165,7 +170,13 @@ def main() -> int:
   counts = {"hit": 0, "correction": 0, "miss": 0, "skip": 0, "rejected": 0}
   for r in rows:
     text = r["text"]
-    parsed = _parsed_from_json(r["parsed_query"], text)
+    if args.rejudge_misses:
+      # Re-parse fresh: a cached parse from a bad run (fallback_used, empty
+      # entities) would otherwise stay stuck forever, no matter how much
+      # retrieval improves. See scripts/autoresearch_ideas.md 2026-07-01.
+      parsed = parse_query(text, llm, conn)
+    else:
+      parsed = _parsed_from_json(r["parsed_query"], text)
     sf = json.loads(r["source_filter"] or "[]") or None
     base = HybridQueryConfig(
       top_k=max(r["top_k"] or 10, args.top_k),

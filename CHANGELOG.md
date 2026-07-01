@@ -10,6 +10,48 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-01
+
+### Added
+
+- **Local Outlook.app (macOS) ingest** — calendar and mail sources read via
+  AppleScript against the desktop client (offline, no Graph). Detects "New
+  Outlook" and explains the empty-result case instead of failing silently.
+- **Agent-generated post-ingest summary** — each ingest run files a
+  human-readable digest of what was pulled.
+- **Autoresearch experiment timeline viewer** (`docs/experiments/`) — a
+  self-contained, dependency-free dual-axis SVG chart of every measured
+  retrieval experiment (kept, killed, re-baselined). Harnesses auto-log each
+  recorded run so dead ideas are not re-tried.
+- **Opt-in cross-encoder reranking** (`retrieve.rerank`, default disabled) over
+  the hydrated candidate pool. The default retrieval path is byte-for-byte
+  unchanged when disabled.
+- **Advisory promote admission control** — `generate` computes and persists an
+  `admission_score` (novelty / utility / confidence / trust) and the review UI
+  shows the breakdown. Gating stays human-confirmed and never silently lossy.
+- **Event-time bitemporal bridge** — promoted notes carry `valid_from` from
+  source event-time when confident, and flag `valid_from_confidence: low`
+  otherwise.
+- **Norwegian↔English concept synonym group** (`isbad`) through
+  `retrieve.synonyms`, plus the documented cross-lingual synonym path.
+
+### Fixed
+
+- Autoresearch rejudge-misses lane now re-parses query text fresh instead of
+  reusing a stale parse.
+- rerank-sweep baseline acceptance keys on MRR presence rather than run status.
+
+### Internal
+
+- ai-memory Track A research verdicts: reranking left **off by default**
+  (pool-size sweep showed a flat curve); min-score admission gating **not
+  adopted** as default (T7 eval; embedding dup-rate metric added to the ledger);
+  raw-store append-only + `revision-in-source_id` invariant documented.
+- Retrieval tuning: gold set densified to 79 labels; fusion/ordering knob space
+  exhausted (0 generalizing wins); Norwegian FTS prefix and diacritics measured
+  with no change shipped (prefix already optimal at ≥5, `remove_diacritics=0`
+  kept).
+
 ## [0.8.0] - 2026-06-21
 
 ### Changed

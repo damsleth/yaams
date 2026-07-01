@@ -66,3 +66,6 @@ anchor-jul01-densified	hybrid	dev	0.5739	0.6567	0.4931	198.2	0	fail:recall
 baseline-check	hybrid	dev	0.6076	0.6567	0.4931	159.6	0	ok
 t5-synonyms	hybrid	dev	0.5717	0.6567	0.4931	216.9	0	ok
 t5-synonyms-rerun	hybrid	dev	0.6015	0.6567	0.4931	230.3	0	ok
+baseline-check-t4	hybrid	dev	0.6076	0.6567	0.4931	156.6	0	ok
+diacritics-0	hybrid	dev	0.5805	0.6567	0.4931	199.1	0	ok
+diacritics-2	hybrid	dev	0.6074	0.6567	0.4931	199.5	0	ok

@@ -63,22 +63,45 @@ def test_fetch_new_items_filters_by_run_start_and_truncates():
     ("z" * 500, new),
   )
   conn.commit()
-  rows = fetch_new_items(conn, run_start, max_items=400, content_chars=300)
+  rows = fetch_new_items(conn, run_start, max_items=400, content_chars=300, now=run_start)
   assert len(rows) == 1
   assert rows[0]["source"] == "teams"
   assert rows[0]["content"].endswith("…")
   assert len(rows[0]["content"]) == 301  # 300 chars + ellipsis
 
 
-def test_build_prompt_groups_by_source():
+def test_fetch_new_items_resolves_sender_and_tags_elapsed():
+  from yaams.synthesize.summarize import build_sender_aliases
+  conn = _items_db()
+  run_start = datetime(2026, 7, 7, 16, 1, tzinfo=UTC)
+  sent = (run_start - timedelta(hours=5, minutes=25)).isoformat()
+  conn.execute(
+    "INSERT INTO items VALUES ('g','imessage',?,'+4794324297','','Airbnb om 1-2 timer',?)",
+    (sent, (run_start + timedelta(seconds=1)).isoformat()),
+  )
+  conn.commit()
+  aliases = build_sender_aliases(
+    {"entities": {"dictionary": [{"canonical": "Nina", "aliases": ["+4794324297"]}]}}
+  )
+  rows = fetch_new_items(
+    conn, run_start, max_items=400, content_chars=300, now=run_start,
+    sender_aliases=aliases,
+  )
+  assert rows[0]["sender"] == "Nina"       # phone -> name
+  assert "~5h ago" in rows[0]["date"]      # elapsed pre-computed, not left to the LLM
+
+
+def test_build_prompt_groups_by_source_and_anchors_time():
   items = [
-    {"source": "teams", "date": "2026-06-28", "sender": "a", "subject": "", "content": "hi"},
-    {"source": "imessage", "date": "2026-06-28", "sender": "b", "subject": "", "content": "yo"},
+    {"source": "teams", "date": "2026-06-28 09:00", "sender": "a", "subject": "", "content": "hi"},
+    {"source": "imessage", "date": "2026-06-28 10:00", "sender": "b", "subject": "", "content": "yo"},
   ]
-  prompt = build_prompt(items, total_new=2)
+  prompt = build_prompt(items, total_new=2, now=datetime(2026, 6, 28, 15, 0, tzinfo=UTC))
   assert "## source: imessage" in prompt
   assert "## source: teams" in prompt
   assert "Group by topic" in prompt
+  assert "It is now" in prompt            # LLM knows the current time
+  assert "relative phrase" in prompt.lower()
 
 
 def test_summarize_ingest_skips_when_no_new_items():

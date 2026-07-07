@@ -40,7 +40,7 @@
 
 <div class="wrap">
   <div class="controls panel" id="legend"></div>
-  <div class="panel"><svg id="chart" viewBox="0 0 1000 430" preserveAspectRatio="xMinYMin meet"></svg></div>
+  <div class="panel"><svg id="chart" viewBox="0 0 1000 454" preserveAspectRatio="xMinYMin meet"></svg></div>
   <div class="legendnote">Markers: ● kept &nbsp; ○ baseline/anchor &nbsp; × killed.
     Hover a point for the full record. The rerank-sweep band uses full rank-1 MRR;
     earlier bands use partial-credit MRR — different metrics, hence the separate band.</div>
@@ -65,7 +65,7 @@ const on = Object.fromEntries(SERIES.map(s=>[s.key, true]));
 // layout — single full-height plot, dual y-axes:
 //   left axis  = latency p95 (ms, log)
 //   right axis = rate metrics (quality/hit_rate/mrr/recall@10), 0..1
-const W=1000, H=430, M={l:52,r:50,t:30,b:46};
+const W=1000, H=454, M={l:52,r:50,t:54,b:46};  // t leaves room for staggered era labels
 const PLOT={top:M.t, bot:H-M.b};
 const X0=M.l, X1=W-M.r;
 const N=DATA.length;
@@ -84,8 +84,13 @@ const svg=document.getElementById('chart');
 function clear(){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
 
 function eraBands(){
-  let i=0;
-  let shade=0;
+  // Narrow adjacent bands (e.g. jun21 / rank-sweep / jul01) used to overprint
+  // their labels on one row. Stagger up a row per collision using measured
+  // widths, so only labels that actually overlap get bumped.
+  const rowH=12, baseY=M.t-12, minY=baseY-2*rowH;  // three rows: baseY, -12, -24
+  const placed=[];  // {x1,x2,y} of labels already positioned
+  const overlaps=(bb,y)=>placed.some(p=>p.y===y && !(bb.x+bb.width < p.x1-4 || bb.x > p.x2+4));
+  let i=0, shade=0;
   while(i<N){
     let j=i; while(j+1<N && DATA[j+1].era===DATA[i].era) j++;
     const xa=xOf(i)-(i>0?(xOf(i)-xOf(i-1))/2:8);
@@ -93,8 +98,13 @@ function eraBands(){
     if(shade%2===0)
       svg.appendChild(el('rect',{x:xa,y:M.t-6,width:xb-xa,height:PLOT.bot-(M.t-6),
         fill:'#000',opacity:0.025}));
-    const lbl=el('text',{x:(xa+xb)/2,y:M.t-12,'text-anchor':'middle','class':'eralabel'});
+    const cx=(xa+xb)/2;
+    const lbl=el('text',{x:cx,y:baseY,'text-anchor':'middle','class':'eralabel'});
     lbl.textContent=DATA[i].era; svg.appendChild(lbl);
+    const bb=lbl.getBBox();  // x/width are y-independent (anchor=middle), measure once
+    let y=baseY;
+    while(overlaps(bb,y) && y>minY){ y-=rowH; lbl.setAttribute('y',y); }
+    placed.push({x1:bb.x,x2:bb.x+bb.width,y});
     i=j+1; shade++;
   }
 }

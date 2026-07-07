@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from yaams.synthesize.llm import llm_adapter_from_config
+from yaams.time import parse_iso_datetime, to_local
 
 # ponytail: hard caps so a big run (e.g. 374 new iMessages) can't blow up the
 # prompt. Tune via summary.max_items / summary.content_chars in config.
@@ -64,19 +65,78 @@ def summary_config(cfg: dict) -> dict:
   }
 
 
+def build_sender_aliases(cfg: dict) -> dict[str, str]:
+  """Map casefolded alias/canonical -> canonical name from the entity dict.
+
+  The dictionary is already loaded into cfg by `load_config`; we reuse it to
+  turn a raw sender (a bare phone number like ``+4794324297``, an email, a
+  Signal service id) into the person's name. Read-time resolution mirrors how
+  aliases already expand at query time — the raw store is left untouched.
+
+  ponytail: exact casefold match. Phone formats vary (+47… vs 94… vs spaced);
+  match works because we control the seeded aliases. Normalize on both sides if
+  numbers start arriving in mixed formats.
+  """
+  dictionary = (cfg.get("entities") or {}).get("dictionary") or []
+  amap: dict[str, str] = {}
+  for entry in dictionary:
+    if not isinstance(entry, dict):
+      continue
+    canonical = str(entry.get("canonical", "")).strip()
+    if not canonical:
+      continue
+    amap.setdefault(canonical.casefold(), canonical)
+    for alias in entry.get("aliases") or []:
+      alias = str(alias).strip()
+      if alias:
+        amap.setdefault(alias.casefold(), canonical)
+  return amap
+
+
+def resolve_sender(sender: str | None, aliases: dict[str, str]) -> str:
+  """Canonical name for a raw sender, or the raw value unchanged if unknown."""
+  if not sender:
+    return sender or ""
+  return aliases.get(sender.strip().casefold(), sender)
+
+
+def humanize_elapsed(seconds: float) -> str:
+  """Coarse 'how long ago' bucket for staleness signalling."""
+  if seconds < 0:
+    return "in the future"
+  minutes = int(seconds // 60)
+  if minutes < 1:
+    return "just now"
+  if minutes < 60:
+    return f"~{minutes}m ago"
+  hours = minutes / 60
+  if hours < 48:
+    return f"~{round(hours)}h ago"
+  return f"~{round(hours / 24)}d ago"
+
+
 def fetch_new_items(
   conn,
   since: datetime,
   *,
   max_items: int,
   content_chars: int,
+  now: datetime,
+  sender_aliases: dict[str, str] | None = None,
 ) -> list[dict]:
   """Rows ingested at or after `since` (this run), newest last, capped.
 
   `ingested_at` is stamped when the Item is created during extraction, so
   `>= run_start` selects exactly this run's new rows. Content is truncated and
   newlines flattened to keep the prompt bounded.
+
+  `sender` is resolved through the entity dictionary (phone/email -> name) and
+  each item carries a pre-computed local time + elapsed ("~5h ago") so the LLM
+  reports the anchor instead of doing date arithmetic (which it botches) — this
+  is what keeps relative phrases in the content ("om 1-2 timer") from being
+  echoed as if still true hours after the message was sent.
   """
+  aliases = sender_aliases or {}
   rows = conn.execute(
     """
     SELECT source, timestamp, sender, subject, content
@@ -92,17 +152,28 @@ def fetch_new_items(
     content = (r["content"] or "").replace("\n", " ").strip()
     if len(content) > content_chars:
       content = content[:content_chars] + "…"
+    ts_raw = r["timestamp"] or ""
+    when = ts_raw[:10]
+    if ts_raw:
+      try:
+        ts = parse_iso_datetime(ts_raw)
+        when = (
+          f"{to_local(ts).strftime('%Y-%m-%d %H:%M')} "
+          f"({humanize_elapsed((now - ts).total_seconds())})"
+        )
+      except ValueError:
+        pass
     out.append({
       "source": r["source"],
-      "date": (r["timestamp"] or "")[:10],
-      "sender": r["sender"],
+      "date": when,
+      "sender": resolve_sender(r["sender"], aliases),
       "subject": (r["subject"] or "").strip(),
       "content": content,
     })
   return out
 
 
-def build_prompt(items: list[dict], *, total_new: int) -> str:
+def build_prompt(items: list[dict], *, total_new: int, now: datetime) -> str:
   """A holistic, topic-grouped digest prompt — cross-source, not per-source."""
   by_source: dict[str, list[dict]] = {}
   for it in items:
@@ -121,17 +192,29 @@ def build_prompt(items: list[dict], *, total_new: int) -> str:
     if total_new > shown else ""
   )
 
+  now_local = to_local(now).strftime("%Y-%m-%d %H:%M %Z")
   return (
     "You are summarizing a batch of personal/work data just ingested into a "
     "memory system. Write a tight, skimmable briefing for the owner (a "
     "Norwegian consultant) of what's new since last ingest.\n\n"
+    f"It is now {now_local}. Each item is tagged with when it was sent and how "
+    "long ago (e.g. '~5h ago') — this is often HOURS after the fact, because "
+    "ingest runs on a delay.\n\n"
     "Rules:\n"
     "- Group by topic/theme across sources, NOT by source.\n"
-    "- Lead with anything urgent or security-sensitive (leaked secrets, "
-    "deadlines, money, access issues) under a clearly flagged section.\n"
+    "- Anchor time to reality. A relative phrase INSIDE a message ('om 1-2 "
+    "timer', 'later today', 'i morgen') is relative to when that message was "
+    "SENT, not now. Combine it with the item's 'ago' tag and say what it means "
+    "as of now — e.g. a message from ~5h ago saying guests arrive 'om 1-2 "
+    "timer' means they likely arrived ~3-4h ago, so frame it as done, not "
+    "pending. Flag anything whose deadline has probably already passed.\n"
+    "- Lead with what still needs action NOW under a clearly flagged section; "
+    "don't put already-elapsed events there.\n"
+    "- Also surface leaked secrets, credentials, money, or access issues if any.\n"
     "- Use short markdown sections with bold topic headers and terse bullets.\n"
-    "- Norwegian content stays in Norwegian; don't translate names.\n"
-    "- Be concrete (names, dates, projects). Skip filler. No preamble.\n"
+    "- Norwegian content stays in Norwegian; don't translate names. Senders are "
+    "already resolved to names where known; use them as given.\n"
+    "- Be concrete (names, times, projects). Skip filler. No preamble.\n"
     f"\nHere are the {shown} new items:\n"
     + "\n".join(lines)
     + cap_note
@@ -163,6 +246,8 @@ def summarize_ingest(
     run_started_at,
     max_items=sc["max_items"],
     content_chars=sc["content_chars"],
+    now=run_started_at,
+    sender_aliases=build_sender_aliases(cfg),
   )
   if not items:
     return SummaryResult(text=None, note="no new items found to summarize")
@@ -175,7 +260,7 @@ def summarize_ingest(
     "command": sc["command"],
     "safe_mode": sc["safe_mode"],
   }})
-  prompt = build_prompt(items, total_new=total_new)
+  prompt = build_prompt(items, total_new=total_new, now=run_started_at)
   try:
     resp = adapter.complete(prompt, max_tokens=1500, temperature=0.0)
   except FileNotFoundError:

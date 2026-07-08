@@ -708,7 +708,7 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
         profile,
         command=["owa-piggy", "--profile", profile, "--audience", "ic3"],
       )
-      client = ChatsvcClient(token_source)
+      client = ChatsvcClient(token_source, max_retries=int(cfg.get("max_retries", 5)))
       region = (cfg.get("chatsvc_region") or {}).get(profile, "emea")
       return ChatsvcAdapter(
         profile=profile,

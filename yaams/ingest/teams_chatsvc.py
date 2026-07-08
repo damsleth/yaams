@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -43,6 +46,8 @@ from yaams.ingest.teams import (
   clean_teams_body,
 )
 from yaams.time import ensure_utc
+
+logger = logging.getLogger(__name__)
 
 CHATSVC_HOST = "https://teams.microsoft.com"
 DEFAULT_VIEW = "msnp24Equivalent|supportsMessageProperties"
@@ -235,18 +240,51 @@ def message_to_item(
 
 
 class ChatsvcClient:
-  def __init__(self, token_source: OwaPiggyTokenSource, timeout: float = 30.0):
+  def __init__(
+    self,
+    token_source: OwaPiggyTokenSource,
+    timeout: float = 30.0,
+    max_retries: int = 5,
+  ):
     self.tokens = token_source
     self.timeout = timeout
+    self.max_retries = max_retries
 
   def get(self, url: str) -> dict:
-    req = urllib.request.Request(
-      url,
-      headers={"Authorization": f"Bearer {self.tokens.get_token()}"},
-    )
-    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-      import json
-      return json.loads(resp.read())
+    """GET a chatsvc URL with retry/backoff on transient failures.
+
+    Retries 429 (honoring Retry-After), 5xx, and network errors with
+    exponential backoff. 4xx other than 429 (e.g. 404 on a rotated
+    thread, 401 on a bad token) raise immediately - retrying can't help
+    and the caller's per-chat guard skips them.
+    """
+    last_error: Exception | None = None
+    for attempt in range(self.max_retries):
+      req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {self.tokens.get_token()}"},
+      )
+      try:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+          return json.loads(resp.read())
+      except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+          retry_after = exc.headers.get("Retry-After") if exc.headers else None
+          time.sleep(int(retry_after) if retry_after and retry_after.isdigit() else 10)
+          last_error = exc
+          continue
+        if exc.code in (500, 502, 503, 504):
+          time.sleep(min(2 ** attempt, 30))
+          last_error = exc
+          continue
+        raise
+      except (urllib.error.URLError, TimeoutError) as exc:
+        time.sleep(min(2 ** attempt, 30))
+        last_error = exc
+        continue
+    if last_error:
+      raise last_error
+    raise RuntimeError(f"chatsvc request failed after {self.max_retries} retries: {url}")
 
   def paginate(self, url: str) -> Iterator[dict]:
     """Walk `backwardLink` until exhausted, yielding the list payload.
@@ -293,7 +331,11 @@ class ChatsvcAdapter:
       # real chats, not chats themselves - ingesting them duplicates the
       # underlying messages and bloats the entity graph with self-mentions.
       tt = (chat.get("threadProperties") or {}).get("threadType", "").lower()
-      if tt.startswith("streamof"):
+      # streamof* are aggregator pointers (see below); `space` threads are
+      # team-channel spaces (@thread.tacv2) that leak into ME/conversations on
+      # some tenants (e.g. SoftwareOne). Their /messages endpoint 404s here and
+      # they're already ingested via the teams_channels source, so skip them.
+      if tt.startswith("streamof") or tt == "space":
         continue
       last_msg = chat.get("lastMessage") or {}
       last_ts_raw = last_msg.get("originalarrivaltime") or last_msg.get("composetime")
@@ -303,7 +345,22 @@ class ChatsvcAdapter:
             continue
         except ValueError:
           pass  # bad timestamp - fall through and iterate, the per-message check will filter
-      yield from self._iter_chat_messages(chat, cutoff, self_mri, self_name)
+      # One unreachable chat must not sink the whole source. A chat can 404
+      # (deleted/rotated thread, a `space` type we failed to filter) or 5xx
+      # mid-run; log it and move on. Items already yielded for this chat are
+      # idempotent by hash id, so a partial fetch is safe.
+      try:
+        yield from self._iter_chat_messages(chat, cutoff, self_mri, self_name)
+      except urllib.error.HTTPError as exc:
+        logger.warning(
+          "chatsvc[%s]: HTTP %d on chat %s - skipping", self.profile, exc.code,
+          chat.get("id", "?"),
+        )
+      except (urllib.error.URLError, TimeoutError) as exc:
+        logger.warning(
+          "chatsvc[%s]: network error on chat %s: %s - skipping", self.profile,
+          chat.get("id", "?"), exc,
+        )
 
   def _iter_conversations(self) -> Iterator[dict]:
     url = (

@@ -10,6 +10,8 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-08
+
 ### Added
 - Retrieval flywheel — precision-with-use from real agent traffic
   (`.plans/retrieval-flywheel.md`). The MCP tools `yaams_query`/`yaams_answer`

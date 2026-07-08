@@ -215,6 +215,9 @@ def build_prompt(items: list[dict], *, total_new: int, now: datetime) -> str:
     "- Norwegian content stays in Norwegian; don't translate names. Senders are "
     "already resolved to names where known; use them as given.\n"
     "- Be concrete (names, times, projects). Skip filler. No preamble.\n"
+    "- This is a one-way briefing, not a chat. Do NOT end with a question or "
+    "offer to help (no 'Vil du at jeg...', 'Want me to...'). Stop after the last "
+    "substantive bullet.\n"
     f"\nHere are the {shown} new items:\n"
     + "\n".join(lines)
     + cap_note

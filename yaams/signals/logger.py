@@ -187,37 +187,86 @@ def feedback_counts(
 
 
 def result_boost_counts(
-  conn: sqlite3.Connection, result_ids: Sequence[str]
-) -> dict[str, tuple[int, int]]:
-  """Return ``{result_id: (citations, corrections)}`` for *result_ids*.
+  conn: sqlite3.Connection,
+  result_ids: Sequence[str],
+  *,
+  exclude_query_id: str | None = None,
+) -> dict[str, int]:
+  """Return ``{result_id: positive_signal_count}`` for *result_ids*.
 
-  Citations are the *automatic positive* signal: how many logged queries cited
-  this result (``query_results.cited = 1``, set from an answer's
-  ``cited_result_ids``). Corrections are the *human negative* signal:
-  ``query_feedback`` rows with kind ``correction`` naming this result. Both feed
-  the capped feedback boost in ``retrieve.hybrid.query``. Ids with no signal are
-  ``(0, 0)``.
+  A positive signal means the document *proved useful*, from two sources that
+  both name a genuinely-good doc:
+
+  * an answer citation — ``query_results.cited = 1`` (set from an answer's
+    ``cited_result_ids``); and
+  * a ``correction`` verdict — ``query_feedback.kind = 'correction'`` names the
+    result the human marked as the *right* answer that was mis-ranked (see
+    ``cli/query.py``), so it is positive for that doc, not negative.
+
+  There is deliberately no per-doc negative here: ``miss``/``noise`` are
+  query-level (no ``result_id``), and treating a correction as a demotion is the
+  exact inversion this replaced. The capped boost in ``retrieve.hybrid.query``
+  is the only runaway guard. An explicit per-doc negative is a P3 item
+  (.plans/retrieval-flywheel.md).
+
+  ``exclude_query_id`` drops one query's own signals (leave-one-out): an eval
+  replay must not boost a doc using the very query it is scored on, and a live
+  query has no self-feedback yet either — so excluding it makes eval match
+  production. Ids with no signal are ``0``.
   """
-  counts: dict[str, tuple[int, int]] = {rid: (0, 0) for rid in result_ids}
+  counts: dict[str, int] = {rid: 0 for rid in result_ids}
   if not counts:
     return counts
   placeholders = ",".join("?" for _ in counts)
   ids = tuple(counts)
-  for rid, n in conn.execute(
+  ex_clause = "" if exclude_query_id is None else " AND query_id != ?"
+  ex_param = () if exclude_query_id is None else (exclude_query_id,)
+  for sql in (
     f"SELECT result_id, COUNT(*) FROM query_results "
-    f"WHERE cited = 1 AND result_id IN ({placeholders}) GROUP BY result_id",
-    ids,
-  ).fetchall():
-    cites, corrs = counts.get(rid, (0, 0))
-    counts[rid] = (cites + int(n), corrs)
-  for rid, n in conn.execute(
+    f"WHERE cited = 1 AND result_id IN ({placeholders}){ex_clause} GROUP BY result_id",
     f"SELECT result_id, COUNT(*) FROM query_feedback "
-    f"WHERE kind = 'correction' AND result_id IN ({placeholders}) GROUP BY result_id",
-    ids,
-  ).fetchall():
-    cites, corrs = counts.get(rid, (0, 0))
-    counts[rid] = (cites, corrs + int(n))
+    f"WHERE kind = 'correction' AND result_id IN ({placeholders}){ex_clause} "
+    f"GROUP BY result_id",
+  ):
+    for rid, n in conn.execute(sql, ids + ex_param).fetchall():
+      counts[rid] = counts.get(rid, 0) + int(n)
   return counts
+
+
+def coverage_gaps(
+  conn: sqlite3.Connection,
+  *,
+  limit: int = 20,
+  provenance: str | None = None,
+) -> list[dict]:
+  """Return the ingest backlog: questions YAAMS answered *poorly*, most frequent
+  first. Poor = low/unknown confidence, zero results, or a non-empty ``gaps``
+  list. Grouped by normalized (lowercased) query text so a recurring
+  unanswerable question rises to the top. ``provenance`` restricts the source
+  (pass ``"mcp"`` for real agent traffic). Read-only.
+  """
+  where = [
+    "(confidence IN ('low', 'unknown') OR results_returned = 0"
+    " OR (gaps IS NOT NULL AND gaps NOT IN ('', '[]')))"
+  ]
+  params: list = []
+  if provenance:
+    where.append("provenance = ?")
+    params.append(provenance)
+  params.append(limit)
+  rows = conn.execute(
+    f"""
+    SELECT LOWER(text) AS query, COUNT(*) AS n, MAX(ts) AS last_ts,
+           SUM(CASE WHEN results_returned = 0 THEN 1 ELSE 0 END) AS zero_results
+    FROM queries
+    WHERE {" AND ".join(where)}
+    GROUP BY LOWER(text)
+    ORDER BY n DESC, last_ts DESC
+    LIMIT ?
+    """,
+    params,
+  ).fetchall()
+  return [dict(row) for row in rows]
 
 
 def recent_queries(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:

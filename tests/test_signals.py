@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from yaams.retrieve import HybridResult, ScoreComponents
 from yaams.schema import init_schema
 from yaams.signals import (
+  coverage_gaps,
   log_feedback,
   log_query,
   new_query_id,
@@ -162,9 +163,10 @@ def test_log_query_default_parser_fallback_is_zero():
   assert row["parser_fallback"] == 0
 
 
-def test_result_boost_counts_citations_and_corrections():
+def test_result_boost_counts_positives():
   conn = _open()
-  # Two queries both cite ra; rb cited once; rc corrected once.
+  # Two queries both cite ra; rb cited once; rc named by a correction as the
+  # right (mis-ranked) answer -> positive, not negative.
   log_query(conn, query_id="q1", text="x", top_k=3, source_filter=None, since=None,
             until=None, results=[_result("ra"), _result("rb"), _result("rc")],
             cited_result_ids=["ra", "rb"])
@@ -174,15 +176,55 @@ def test_result_boost_counts_citations_and_corrections():
   log_feedback(conn, query_id="q2", kind="correction", result_id="rc")
 
   counts = result_boost_counts(conn, ["ra", "rb", "rc", "rd"])
-  assert counts["ra"] == (2, 0)  # cited by q1 and q2
-  assert counts["rb"] == (1, 0)
-  assert counts["rc"] == (0, 1)  # never cited, corrected once
-  assert counts["rd"] == (0, 0)  # unseen id
+  assert counts["ra"] == 2  # cited by q1 and q2
+  assert counts["rb"] == 1
+  assert counts["rc"] == 1  # correction names it as correct -> positive
+  assert counts["rd"] == 0  # unseen id
+
+
+def test_result_boost_counts_leave_one_out():
+  conn = _open()
+  log_query(conn, query_id="q1", text="x", top_k=2, source_filter=None, since=None,
+            until=None, results=[_result("ra"), _result("rc")],
+            cited_result_ids=["ra"])
+  log_query(conn, query_id="q2", text="y", top_k=2, source_filter=None, since=None,
+            until=None, results=[_result("ra"), _result("rc")],
+            cited_result_ids=["ra"])
+  log_feedback(conn, query_id="q2", kind="correction", result_id="rc")
+
+  # Excluding q2 drops ra's q2 citation and rc's correction entirely.
+  loo = result_boost_counts(conn, ["ra", "rc"], exclude_query_id="q2")
+  assert loo["ra"] == 1
+  assert loo["rc"] == 0
 
 
 def test_result_boost_counts_empty():
   conn = _open()
   assert result_boost_counts(conn, []) == {}
+
+
+def test_coverage_gaps_ranks_poor_answers_and_filters_provenance():
+  conn = _open()
+  # Good answer: high confidence, has results -> excluded from the backlog.
+  log_query(conn, query_id="g1", text="good", top_k=5, source_filter=None,
+            since=None, until=None, results=[_result("ra")], confidence="high")
+  # Same low-confidence question asked twice -> grouped, n=2, ranks first.
+  for i in range(2):
+    log_query(conn, query_id=f"low{i}", text="Fuzzy Thing", top_k=5,
+              source_filter=None, since=None, until=None, results=[_result("ra")],
+              confidence="low", provenance="mcp")
+  # Zero-result question.
+  log_query(conn, query_id="z1", text="nothing here", top_k=5, source_filter=None,
+            since=None, until=None, results=[], provenance="mcp")
+
+  gaps = coverage_gaps(conn)
+  assert gaps[0]["query"] == "fuzzy thing"  # lowercased + most frequent first
+  assert gaps[0]["n"] == 2
+  assert "good" not in [g["query"] for g in gaps]
+  assert any(g["query"] == "nothing here" and g["zero_results"] == 1 for g in gaps)
+
+  mcp_only = coverage_gaps(conn, provenance="mcp")
+  assert {g["query"] for g in mcp_only} == {"fuzzy thing", "nothing here"}
 
 
 def test_recent_queries_returns_most_recent_first():

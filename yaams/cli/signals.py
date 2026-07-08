@@ -17,7 +17,13 @@ from yaams.conventions import (
 )
 from yaams.db import open_db
 from yaams.schema import init_schema
-from yaams.signals import flush_session, log_feedback, noise_cascade, recent_queries
+from yaams.signals import (
+  coverage_gaps,
+  flush_session,
+  log_feedback,
+  noise_cascade,
+  recent_queries,
+)
 
 
 @cli.command("feedback")
@@ -141,3 +147,43 @@ def signals_cmd(config_path: str, limit: int, as_json: bool) -> None:
       f"  {row['ts']}  {row['id']}  results={row['results_returned']:>2}  "
       f"latency={latency_s:>7}  backend={backend}  text={row['text'][:80]!r}"
     )
+
+
+@cli.command("gaps")
+@config_option
+@click.option("--limit", default=20, show_default=True, type=int)
+@click.option("--provenance", default=None, help="Filter by provenance (e.g. 'mcp' for agent traffic).")
+@click.option("--json", "as_json", is_flag=True, help="Raw backlog document on stdout.")
+def gaps_cmd(config_path: str, limit: int, provenance: str | None, as_json: bool) -> None:
+  """Coverage backlog: questions YAAMS answered poorly, most frequent first.
+
+  Poor = low/unknown confidence, zero results, or reported gaps. This is the
+  ingest to-do list, ranked by real usage — pass ``--provenance mcp`` for what
+  agents actually ask.
+  """
+  try:
+    cfg = load_config(config_path)
+    conn = open_db(get_db_path(cfg), readonly=True)
+  except Exception as exc:
+    if as_json:
+      emit_data_error(data_error(
+        command="gaps", code="db_open_failed", message=str(exc),
+        hint="Run: yaams init-db",
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
+  try:
+    rows = coverage_gaps(conn, limit=limit, provenance=provenance)
+  finally:
+    conn.close()
+  if as_json:
+    import json as _json
+    click.echo(_json.dumps({"gaps": rows, "limit": limit}, ensure_ascii=False, default=str))
+    return
+  if not rows:
+    click.echo("No coverage gaps logged yet.")
+    return
+  click.echo(f"Coverage backlog (top {len(rows)}):")
+  for row in rows:
+    zero = f"  ({row['zero_results']}× 0-result)" if row["zero_results"] else ""
+    click.echo(f"  {row['n']:>3}×  {row['query'][:90]!r}{zero}")

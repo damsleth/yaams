@@ -402,6 +402,7 @@ def build_review_queue(
   *,
   since: str | None = None,
   source: str | None = None,
+  provenance: str | None = None,
   limit: int | None = None,
   unjudged_only: bool = True,
   deferred_only: bool = False,
@@ -414,6 +415,8 @@ def build_review_queue(
     since: ISO timestamp; only include queries logged at/after this.
     source: Restrict to queries whose ``source_filter`` JSON contains this
       source. Substring match — coarse but enough for v1.
+    provenance: Restrict to queries logged with this provenance (e.g. ``"mcp"``
+      to triage real agent traffic rather than CLI/test rows).
     limit: Cap the queue length after sorting.
     unjudged_only: Skip queries that already have any ``query_feedback`` row.
     deferred_only: Surface only queries whose last feedback kind is
@@ -437,6 +440,9 @@ def build_review_queue(
   if source:
     where.append("q.source_filter LIKE ?")
     params.append(f"%{source}%")
+  if provenance:
+    where.append("q.provenance = ?")
+    params.append(provenance)
   if deferred_only:
     where.append(
       "EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind = 'deferred')"

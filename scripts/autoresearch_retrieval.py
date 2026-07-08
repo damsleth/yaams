@@ -171,6 +171,7 @@ def _replay_one(
     rerank_k: int | None = None,
     reranker_model: str = "BAAI/bge-reranker-v2-m3",
     reranker_device: str | None = "cpu",
+    feedback_boost: bool = False,
 ) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
@@ -188,6 +189,11 @@ def _replay_one(
     else:
         qcfg = base
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
+    if feedback_boost:
+        qcfg.feedback_boost = True
+        # Leave-one-out: this gold query must not boost its own gold doc via its
+        # own citation/correction — a live query has no self-feedback yet either.
+        qcfg.feedback_boost_exclude_query_id = row["query_id"]
     if rerank_k:
         qcfg.rerank_enabled = True
         qcfg.reranker_model = reranker_model
@@ -218,7 +224,11 @@ def _mode_label(args) -> str:
     """Run mode for the summary + regression-anchor key. rerank runs are keyed
     separately so they never compare against (or overwrite) the baseline anchor."""
     base = "fts" if args.no_vector else "hybrid"
-    return f"{base}+rerank{args.rerank_k}" if args.rerank_k else base
+    if args.rerank_k:
+        base = f"{base}+rerank{args.rerank_k}"
+    if getattr(args, "feedback_boost", False):
+        base = f"{base}+fb"
+    return base
 
 
 def main() -> int:
@@ -237,6 +247,9 @@ def main() -> int:
                     help="Override reranker model (default: config retrieve.rerank.model).")
     ap.add_argument("--reranker-device", default=None,
                     help="Reranker device (default: config retrieve.rerank.device or cpu).")
+    ap.add_argument("--feedback-boost", action="store_true", dest="feedback_boost",
+                    help="Enable the precision-with-use feedback boost (P2), with "
+                         "leave-one-out per gold query. Keyed separately in results.tsv.")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -279,7 +292,7 @@ def main() -> int:
             rank, ms = _replay_one(
                 conn, embedder, self_ids, row, synonym_groups,
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
-                reranker_device=rerank_device,
+                reranker_device=rerank_device, feedback_boost=args.feedback_boost,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)

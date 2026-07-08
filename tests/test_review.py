@@ -187,6 +187,16 @@ def test_queue_priority_orders_low_confidence_above_high():
   assert queue[1].query_id == "q_high"
 
 
+def test_queue_provenance_filter():
+  conn = _open()
+  log_query(conn, query_id="q_cli", text="cli query", top_k=5, source_filter=None,
+            since=None, until=None, results=[], provenance="cli")
+  log_query(conn, query_id="q_mcp", text="agent query", top_k=5, source_filter=None,
+            since=None, until=None, results=[], provenance="mcp")
+  ids = [item.query_id for item in build_review_queue(conn, provenance="mcp")]
+  assert ids == ["q_mcp"]
+
+
 def test_queue_attaches_ranked_results_with_snippets():
   conn = _open()
   _log(conn, "q_a", result_ids=["r1", "r2"], cited=["r1"])

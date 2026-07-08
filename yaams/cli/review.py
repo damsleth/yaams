@@ -34,6 +34,7 @@ from yaams.signals import (
 @config_option
 @click.option("--since", default=None, help="Only include queries logged at/after this ISO timestamp.")
 @click.option("--source", default=None, help="Restrict to queries with this source in source_filter.")
+@click.option("--provenance", default=None, help="Restrict to queries with this provenance (e.g. 'mcp' for agent traffic).")
 @click.option("--limit", default=50, show_default=True, type=int, help="Cap queue length.")
 @click.option("--unjudged-only/--all", default=True, show_default=True, help="Skip queries that already have feedback.")
 @click.option("--deferred", "deferred_only", is_flag=True, default=False, help="Surface only deferred queries (marked ? in the TUI).")
@@ -45,6 +46,7 @@ def review_cmd(
   config_path: str,
   since: str | None,
   source: str | None,
+  provenance: str | None,
   limit: int,
   unjudged_only: bool,
   deferred_only: bool,
@@ -97,6 +99,7 @@ def review_cmd(
       conn,
       since=since,
       source=source,
+      provenance=provenance,
       limit=limit,
       unjudged_only=unjudged_only,
       deferred_only=deferred_only,

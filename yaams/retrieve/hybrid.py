@@ -103,6 +103,10 @@ class HybridQueryConfig:
   # query logs accumulate and the frozen-fixture eval gate passes. Naturally a
   # no-op until signals exist (factor = 1.0). See .plans/retrieval-flywheel.md.
   feedback_boost: bool = False
+  # Leave-one-out: drop this query's own citations/corrections from the boost.
+  # Set by the eval harness so a replayed gold query can't boost itself (a live
+  # query has no self-feedback yet either). None in normal use.
+  feedback_boost_exclude_query_id: str | None = None
 
 
 @dataclass
@@ -241,19 +245,19 @@ def query(
       if r.id in (item_b if r.kind == "item" else cons_b):
         r.score *= cfg.boost_factor
   if cfg.feedback_boost and hydrated:
-    # Precision-with-use: lift results that real queries have cited, demote
-    # ones humans have corrected. Capped so citation feedback can't runaway.
+    # Precision-with-use: lift results that real usage proved good — cited by an
+    # answer, or named by a human correction as the right (mis-ranked) doc. Both
+    # are positive. Capped so citation feedback can't runaway (no per-doc
+    # negative yet — that's a P3 item).
     from yaams.signals import result_boost_counts
-    counts = result_boost_counts(conn, [r.id for r in hydrated])
+    counts = result_boost_counts(
+      conn, [r.id for r in hydrated],
+      exclude_query_id=cfg.feedback_boost_exclude_query_id,
+    )
     for r in hydrated:
-      cites, corrs = counts.get(r.id, (0, 0))
-      if cites or corrs:
-        factor = (
-          1.0
-          + min(FEEDBACK_BOOST_PER * cites, FEEDBACK_BOOST_CAP)
-          - min(FEEDBACK_BOOST_PER * corrs, FEEDBACK_BOOST_CAP)
-        )
-        r.score *= max(factor, 0.1)  # corrections demote but never zero out
+      pos = counts.get(r.id, 0)
+      if pos:
+        r.score *= 1.0 + min(FEEDBACK_BOOST_PER * pos, FEEDBACK_BOOST_CAP)
   if cfg.assoc_weights:
     item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
     for r in hydrated:

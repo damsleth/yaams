@@ -14,11 +14,17 @@ surface; pin to a specific version if you need stability.
 - Retrieval flywheel — precision-with-use from real agent traffic
   (`.plans/retrieval-flywheel.md`). The MCP tools `yaams_query`/`yaams_answer`
   now log every query with `provenance="mcp"` and return a `query_id`, so agent
-  traffic (the 95% of real retrieval) becomes signal: answer citations are
-  automatic positive labels and low-confidence/`gaps` answers form a coverage
-  backlog. New opt-in `retrieve.feedback_boost` config flag (default off) nudges
-  a result's rank by capped citation (+) and correction (−) counts; enable only
-  after logged traffic accumulates and the frozen-fixture eval passes.
+  traffic (the 95% of real retrieval) becomes signal: answer citations and human
+  corrections are positive labels, and low-confidence/`gaps` answers form a
+  coverage backlog. New opt-in `retrieve.feedback_boost` config flag (default
+  off) lifts a result's rank by a capped count of the positive signals naming
+  it; enable only after logged traffic accumulates and the frozen-fixture eval
+  (`autoresearch_retrieval.py --feedback-boost`, leave-one-out) shows a gain.
+- `yaams gaps [--provenance mcp]` — coverage backlog: questions answered poorly
+  (low confidence, zero results, or reported gaps), grouped and ranked by
+  frequency. The ingest to-do list from real usage.
+- `yaams review --provenance mcp` — triage real agent queries in the
+  scan-and-judge feedback TUI, not CLI/test rows.
 
 ## [0.9.0] - 2026-07-01
 

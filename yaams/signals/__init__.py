@@ -1,4 +1,5 @@
 from yaams.signals.logger import (
+  coverage_gaps,
   detect_provenance,
   log_feedback,
   log_query,
@@ -26,6 +27,7 @@ __all__ = [
   "ReviewItem",
   "ReviewResult",
   "build_review_queue",
+  "coverage_gaps",
   "dashboard_data",
   "default_verdict",
   "detect_provenance",

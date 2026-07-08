@@ -239,7 +239,7 @@ def test_feedback_boost_promotes_cited_result():
   assert unboosted[0].id == baseline[0].id
 
 
-def test_feedback_boost_correction_demotes_result():
+def test_feedback_boost_correction_promotes_corrected_result():
   from yaams.signals import log_feedback, log_query
 
   conn = _open_db()
@@ -249,21 +249,55 @@ def test_feedback_boost_correction_demotes_result():
 
   base = HybridQueryConfig(include_consolidations=False)
   baseline = query(conn, "omega distinctive shared", config=base)
-  leader = baseline[0]  # currently ranked first
+  underdog = baseline[-1]  # ranked last on FTS alone
 
-  # Humans corrected the leader six times -> capped demotion flips it below.
+  # A correction names the underdog as the RIGHT (mis-ranked) answer -> positive
+  # signal that must lift it, not demote it (the sign bug this guards against).
   for i in range(6):
     log_query(
       conn, query_id=f"q_corr_{i}", text="omega distinctive shared", top_k=2,
       source_filter=None, since=None, until=None, results=baseline,
     )
-    log_feedback(conn, query_id=f"q_corr_{i}", kind="correction", result_id=leader.id)
+    log_feedback(conn, query_id=f"q_corr_{i}", kind="correction", result_id=underdog.id)
 
-  demoted = query(
+  promoted = query(
     conn, "omega distinctive shared",
     config=HybridQueryConfig(include_consolidations=False, feedback_boost=True),
   )
-  assert demoted[0].id != leader.id
+  assert promoted[0].id == underdog.id
+
+
+def test_feedback_boost_leave_one_out_suppresses_self_signal():
+  from yaams.signals import log_query
+
+  conn = _open_db()
+  a = _make_item(thread_id="t-a", content="kappa distinctive shared token", msg_id="a-1")
+  b = _make_item(thread_id="t-b", content="kappa distinctive shared token", msg_id="b-1")
+  store_items(conn, [a, b], [b"\x00" * 16] * 2, [[]] * 2)
+
+  base = HybridQueryConfig(include_consolidations=False)
+  baseline = query(conn, "kappa distinctive shared", config=base)
+  underdog = baseline[-1]
+
+  # Exactly two citations: enough to flip the underdog to rank 1 (each +3%,
+  # clearing the RRF rank-0/rank-1 gap). One comes from q_self.
+  for qid in ("q_self", "q_other"):
+    log_query(
+      conn, query_id=qid, text="kappa distinctive shared", top_k=2,
+      source_filter=None, since=None, until=None, results=baseline,
+      cited_result_ids=[underdog.id],
+    )
+
+  boost_cfg = HybridQueryConfig(include_consolidations=False, feedback_boost=True)
+  assert query(conn, "kappa distinctive shared", config=boost_cfg)[0].id == underdog.id
+
+  # Leave-one-out on q_self drops to a single citation (+3%), below the flip
+  # threshold, so the original order is restored — eval never boosts from itself.
+  loo_cfg = HybridQueryConfig(
+    include_consolidations=False, feedback_boost=True,
+    feedback_boost_exclude_query_id="q_self",
+  )
+  assert query(conn, "kappa distinctive shared", config=loo_cfg)[0].id == baseline[0].id
 
 
 def test_sort_asc_orders_results_by_timestamp():

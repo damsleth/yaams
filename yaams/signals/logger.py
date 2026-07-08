@@ -186,6 +186,40 @@ def feedback_counts(
   return counts
 
 
+def result_boost_counts(
+  conn: sqlite3.Connection, result_ids: Sequence[str]
+) -> dict[str, tuple[int, int]]:
+  """Return ``{result_id: (citations, corrections)}`` for *result_ids*.
+
+  Citations are the *automatic positive* signal: how many logged queries cited
+  this result (``query_results.cited = 1``, set from an answer's
+  ``cited_result_ids``). Corrections are the *human negative* signal:
+  ``query_feedback`` rows with kind ``correction`` naming this result. Both feed
+  the capped feedback boost in ``retrieve.hybrid.query``. Ids with no signal are
+  ``(0, 0)``.
+  """
+  counts: dict[str, tuple[int, int]] = {rid: (0, 0) for rid in result_ids}
+  if not counts:
+    return counts
+  placeholders = ",".join("?" for _ in counts)
+  ids = tuple(counts)
+  for rid, n in conn.execute(
+    f"SELECT result_id, COUNT(*) FROM query_results "
+    f"WHERE cited = 1 AND result_id IN ({placeholders}) GROUP BY result_id",
+    ids,
+  ).fetchall():
+    cites, corrs = counts.get(rid, (0, 0))
+    counts[rid] = (cites + int(n), corrs)
+  for rid, n in conn.execute(
+    f"SELECT result_id, COUNT(*) FROM query_feedback "
+    f"WHERE kind = 'correction' AND result_id IN ({placeholders}) GROUP BY result_id",
+    ids,
+  ).fetchall():
+    cites, corrs = counts.get(rid, (0, 0))
+    counts[rid] = (cites, corrs + int(n))
+  return counts
+
+
 def recent_queries(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
   rows = conn.execute(
     """

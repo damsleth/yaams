@@ -13,12 +13,14 @@ the server is started with ``allow_write=True`` (``yaams mcp --allow-write``).
 from __future__ import annotations
 
 import re
+import time as _time
 from typing import Any
 
 from yaams.config import get_db_path, load_config
 from yaams.db import open_db
 from yaams.retrieve import HybridQueryConfig, attach_trust_verdicts
 from yaams.retrieve import query as run_query
+from yaams.signals import log_query, new_query_id
 
 _LEDGER_SOURCE_ID = "tier2_ledger"
 _PRIVATE_RE = re.compile(r"<private>.*?</private>", re.DOTALL | re.IGNORECASE)
@@ -77,6 +79,36 @@ def _resolve_sources(tier: str, source: str) -> tuple[list[str] | None, bool]:
   return None, False  # both tiers
 
 
+def _feedback_boost(cfg: dict) -> bool:
+  """Read the P2 precision-with-use flag (retrieve.feedback_boost, default off)."""
+  retrieve = cfg.get("retrieve")
+  return bool(retrieve.get("feedback_boost")) if isinstance(retrieve, dict) else False
+
+
+def _log_mcp_query(
+  cfg: dict, *, query_id: str, text: str, top_k: int, source_filter: list[str] | None,
+  results: list, **fields: Any,
+) -> None:
+  """Persist an MCP query to the signal log with ``provenance='mcp'``.
+
+  The query itself runs on a readonly connection; logging needs a writable one,
+  so this opens its own. Idempotent schema init keeps it safe on any live DB.
+  """
+  from yaams.cli._shared import _embedding_dim
+  from yaams.schema import init_schema
+
+  conn = open_db(get_db_path(cfg))
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    log_query(
+      conn, query_id=query_id, text=text, top_k=top_k,
+      source_filter=source_filter, since=None, until=None, results=results,
+      provenance="mcp", **fields,
+    )
+  finally:
+    conn.close()
+
+
 def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source: str) -> list:
   """Shared retrieval path: embed -> hybrid query -> attach trust verdicts."""
   from yaams.enrich import Embedder
@@ -85,7 +117,9 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   source_filter, exclude_ledger = _resolve_sources(tier, source)
   embedder = Embedder(**_embed_config(cfg), quiet=True)
   embedding = embedder.embed_batch([query_text])[0]
-  qcfg = HybridQueryConfig(top_k=top_k, source_filter=source_filter)
+  qcfg = HybridQueryConfig(
+    top_k=top_k, source_filter=source_filter, feedback_boost=_feedback_boost(cfg)
+  )
   conn = open_db(db_path, readonly=True)
   try:
     results = run_query(conn, query_text, embedding=embedding, config=qcfg)
@@ -122,20 +156,51 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
     tier: "both" (default), "raw" (exclude curated ledger), or "ledger" (only).
     source: restrict to a single ingest source (e.g. "email", "github").
     """
+    query_id = new_query_id()
+    t0 = _time.perf_counter()
     results = _run_text_query(cfg, query, top_k=limit, tier=tier, source=source)
-    return scrub_for_egress(_results_payload(results))
+    retrieval_ms = (_time.perf_counter() - t0) * 1000
+    source_filter, _ = _resolve_sources(tier, source)
+    _log_mcp_query(
+      cfg, query_id=query_id, text=query, top_k=limit, source_filter=source_filter,
+      results=results, latency_ms=retrieval_ms, retrieval_ms=retrieval_ms,
+    )
+    payload = _results_payload(results)
+    payload["query_id"] = query_id
+    return scrub_for_egress(payload)
 
   @mcp.tool()
   def yaams_answer(question: str, limit: int = 5, tier: str = "both") -> dict:
     """Synthesize a grounded, cited answer over Tier-1 results."""
     from yaams.synthesize import llm_adapter_from_config, synthesize_answer
 
+    query_id = new_query_id()
+    t0 = _time.perf_counter()
     results = _run_text_query(cfg, question, top_k=limit, tier=tier, source="")
+    retrieval_ms = (_time.perf_counter() - t0) * 1000
     if not results:
-      return {"answer": "", "confidence": "unknown", "results": []}
+      _log_mcp_query(
+        cfg, query_id=query_id, text=question, top_k=limit, source_filter=None,
+        results=[], latency_ms=retrieval_ms, retrieval_ms=retrieval_ms,
+        confidence="unknown",
+      )
+      return {"answer": "", "confidence": "unknown", "results": [], "query_id": query_id}
     adapter = llm_adapter_from_config(cfg)
+    t1 = _time.perf_counter()
     answer = synthesize_answer(question, results, adapter)
+    synthesis_ms = (_time.perf_counter() - t1) * 1000
+    # The cited results ARE the automatic positive label — this is what makes
+    # the flywheel turn without any human in the loop.
+    _log_mcp_query(
+      cfg, query_id=query_id, text=question, top_k=limit, source_filter=None,
+      results=results, cited_result_ids=answer.cited_result_ids,
+      answer=answer.answer, backend=answer.backend, model=answer.model,
+      confidence=answer.confidence, confidence_reason=answer.confidence_reason,
+      gaps=answer.gaps, latency_ms=retrieval_ms + synthesis_ms,
+      retrieval_ms=retrieval_ms, synthesis_ms=synthesis_ms,
+    )
     payload = {
+      "query_id": query_id,
       "answer": answer.answer_body or answer.answer,
       "confidence": answer.confidence,
       "confidence_reason": answer.confidence_reason,

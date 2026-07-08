@@ -206,6 +206,66 @@ def test_tier2_boost_promotes_ledger_above_raw_for_equal_match():
   assert boosted_results[0].source == "tier2_ledger"
 
 
+def test_feedback_boost_promotes_cited_result():
+  from yaams.signals import log_query
+
+  conn = _open_db()
+  a = _make_item(thread_id="t-a", content="zeta distinctive shared token", msg_id="a-1")
+  b = _make_item(thread_id="t-b", content="zeta distinctive shared token", msg_id="b-1")
+  store_items(conn, [a, b], [b"\x00" * 16] * 2, [[]] * 2)
+
+  base = HybridQueryConfig(include_consolidations=False)
+  baseline = query(conn, "zeta distinctive shared", config=base)
+  assert len(baseline) == 2
+  underdog = baseline[-1]  # currently ranked last on FTS alone
+
+  # Six logged queries cited the underdog -> automatic positive signal, boost
+  # saturates the cap and must flip it above the incumbent.
+  for i in range(6):
+    log_query(
+      conn, query_id=f"q_boost_{i}", text="zeta distinctive shared", top_k=2,
+      source_filter=None, since=None, until=None, results=baseline,
+      cited_result_ids=[underdog.id],
+    )
+
+  boosted = query(
+    conn, "zeta distinctive shared",
+    config=HybridQueryConfig(include_consolidations=False, feedback_boost=True),
+  )
+  assert boosted[0].id == underdog.id
+
+  # Off by default: no reordering without the flag.
+  unboosted = query(conn, "zeta distinctive shared", config=base)
+  assert unboosted[0].id == baseline[0].id
+
+
+def test_feedback_boost_correction_demotes_result():
+  from yaams.signals import log_feedback, log_query
+
+  conn = _open_db()
+  a = _make_item(thread_id="t-a", content="omega distinctive shared token", msg_id="a-1")
+  b = _make_item(thread_id="t-b", content="omega distinctive shared token", msg_id="b-1")
+  store_items(conn, [a, b], [b"\x00" * 16] * 2, [[]] * 2)
+
+  base = HybridQueryConfig(include_consolidations=False)
+  baseline = query(conn, "omega distinctive shared", config=base)
+  leader = baseline[0]  # currently ranked first
+
+  # Humans corrected the leader six times -> capped demotion flips it below.
+  for i in range(6):
+    log_query(
+      conn, query_id=f"q_corr_{i}", text="omega distinctive shared", top_k=2,
+      source_filter=None, since=None, until=None, results=baseline,
+    )
+    log_feedback(conn, query_id=f"q_corr_{i}", kind="correction", result_id=leader.id)
+
+  demoted = query(
+    conn, "omega distinctive shared",
+    config=HybridQueryConfig(include_consolidations=False, feedback_boost=True),
+  )
+  assert demoted[0].id != leader.id
+
+
 def test_sort_asc_orders_results_by_timestamp():
   conn = _open_db()
   base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)

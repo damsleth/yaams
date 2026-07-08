@@ -4,6 +4,7 @@ from yaams.signals.logger import (
   log_query,
   new_query_id,
   recent_queries,
+  result_boost_counts,
 )
 from yaams.signals.review import (
   ReviewItem,
@@ -35,6 +36,7 @@ __all__ = [
   "new_query_id",
   "noise_cascade",
   "recent_queries",
+  "result_boost_counts",
   "render_card_lines",
   "render_dashboard",
   "run_review_tui",

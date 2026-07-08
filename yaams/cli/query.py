@@ -350,6 +350,8 @@ def query_cmd(
         qcfg.rerank_k = int(rerank_cfg.get("k") or qcfg.rerank_k)
         if "device" in rerank_cfg:
           qcfg.reranker_device = rerank_cfg.get("device")
+      if (cfg.get("retrieve") or {}).get("feedback_boost"):
+        qcfg.feedback_boost = True
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

@@ -31,6 +31,13 @@ ENTITY_FILTER_FETCH_MULTIPLIER = 4
 FTS_ITEM_WEIGHTS = (0.0, 1.0, 2.0, 1.0)  # item_id, content, subject, sender
 FTS_CONS_WEIGHTS = (0.0, 1.0, 1.0)  # consolidation_id, summary, participants
 
+# Precision-with-use feedback boost (cfg.feedback_boost). Per-signal weight and
+# cap mirror the display-side validation boost in retrieve.trust so the two
+# stay consistent. The cap is the guardrail against citation self-reinforcement
+# (a result cited because it ranked #1 can lift its own rank by at most CAP).
+FEEDBACK_BOOST_PER = 0.03
+FEEDBACK_BOOST_CAP = 0.15
+
 
 @dataclass
 class HybridQueryConfig:
@@ -89,6 +96,13 @@ class HybridQueryConfig:
   # Reranker device. cpu by default: these cross-encoders crash mid-predict on
   # Apple mps and a small pool is fast on CPU. Set cuda on a GPU box.
   reranker_device: str | None = "cpu"
+  # Precision-with-use: multiply a result's score by a capped factor derived
+  # from accumulated real usage — +PER·citations (automatic positive from
+  # logged answers) and −PER·corrections (human negative), each capped at CAP.
+  # Off by default; enable via `retrieve.feedback_boost: true` only after real
+  # query logs accumulate and the frozen-fixture eval gate passes. Naturally a
+  # no-op until signals exist (factor = 1.0). See .plans/retrieval-flywheel.md.
+  feedback_boost: bool = False
 
 
 @dataclass
@@ -226,6 +240,20 @@ def query(
     for r in hydrated:
       if r.id in (item_b if r.kind == "item" else cons_b):
         r.score *= cfg.boost_factor
+  if cfg.feedback_boost and hydrated:
+    # Precision-with-use: lift results that real queries have cited, demote
+    # ones humans have corrected. Capped so citation feedback can't runaway.
+    from yaams.signals import result_boost_counts
+    counts = result_boost_counts(conn, [r.id for r in hydrated])
+    for r in hydrated:
+      cites, corrs = counts.get(r.id, (0, 0))
+      if cites or corrs:
+        factor = (
+          1.0
+          + min(FEEDBACK_BOOST_PER * cites, FEEDBACK_BOOST_CAP)
+          - min(FEEDBACK_BOOST_PER * corrs, FEEDBACK_BOOST_CAP)
+        )
+        r.score *= max(factor, 0.1)  # corrections demote but never zero out
   if cfg.assoc_weights:
     item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
     for r in hydrated:

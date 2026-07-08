@@ -185,3 +185,9 @@ retrieve:
     - [øvelse, exercise]
     - [hytte, cabin]
     - [isbad, isbading, "ice bath", "ice bathing"]
+  # Precision-with-use. When true, a result's rank is nudged by accumulated real
+  # usage: +citations (results your answers actually used) and −corrections
+  # (results a human flagged wrong), each capped so nothing runs away. A no-op
+  # until query logs accumulate. Enable ONLY after a week+ of logged traffic and
+  # a passing frozen-fixture eval — see .plans/retrieval-flywheel.md.
+  feedback_boost: false

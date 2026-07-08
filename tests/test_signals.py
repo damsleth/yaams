@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 
 from yaams.retrieve import HybridResult, ScoreComponents
 from yaams.schema import init_schema
-from yaams.signals import log_feedback, log_query, new_query_id, recent_queries
+from yaams.signals import (
+  log_feedback,
+  log_query,
+  new_query_id,
+  recent_queries,
+  result_boost_counts,
+)
 
 
 def _open():
@@ -154,6 +160,29 @@ def test_log_query_default_parser_fallback_is_zero():
   )
   row = conn.execute("SELECT parser_fallback FROM queries WHERE id = ?", ("q_def",)).fetchone()
   assert row["parser_fallback"] == 0
+
+
+def test_result_boost_counts_citations_and_corrections():
+  conn = _open()
+  # Two queries both cite ra; rb cited once; rc corrected once.
+  log_query(conn, query_id="q1", text="x", top_k=3, source_filter=None, since=None,
+            until=None, results=[_result("ra"), _result("rb"), _result("rc")],
+            cited_result_ids=["ra", "rb"])
+  log_query(conn, query_id="q2", text="y", top_k=3, source_filter=None, since=None,
+            until=None, results=[_result("ra"), _result("rc")],
+            cited_result_ids=["ra"])
+  log_feedback(conn, query_id="q2", kind="correction", result_id="rc")
+
+  counts = result_boost_counts(conn, ["ra", "rb", "rc", "rd"])
+  assert counts["ra"] == (2, 0)  # cited by q1 and q2
+  assert counts["rb"] == (1, 0)
+  assert counts["rc"] == (0, 1)  # never cited, corrected once
+  assert counts["rd"] == (0, 0)  # unseen id
+
+
+def test_result_boost_counts_empty():
+  conn = _open()
+  assert result_boost_counts(conn, []) == {}
 
 
 def test_recent_queries_returns_most_recent_first():

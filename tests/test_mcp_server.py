@@ -73,3 +73,36 @@ def test_feedback_tool_present_with_allow_write(tmp_path):
 
 def test_mcp_command_registered():
   assert "mcp" in cli.commands
+
+
+def test_log_mcp_query_sets_mcp_provenance(tmp_path):
+  from yaams.config import get_db_path, load_config
+  from yaams.db import open_db
+  from yaams.mcp.server import _log_mcp_query
+
+  cfg_path = _config(tmp_path)
+  cfg = load_config(str(cfg_path))
+  _log_mcp_query(
+    cfg, query_id="q_mcp", text="what did we decide", top_k=5,
+    source_filter=None, results=[], latency_ms=1.0, retrieval_ms=1.0,
+  )
+  conn = open_db(get_db_path(cfg))
+  try:
+    row = conn.execute(
+      "SELECT provenance, text FROM queries WHERE id = 'q_mcp'"
+    ).fetchone()
+  finally:
+    conn.close()
+  assert row is not None
+  assert row["provenance"] == "mcp"
+  assert row["text"] == "what did we decide"
+
+
+def test_feedback_boost_flag_default_off(tmp_path):
+  from yaams.config import load_config
+  from yaams.mcp.server import _feedback_boost
+
+  cfg = load_config(str(_config(tmp_path)))
+  assert _feedback_boost(cfg) is False
+  cfg["retrieve"] = {"feedback_boost": True}
+  assert _feedback_boost(cfg) is True

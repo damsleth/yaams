@@ -371,6 +371,53 @@ def test_build_rows_filters_synthetic_profiles_by_type(
     assert children == {"crayon"}, f"{parent}: {children}"
 
 
+def test_build_rows_drive_lists_google_and_m365_not_ado(
+  tmp_path: Path, monkeypatch
+) -> None:
+  # drive accepts both providers (token-shape detection), so its synthetic row
+  # lists m365 AND google profiles — but never ado (no ingest path).
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(
+    monkeypatch,
+    teams=[
+      {"alias": "crayon", "type": "m365", "enabled": True, "default": True},
+      {"alias": "brkh-g", "type": "google", "enabled": True, "default": False},
+      {"alias": "nc-ado", "type": "ado", "enabled": True, "default": False},
+    ],
+  )
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  drive_children = {
+    r.label for r in rows
+    if isinstance(r, SubPathRow) and r.parent == "drive"
+  }
+  assert drive_children == {"crayon", "brkh-g"}
+
+
+def test_set_profile_enabled_lazy_creates_drive_block(tmp_path: Path) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+    "embed:\n"
+    "  model: x\n"
+  )
+  cfg_path = _write(tmp_path, body)
+  sources_mod._yaml_set_profile_enabled(cfg_path, "drive", "brkh-g", True)
+  text = cfg_path.read_text()
+  assert "  drive:\n" in text
+  assert "      - brkh-g\n" in text
+  assert "    local_dir: ~/brain/docs\n" in text
+
+
 def test_build_rows_no_type_defaults_to_m365(tmp_path: Path, monkeypatch) -> None:
   # Older owa-piggy without a `type` field: every profile stays visible.
   body = (

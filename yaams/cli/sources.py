@@ -3,8 +3,8 @@
 Reads the active config.yaml, lists every `ingest.<source>` block that has an
 `enabled:` key, lets the user toggle them with arrow keys + space, apply with
 enter. For path-list sources (folders, email) and profile-aware sources
-(calendar, teams) the TUI also shows individual sub-entries that can be
-toggled and (for path sources) added/removed inline.
+(calendar, teams, mail, drive) the TUI also shows individual sub-entries that
+can be toggled and (for path sources) added/removed inline.
 
 Calendar/teams discover their available profiles by shelling out to
 `owa-cal profiles` and `owa-piggy profiles --json`; result is cached for the
@@ -46,16 +46,16 @@ ARROW = "▸"
 BULLET = "·"
 
 
-PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail"}
+PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail", "drive"}
 PATH_LIST_SOURCES = {"email", "folders"}
 SINGLE_PATH_SOURCES = {"notes"}
 
 # What each owa-piggy profile `type` can feed. Grounded in ingest paths that
 # exist today: owa-cal/owa-mail are Graph-only, so a google profile is drive
-# only (drive self-selects provider by token shape at ingest time and has no
-# profile picker here, so it's absent from the profile-aware rows below); an
-# ADO profile feeds nothing until the ado source lands. owa-piggy owns the
-# `type`; yaams owns this mapping. Widen a row only when its ingest path exists.
+# only (drive picks its provider by token shape at ingest time, so a single
+# `drive` row lists both m365 and google profiles); an ADO profile feeds
+# nothing until the ado source lands. owa-piggy owns the `type`; yaams owns
+# this mapping. Widen a row only when its ingest path exists.
 SOURCES_BY_PROFILE_TYPE: dict[str, set[str]] = {
   "m365": {"mail", "calendar", "teams", "teams_channels", "drive"},
   "google": {"drive"},
@@ -118,6 +118,13 @@ _M365_BLOCK_TEMPLATES: dict[str, list[str]] = {
     "    teams: []\n",
     "    limit_pages: 4\n",
     "    skip_bots: true\n",
+  ],
+  "drive": [
+    "\n",
+    "  drive:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    local_dir: ~/brain/docs\n",
   ],
 }
 
@@ -365,8 +372,9 @@ def _build_rows(cfg: dict) -> list[Row]:
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
           ))
-    elif key in ("teams", "teams_channels"):
-      # Both share owa-piggy's profile list (same Graph/ic3 auth).
+    elif key in ("teams", "teams_channels", "drive"):
+      # All share owa-piggy's profile list. teams/teams_channels are Graph/ic3
+      # (m365 only); drive also accepts google (filtered per-key by _supports).
       configured = list(block.get("profiles") or [])
       types = _profile_types()
       available = [p for p in discover_teams_profiles() if _supports(p, key)]
@@ -421,7 +429,7 @@ def _append_synthetic_m365_rows(rows: list[Row]) -> None:
   piggy = [p for p in discover_teams_profiles() if p.get("enabled", True)]
   if not piggy:
     return
-  for source_name in ("mail", "calendar", "teams", "teams_channels"):
+  for source_name in ("mail", "calendar", "teams", "teams_channels", "drive"):
     if source_name in configured:
       continue
     eligible = [p for p in piggy if _supports(p, source_name)]
@@ -482,6 +490,9 @@ def _summary_for(key: str, block: dict) -> str:
     scope = f"{len(allow)} team(s)" if allow else "all teams"
     return f"{len(configured)} profile(s) active, {scope}"
   if key == "mail":
+    configured = block.get("profiles") or []
+    return f"{len(configured)} profile(s) active"
+  if key == "drive":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
   if key == "outlook_calendar":

@@ -9,6 +9,7 @@ from typing import Iterable, Sequence, cast
 
 from yaams.consolidate.session import Consolidation
 from yaams.ingest.base import Item
+from yaams.schema import FACTS_FTS_TABLE, FACTS_SOURCE, FACTS_VEC_TABLE
 from yaams.time import ensure_utc
 from yaams.trust import derive_provenance
 
@@ -461,8 +462,16 @@ def store_items(
   with conn:
     for item, embedding, tags in zip(items, embeddings, entity_tags):
       inserted += _insert_item(conn, item)
-      _replace_embedding(conn, item.id, embedding)
-      _replace_fts(conn, item)
+      # chats_facts is an isolated retrieval tier: its index rows live in
+      # separate fts/vec tables so they never touch shared corpus statistics
+      # (see schema._init_facts_indexes). The `items` row itself is normal, so
+      # hydration + entity links are unchanged.
+      if item.source == FACTS_SOURCE:
+        _replace_embedding(conn, item.id, embedding, vec_table=FACTS_VEC_TABLE)
+        _replace_fts(conn, item, fts_table=FACTS_FTS_TABLE)
+      else:
+        _replace_embedding(conn, item.id, embedding)
+        _replace_fts(conn, item)
       links += _replace_entity_links(conn, item.id, tags)
   return StoreStats(
     items_seen=len(items),
@@ -576,19 +585,24 @@ def _replace_embedding(
   conn: sqlite3.Connection,
   item_id: str,
   embedding: object,
+  vec_table: str = "items_vec",
 ) -> None:
-  conn.execute("DELETE FROM items_vec WHERE item_id = ?", (item_id,))
+  conn.execute(f"DELETE FROM {vec_table} WHERE item_id = ?", (item_id,))
   conn.execute(
-    "INSERT INTO items_vec (item_id, embedding) VALUES (?, ?)",
+    f"INSERT INTO {vec_table} (item_id, embedding) VALUES (?, ?)",
     (item_id, _embedding_to_blob(embedding)),
   )
 
 
-def _replace_fts(conn: sqlite3.Connection, item: Item) -> None:
-  conn.execute("DELETE FROM items_fts WHERE item_id = ?", (item.id,))
+def _replace_fts(
+  conn: sqlite3.Connection,
+  item: Item,
+  fts_table: str = "items_fts",
+) -> None:
+  conn.execute(f"DELETE FROM {fts_table} WHERE item_id = ?", (item.id,))
   conn.execute(
-    """
-    INSERT INTO items_fts (item_id, content, subject, sender)
+    f"""
+    INSERT INTO {fts_table} (item_id, content, subject, sender)
     VALUES (?, ?, ?, ?)
     """,
     (item.id, item.content, item.subject or "", item.sender),

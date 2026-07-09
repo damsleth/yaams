@@ -101,6 +101,9 @@ SQLite with extensions, single file. The list below is the canonical long-term s
 - `items` table: canonical item records (one row per ingested item)
 - `embeddings` virtual table (sqlite-vec): vector index over item content
 - `items_fts` (FTS5): keyword index for sparse retrieval
+- `chats_facts_fts` / `chats_facts_vec`: isolated fts/vec indexes for the opt-in
+  `chats_facts` tier — kept out of the shared indexes because pooling many short
+  facts perturbs BM25 corpus statistics; consulted only for `--source chats_facts`
 - `entities` table: known entities, aliases, types
 - `item_entities` table: many-to-many (item_id, entity_id, confidence)
 - `timeline` table: time-bucketed index for fast date-range queries (Phase D+)

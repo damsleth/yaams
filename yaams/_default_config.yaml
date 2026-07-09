@@ -44,6 +44,14 @@ ingest:
     # Optional. Defaults to .git, .obsidian, .claude
     # skip_dirs: [.git, .obsidian]
 
+  # Atomic facts extracted from each chat summary's `## Insights / Facts`
+  # bullets, each indexed as its own tiny item so a query matches the single
+  # relevant fact instead of the whole session summary. Independent of `chats`
+  # (which indexes whole summaries); enable both to get facts + full context.
+  chats_facts:
+    enabled: false
+    chats_path: ~/brain/chats
+
   # Generic recursive folder ingestion. Reads .txt and .md natively;
   # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
   # Files of unsupported types (or types with the dep missing) are skipped.
@@ -129,6 +137,20 @@ ingest:
   #   profiles:
   #     - work
   #   skip_free: true
+
+  # Cloud-drive documents (Google Drive or OneDrive/M365), one source per
+  # owa-piggy profile. Each profile's docs are synced down to
+  # <local_dir>/<profile> (override per profile via `dirs:`) and then indexed
+  # like a `folders` source. Provider is auto-detected from the token. Only
+  # document types are pulled (.pdf/.docx/.md/.txt; Google Docs -> markdown).
+  drive:
+    enabled: false
+    profiles: []
+      # - brkh-g
+    local_dir: ~/brain/docs
+    # Optional per-profile destination overrides:
+    # dirs:
+    #   brkh-g: ~/brain/docs/brkh
 
 embed:
   model: BAAI/bge-m3

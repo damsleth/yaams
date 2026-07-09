@@ -10,6 +10,29 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+- **Chat-summary fact extraction.** The `## Insights / Facts` bullets that
+  `capture-chat.sh` already writes into each session summary are now first-class
+  atomic facts, via two sinks over one pure extractor
+  (`yaams/ingest/chats_facts.py`):
+  - `chats_facts` — an **opt-in retrieval tier** (`ingest.chats_facts.enabled`,
+    default off). Each bullet is indexed as its own item in **separate** fts/vec
+    tables (`chats_facts_fts`/`chats_facts_vec`), searched only via `--source
+    chats_facts`. The separate indexes are deliberate: pooling ~600 short facts
+    into the shared index shifted BM25 corpus statistics and regressed default
+    retrieval ~5% even when the facts were filtered from results; isolated, the
+    tier leaves default retrieval byte-identical to a facts-free corpus.
+  - `yaams promote from-facts` — drafts each bullet as a Tier-2 ledger
+    **promotion candidate** (no LLM, no entity clustering; reviewed via the
+    existing `promote list`/`review` flow). `chats_facts` items are excluded
+    from the entity-clustered `promote generate` path so facts promote only
+    through this verb.
+
+### Fixed
+- `promote generate`/`from-facts` now report the count of *newly stored*
+  candidates rather than attempts (`store_candidates` counts `INSERT OR IGNORE`
+  rowcount), so a re-run correctly reports `0 new`.
+
 ## [0.10.0] - 2026-07-08
 
 ### Added

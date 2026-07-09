@@ -45,6 +45,9 @@ Adapters for:
 - `tier2_ledger` - curated atomic notes from cognitive-ledger
 - `chats` - agent chats — Claude Code session summaries written by the
   `SessionEnd` hook (one markdown file per session, with YAML frontmatter)
+- `chats_facts` - opt-in tier: atomic facts extracted from chat summaries'
+  `## Insights / Facts` bullets, indexed in isolated fts/vec tables (searched
+  via `--source chats_facts`) and promotable via `promote from-facts`
 - `github` - issues and PRs across repos
 - `calendar` / `calendar_<profile>` - Outlook via `owa-cal`
 - `teams` / `teams_<profile>` - Microsoft Teams via Graph or the `chatsvc`

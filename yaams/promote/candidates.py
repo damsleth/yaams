@@ -268,7 +268,7 @@ def store_candidates(
   stored = 0
   for c in candidates:
     try:
-      conn.execute(
+      cur = conn.execute(
         """
         INSERT OR IGNORE INTO promotion_candidates
           (id, created_at, entity, draft_type, draft_title, draft_statement,
@@ -305,7 +305,9 @@ def store_candidates(
           json.dumps(c.admission_factors) if c.admission_factors is not None else None,
         ),
       )
-      stored += 1
+      # INSERT OR IGNORE: rowcount is 1 on a real insert, 0 when the id already
+      # existed — so `stored` counts genuinely new candidates, not attempts.
+      stored += cur.rowcount
     except sqlite3.IntegrityError:
       pass
   conn.commit()
@@ -364,7 +366,10 @@ _ENTITY_QUERY = """
   JOIN entities e ON e.id = ie.entity_id
   JOIN items i ON i.id = ie.item_id
   WHERE ie.source = 'dictionary'
-    AND i.source NOT IN ('tier2_ledger')
+    -- chats_facts is promoted per-fact via `promote from-facts`, never
+    -- entity-clustered here (its bullets cluster on NER noise + would
+    -- double-promote); tier2_ledger is already curated.
+    AND i.source NOT IN ('tier2_ledger', 'chats_facts')
     AND i.timestamp >= ?
     AND {type_filter}
     AND (? IS NULL OR e.canonical_name = ?)
@@ -576,7 +581,9 @@ def _fetch_cluster(
     FROM item_entities ie
     JOIN items i ON i.id = ie.item_id
     WHERE ie.entity_id = ?
-      AND i.source NOT IN ('tier2_ledger')
+      -- chats_facts is promoted per-fact via `promote from-facts`; keep its
+      -- bullets out of entity clusters (see _ENTITY_QUERY).
+      AND i.source NOT IN ('tier2_ledger', 'chats_facts')
       AND i.timestamp >= ?
     ORDER BY i.timestamp DESC
     LIMIT ?

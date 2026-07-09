@@ -48,6 +48,20 @@ def _ledger_notes_dir() -> Path | None:
   return notes_dir if notes_dir.is_dir() else None
 
 
+def _dedup_config(promote_cfg_raw: dict):
+  from yaams.promote.dedup import DedupConfig
+
+  sd = promote_cfg_raw.get("semantic_dedup") or {}
+  return DedupConfig(
+    enabled=bool(sd.get("enabled", False)),
+    duplicate_threshold=float(sd.get("duplicate_threshold", 0.92)),
+    merge_threshold=float(sd.get("merge_threshold", 0.80)),
+    embed_backend=str(sd.get("embed_backend", "local")),
+    ledger_cli=str(sd.get("ledger_cli", "ledger")),
+    timeout_s=int(sd.get("timeout_s", 15)),
+  )
+
+
 def _resolve_inbox_path(promote_cfg_raw: dict) -> Path:
   """Resolve where promoted candidates are written.
 
@@ -138,16 +152,7 @@ def promote_generate(
   rejected_log_path = _resolve_rejected_log_path(
     tier2_cfg_raw, promote_cfg_raw, note_index_path
   )
-  from yaams.promote.dedup import DedupConfig
-  sd = promote_cfg_raw.get("semantic_dedup") or {}
-  dedup_cfg = DedupConfig(
-    enabled=bool(sd.get("enabled", False)),
-    duplicate_threshold=float(sd.get("duplicate_threshold", 0.92)),
-    merge_threshold=float(sd.get("merge_threshold", 0.80)),
-    embed_backend=str(sd.get("embed_backend", "local")),
-    ledger_cli=str(sd.get("ledger_cli", "ledger")),
-    timeout_s=int(sd.get("timeout_s", 15)),
-  )
+  dedup_cfg = _dedup_config(promote_cfg_raw)
   if not as_json and dedup_cfg.enabled:
     import shutil
     import subprocess as _sp
@@ -233,6 +238,75 @@ def promote_generate(
     ))
     return
   click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored.")
+
+
+@promote_group.command("from-facts")
+@config_option
+@click.option("--days", default=None, type=int, help="Only facts newer than N days.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+def promote_from_facts(config_path: str, days: int | None, as_json: bool) -> None:
+  """Promote atomic facts from chat summaries (`## Insights / Facts` bullets)
+  into Tier-2 ledger candidates — no LLM, no entity clustering. Review them with
+  `promote list` / `promote review` like any other candidate."""
+  from datetime import UTC, datetime, timedelta
+
+  from yaams.promote.candidates import store_candidates
+  from yaams.promote.dedup import DedupChecker
+  from yaams.promote.facts import generate_fact_candidates
+
+  t0 = time.monotonic()
+  try:
+    cfg = load_config(config_path)
+    db_path = get_db_path(cfg)
+  except Exception as exc:
+    if as_json:
+      emit_action(action_envelope(
+        command="promote from-facts", ok=False,
+        error={"code": "config_unreadable", "message": str(exc)},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise
+
+  ingest_cfg = cfg.get("ingest", {}) or {}
+  chats_path = (
+    (ingest_cfg.get("chats_facts") or {}).get("chats_path")
+    or (ingest_cfg.get("chats") or {}).get("chats_path")
+  )
+  if not chats_path:
+    msg = "no chats_path configured (ingest.chats_facts.chats_path or ingest.chats.chats_path)"
+    if as_json:
+      emit_action(action_envelope(
+        command="promote from-facts", ok=False,
+        error={"code": "no_chats_path", "message": msg},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    raise click.ClickException(msg)
+
+  since = datetime.now(UTC) - timedelta(days=days) if days else None
+  dedup = DedupChecker(_dedup_config(cfg.get("promote", {}) or {}))
+  progress = (lambda *_a, **_k: None) if as_json else click.echo
+
+  candidates = generate_fact_candidates(
+    chats_path, since=since, dedup=dedup, on_progress=progress
+  )
+  conn = open_db(db_path)
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    stored = store_candidates(conn, candidates)
+  finally:
+    conn.close()
+
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="promote from-facts", ok=True,
+      stats={"facts_seen": len(candidates), "candidates_stored": stored},
+      duration_ms=duration_ms,
+    ))
+    return
+  click.echo(f"\n{len(candidates)} facts drafted, {stored} new candidates stored.")
 
 
 @promote_group.command("list")

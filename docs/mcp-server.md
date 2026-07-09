@@ -54,7 +54,8 @@ Add `"--allow-write"` to the `args` array to enable `yaams_feedback`.
 - `tier`: `both` (default), `raw` (everything except the curated Tier-2
   ledger), or `ledger` (only Tier-2 notes).
 - `source`: restrict to a single ingest source (e.g. `email`, `github`,
-  `imessage`, `chats`). Overrides `tier` when set.
+  `imessage`, `chats`). Overrides `tier` when set. Use `chats_facts` to search
+  the isolated chat-facts tier (empty unless that opt-in source is ingested).
 
 Returns `{"results": [ ... ]}` where each result mirrors the
 `yaams query --format json` shape and carries a `trust` object.

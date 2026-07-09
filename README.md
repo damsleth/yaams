@@ -164,6 +164,7 @@ workflow, query flags, and best practices — see the
 | `notes` | `ingest.notes` | Obsidian vault markdown |
 | `tier2_ledger` | `ingest.tier2_ledger` | curated atomic notes from cognitive-ledger |
 | `chats` | `ingest.chats` | agent chats — Claude Code session summaries (one markdown file per session) |
+| `chats_facts` | `ingest.chats_facts` | opt-in tier: atomic facts from chat summaries' `## Insights / Facts` bullets, in isolated indexes (search via `--source chats_facts`) |
 | `github` | `ingest.github` | GitHub issues and PRs across your repos |
 | `calendar` / `calendar_<profile>` | `ingest.calendar` | Outlook calendar via `owa-cal` |
 | `teams` / `teams_<profile>` | `ingest.teams` | Microsoft Teams via Graph API |
@@ -189,10 +190,16 @@ Surface candidate atomic notes from recent items, review them interactively,
 and write accepted ones into your ledger inbox:
 
 ```bash
-yaams promote generate            # scan last 30 days
+yaams promote generate            # scan last 30 days (entity-clustered)
 yaams promote generate --days 60
+yaams promote from-facts          # one candidate per chat-summary fact bullet
+yaams promote list                # see the queue
 yaams promote review              # interactive: a/e/r/s/q
 ```
+
+`promote from-facts` reads the `## Insights / Facts` bullets from your chat
+summaries directly (no LLM, no entity clustering) and drafts one candidate per
+fact; it works whether or not the `chats_facts` retrieval tier is enabled.
 
 Nothing is promoted without your explicit acceptance. Accepted notes land in
 `promote.inbox_path` (default `~/yaams/ledger-inbox/`).

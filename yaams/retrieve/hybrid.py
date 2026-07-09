@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Iterable, Sequence, cast
 
+from yaams.schema import FACTS_FTS_TABLE, FACTS_SOURCE, FACTS_VEC_TABLE
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.time import ensure_utc
 
@@ -142,6 +143,16 @@ class HybridResult:
   trust: object | None = None
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+  return (
+    conn.execute(
+      "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ?",
+      (name,),
+    ).fetchone()
+    is not None
+  )
+
+
 def query(
   conn: sqlite3.Connection,
   text: str,
@@ -183,10 +194,27 @@ def query(
   vec_items: list[tuple[str, str, int, float]] = []
   vec_cons: list[tuple[str, str, int, float]] = []
 
+  # `chats_facts` is a standalone opt-in tier held in its own fts/vec tables
+  # (schema._init_facts_indexes) so it never perturbs the shared corpus. When
+  # requested it is searched from those tables *instead of* the shared ones —
+  # it does not combine with other --source values in one query.
+  # The fact tier lives in its own tables, created on first chats_facts ingest.
+  # On a DB that has never ingested facts they're absent — degrade to empty
+  # rather than raising "no such table".
+  fact_tier = (
+    bool(cfg.source_filter)
+    and FACTS_SOURCE in cfg.source_filter
+    and _table_exists(conn, FACTS_FTS_TABLE)
+  )
   if cfg.include_items:
-    fts_items = _fts_search_items(conn, text, fetch_cfg)
-    if embedding is not None:
-      vec_items = _vec_search_items(conn, embedding, fetch_cfg)
+    if fact_tier:
+      fts_items = _fts_search_items(conn, text, fetch_cfg, fts_table=FACTS_FTS_TABLE)
+      if embedding is not None and _table_exists(conn, FACTS_VEC_TABLE):
+        vec_items = _vec_search_items(conn, embedding, fetch_cfg, vec_table=FACTS_VEC_TABLE)
+    else:
+      fts_items = _fts_search_items(conn, text, fetch_cfg)
+      if embedding is not None:
+        vec_items = _vec_search_items(conn, embedding, fetch_cfg)
   if cfg.include_consolidations:
     fts_cons = _fts_search_consolidations(conn, text, fetch_cfg)
     if embedding is not None:
@@ -428,6 +456,7 @@ def _fts_search_items(
   conn: sqlite3.Connection,
   text: str,
   cfg: HybridQueryConfig,
+  fts_table: str = "items_fts",
 ) -> list[tuple[str, str, int, float]]:
   match = _fts_query(text, cfg.synonyms)
   if not match:
@@ -435,10 +464,10 @@ def _fts_search_items(
   item_w = ", ".join(str(w) for w in FTS_ITEM_WEIGHTS)
   rows = conn.execute(
     f"""
-    SELECT items_fts.item_id AS id, bm25(items_fts, {item_w}) AS score
-    FROM items_fts
-    JOIN items ON items.id = items_fts.item_id
-    WHERE items_fts MATCH ?
+    SELECT {fts_table}.item_id AS id, bm25({fts_table}, {item_w}) AS score
+    FROM {fts_table}
+    JOIN items ON items.id = {fts_table}.item_id
+    WHERE {fts_table} MATCH ?
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
@@ -492,14 +521,15 @@ def _vec_search_items(
   conn: sqlite3.Connection,
   embedding: object,
   cfg: HybridQueryConfig,
+  vec_table: str = "items_vec",
 ) -> list[tuple[str, str, int, float]]:
   blob = _embedding_to_blob(embedding)
   rows = conn.execute(
-    """
-    SELECT items_vec.item_id AS id, distance
-    FROM items_vec
-    JOIN items ON items.id = items_vec.item_id
-    WHERE items_vec.embedding MATCH ?
+    f"""
+    SELECT {vec_table}.item_id AS id, distance
+    FROM {vec_table}
+    JOIN items ON items.id = {vec_table}.item_id
+    WHERE {vec_table}.embedding MATCH ?
       AND k = ?
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)

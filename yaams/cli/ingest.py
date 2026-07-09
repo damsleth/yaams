@@ -72,9 +72,10 @@ from yaams.watermark import get_watermark, update_watermark
   show_default=True,
   help=(
     "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
-    "outlook_calendar, outlook_mail, "
+    "chats, chats_facts, outlook_calendar, outlook_mail, "
     "teams or teams_<profile>, teams-channels or teams_channels_<profile>, "
-    "calendar or calendar_<profile>, mail or mail_<profile>"
+    "calendar or calendar_<profile>, mail or mail_<profile>, "
+    "drive or drive_<profile>"
   ),
 )
 @click.option("--dry-run", is_flag=True)
@@ -677,6 +678,19 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       chats_path=Path(chats_path),
       skip_dirs=skip_dirs,
     )
+  if source == "chats_facts":
+    from yaams.ingest.chats import DEFAULT_SKIP_DIRS as _CHATS_SKIP_DIRS
+    from yaams.ingest.chats_facts import ChatsFactsAdapter
+    chats_path = cfg.get("chats_path")
+    if not chats_path:
+      raise ValueError(
+        "chats_facts source requires ingest.chats_facts.chats_path in config.yaml"
+      )
+    skip_dirs = set(cfg.get("skip_dirs") or _CHATS_SKIP_DIRS)
+    return ChatsFactsAdapter(
+      chats_path=Path(chats_path),
+      skip_dirs=skip_dirs,
+    )
   if source.startswith("calendar_"):
     profile = source[len("calendar_"):]
     return CalendarAdapter(
@@ -725,6 +739,12 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       skip_bots=bool(cfg.get("skip_bots", True)),
       page_size=int(cfg.get("page_size", 50)),
     )
+  if source.startswith("drive_"):
+    from yaams.ingest.drive import DriveAdapter
+    profile = source[len("drive_"):]
+    base = cfg.get("local_dir") or "~/brain/docs"
+    local_dir = (cfg.get("dirs") or {}).get(profile) or str(Path(base) / profile)
+    return DriveAdapter(profile=profile, local_dir=Path(local_dir))
   if source.startswith("mail_"):
     profile = source[len("mail_"):]
     folders = tuple(cfg.get("folders") or ("Inbox", "SentItems"))
@@ -934,11 +954,12 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
   if source == "all":
     return [
       "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
-      "github", "chats", "outlook_calendar", "outlook_mail",
+      "github", "chats", "chats_facts", "outlook_calendar", "outlook_mail",
       *_piggy_sources("teams", "teams_"),
       *_piggy_sources("teams_channels", "teams_channels_"),
       *_piggy_sources("calendar", "calendar_"),
       *_piggy_sources("mail", "mail_"),
+      *_piggy_sources("drive", "drive_"),
     ]
   if source == "teams":
     return _piggy_sources("teams", "teams_")
@@ -948,6 +969,8 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
     return _piggy_sources("calendar", "calendar_")
   if source == "mail":
     return _piggy_sources("mail", "mail_")
+  if source == "drive":
+    return _piggy_sources("drive", "drive_")
   return [source]
 
 
@@ -980,6 +1003,8 @@ def _config_section(source: str) -> str:
     return "calendar"
   if source.startswith("mail_") or source == "mail":
     return "mail"
+  if source.startswith("drive_") or source == "drive":
+    return "drive"
   return source
 
 
@@ -989,7 +1014,7 @@ def _source_enabled(cfg: dict, source: str) -> bool:
   # deactivated in owa-piggy. teams_channels_ is checked first: it also
   # startswith "teams_", and slicing the wrong prefix would feed
   # "channels_<p>" to the profile-active check.
-  for prefix in ("teams_channels_", "teams_", "calendar_", "mail_"):
+  for prefix in ("teams_channels_", "teams_", "calendar_", "mail_", "drive_"):
     if source.startswith(prefix):
       if not _owa_piggy_profile_active(source[len(prefix):]):
         return False
@@ -1033,6 +1058,11 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     return [
       f"agent chats: {Path(path).expanduser()}" if path else "agent chats: n/a"
     ]
+  if source == "chats_facts":
+    path = source_cfg.get("chats_path")
+    return [
+      f"chat facts: {Path(path).expanduser()}" if path else "chat facts: n/a"
+    ]
   if source.startswith("calendar_"):
     profile = source[len("calendar_"):]
     return [f"owa-cal profile: {profile}"]
@@ -1054,6 +1084,11 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     profile = source[len("mail_"):]
     folders = source_cfg.get("folders") or ["Inbox", "SentItems"]
     return [f"owa-mail profile: {profile} ({', '.join(folders)})"]
+  if source.startswith("drive_"):
+    profile = source[len("drive_"):]
+    base = source_cfg.get("local_dir") or "~/brain/docs"
+    local_dir = (source_cfg.get("dirs") or {}).get(profile) or str(Path(base) / profile)
+    return [f"drive profile: {profile} -> {Path(local_dir).expanduser()}"]
   return ["n/a"]
 
 

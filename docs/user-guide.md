@@ -185,6 +185,7 @@ yaams refresh              # ingest + safe maintenance + associations
 | `folders` | generic recursive file walker (`.txt`, `.md`, `.pdf`, `.docx`) |
 | `tier2_ledger` | curated atomic notes from cognitive-ledger |
 | `chats` | agent chats — Claude Code session summaries written by the `SessionEnd` hook (one markdown file per session) |
+| `chats_facts` | opt-in tier — atomic facts from chat summaries' `## Insights / Facts` bullets, held in isolated indexes and searched only via `--source chats_facts` (see §11) |
 | `github` | issues and PRs across your repos |
 | `calendar` / `calendar_<profile>` | Outlook calendar via `owa-cal` |
 | `mail` / `mail_<profile>` | Microsoft 365 mail via `owa-mail` |
@@ -639,8 +640,9 @@ When the firehose surfaces something worth keeping forever, promote it into
 your [cognitive-ledger](https://github.com/damsleth/cognitive-ledger) inbox.
 
 ```bash
-yaams promote generate            # scan recent items for candidates
+yaams promote generate            # scan recent items for candidates (entity-clustered)
 yaams promote generate --days 60
+yaams promote from-facts          # one candidate per chat-summary fact bullet
 yaams promote list                # see the queue
 yaams promote review              # interactive: accept / edit / reject / skip
 ```
@@ -648,6 +650,40 @@ yaams promote review              # interactive: accept / edit / reject / skip
 **Nothing is promoted without your explicit acceptance.** Accepted notes land
 in `promote.inbox_path` (default `~/yaams/ledger-inbox/`), ready for you to
 file into the ledger proper.
+
+### Two promotion lanes
+
+- `promote generate` clusters raw items by entity and drafts an atomic note per
+  entity via an LLM — good for facts that recur across many messages.
+- `promote from-facts` reads the `## Insights / Facts` bullets your chat
+  summaries already contain and drafts one candidate per bullet — no LLM, no
+  entity clustering. Use it to lift session-level decisions/insights into the
+  ledger. `chats_facts` items are deliberately excluded from `promote generate`,
+  so a fact is only ever promoted through this lane (never double-promoted).
+  Facts are drafted straight from disk, so this works even if the `chats_facts`
+  retrieval tier is not enabled. With `promote.semantic_dedup` off (the
+  default) it drafts every bullet, so expect to reject low-value ones during
+  review; enable semantic dedup (needs the `ledger` CLI) to suppress
+  near-duplicates of existing notes.
+
+#### The `chats_facts` retrieval tier
+
+Enabling `ingest.chats_facts` additionally indexes each fact as its own item so
+you can search facts directly with `yaams query --source chats_facts "…"`.
+These facts live in **separate** fts/vec indexes, not the shared ones: pooling
+~600 short facts into the main index shifts BM25 corpus statistics and measurably
+regresses ordinary retrieval, so the tier is isolated and only consulted when you
+explicitly target it. It is off by default:
+
+```yaml
+ingest:
+  chats_facts:
+    enabled: true
+    chats_path: ~/brain/chats   # defaults to the same dir as `chats`
+```
+
+Then `yaams ingest --source chats_facts`. The promotion lane above needs no
+ingestion — it reads the summaries directly.
 
 ---
 

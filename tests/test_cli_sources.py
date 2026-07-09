@@ -337,6 +337,65 @@ def test_build_rows_synthesizes_missing_m365_from_piggy(
   assert all(c.enabled is False for c in mail_children)
 
 
+def test_build_rows_filters_synthetic_profiles_by_type(
+  tmp_path: Path, monkeypatch
+) -> None:
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(
+    monkeypatch,
+    calendar=[
+      {"alias": "crayon", "kind": "oauth", "default": True},
+      {"alias": "brkh-g", "kind": "oauth", "default": False},
+    ],
+    teams=[
+      {"alias": "crayon", "type": "m365", "enabled": True, "default": True},
+      {"alias": "brkh-g", "type": "google", "enabled": True, "default": False},
+      {"alias": "nc-ado", "type": "ado", "enabled": True, "default": False},
+    ],
+  )
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  # google/ado profiles feed none of mail/calendar/teams — only crayon shows.
+  for parent in ("mail", "calendar", "teams", "teams_channels"):
+    children = {
+      r.label for r in rows
+      if isinstance(r, SubPathRow) and r.parent == parent
+    }
+    assert children == {"crayon"}, f"{parent}: {children}"
+
+
+def test_build_rows_no_type_defaults_to_m365(tmp_path: Path, monkeypatch) -> None:
+  # Older owa-piggy without a `type` field: every profile stays visible.
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(
+    monkeypatch,
+    teams=[
+      {"alias": "crayon", "enabled": True, "default": True},
+      {"alias": "brkh-g", "enabled": True, "default": False},
+    ],
+  )
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  teams_children = {
+    r.label for r in rows if isinstance(r, SubPathRow) and r.parent == "teams"
+  }
+  assert teams_children == {"crayon", "brkh-g"}
+
+
 def test_build_rows_skips_m365_synthesis_when_already_configured(
   tmp_path: Path, monkeypatch
 ) -> None:

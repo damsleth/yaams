@@ -50,6 +50,33 @@ PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail"}
 PATH_LIST_SOURCES = {"email", "folders"}
 SINGLE_PATH_SOURCES = {"notes"}
 
+# What each owa-piggy profile `type` can feed. Grounded in ingest paths that
+# exist today: owa-cal/owa-mail are Graph-only, so a google profile is drive
+# only (drive self-selects provider by token shape at ingest time and has no
+# profile picker here, so it's absent from the profile-aware rows below); an
+# ADO profile feeds nothing until the ado source lands. owa-piggy owns the
+# `type`; yaams owns this mapping. Widen a row only when its ingest path exists.
+SOURCES_BY_PROFILE_TYPE: dict[str, set[str]] = {
+  "m365": {"mail", "calendar", "teams", "teams_channels", "drive"},
+  "google": {"drive"},
+  "ado": set(),
+}
+# Older owa-piggy has no `type` field; treat an unknown/absent type as m365 so
+# behaviour is unchanged until the broker ships classification.
+_DEFAULT_PROFILE_TYPE = "m365"
+
+
+def _profile_type(prof: dict) -> str:
+  return (prof.get("type") or _DEFAULT_PROFILE_TYPE).strip() or _DEFAULT_PROFILE_TYPE
+
+
+def _type_supports(ptype: str, source_name: str) -> bool:
+  return source_name in SOURCES_BY_PROFILE_TYPE.get(ptype, set())
+
+
+def _supports(prof: dict, source_name: str) -> bool:
+  return _type_supports(_profile_type(prof), source_name)
+
 # M365 source blocks the TUI can lazy-create on first toggle. These are the
 # sources whose availability is implied by an owa-piggy profile existing:
 # rather than make the user edit YAML before they can see the checkbox,
@@ -202,6 +229,7 @@ def discover_teams_profiles() -> list[dict]:
           enabled = bool(entry.get("registered"))
         result.append({
           "alias": alias,
+          "type": (entry.get("type") or _DEFAULT_PROFILE_TYPE),
           "default": bool(entry.get("default", False)),
           "enabled": enabled,
           "registered": bool(entry.get("registered", enabled)),
@@ -209,6 +237,24 @@ def discover_teams_profiles() -> list[dict]:
         })
   _profile_cache["teams"] = result
   return result
+
+
+def _profile_types() -> dict[str, str]:
+  """alias -> type from owa-piggy (the type authority).
+
+  Used to filter sources whose profile list comes from another CLI that
+  doesn't carry the type (calendar shells owa-cal). Aliases owa-piggy doesn't
+  know default to m365 so a user's explicit config is never hidden.
+  """
+  return {p["alias"]: _profile_type(p) for p in discover_teams_profiles()}
+
+
+def _config_alias_ok(alias: str, source_name: str, types: dict[str, str]) -> bool:
+  """Keep an explicitly-configured alias unless owa-piggy knows its type AND
+  that type can't feed this source. Unknown aliases are kept (never hide a
+  user's own config just because the profile isn't discoverable)."""
+  t = types.get(alias)
+  return t is None or _type_supports(t, source_name)
 
 
 def _clear_profile_cache() -> None:
@@ -269,7 +315,12 @@ def _build_rows(cfg: dict) -> list[Row]:
         ))
     elif key == "calendar":
       configured = list(block.get("profiles") or [])
-      available = discover_calendar_profiles()
+      # owa-cal's list carries no profile type; owa-piggy is the authority.
+      types = _profile_types()
+      available = [
+        p for p in discover_calendar_profiles()
+        if _type_supports(types.get(p["alias"], _DEFAULT_PROFILE_TYPE), key)
+      ]
       seen: set[str] = set()
       for prof in available:
         alias = prof["alias"]
@@ -285,14 +336,15 @@ def _build_rows(cfg: dict) -> list[Row]:
           tag=" / ".join(tag_parts),
         ))
       for alias in configured:
-        if alias not in seen:
+        if alias not in seen and _config_alias_ok(alias, key, types):
           rows.append(SubPathRow(
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
           ))
     elif key == "mail":
       configured = list(block.get("profiles") or [])
-      available = discover_mail_profiles()
+      types = _profile_types()
+      available = [p for p in discover_mail_profiles() if _supports(p, key)]
       seen = set()
       for prof in available:
         alias = prof["alias"]
@@ -308,7 +360,7 @@ def _build_rows(cfg: dict) -> list[Row]:
           tag=" / ".join(tag_parts),
         ))
       for alias in configured:
-        if alias not in seen:
+        if alias not in seen and _config_alias_ok(alias, key, types):
           rows.append(SubPathRow(
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
@@ -316,7 +368,8 @@ def _build_rows(cfg: dict) -> list[Row]:
     elif key in ("teams", "teams_channels"):
       # Both share owa-piggy's profile list (same Graph/ic3 auth).
       configured = list(block.get("profiles") or [])
-      available = discover_teams_profiles()
+      types = _profile_types()
+      available = [p for p in discover_teams_profiles() if _supports(p, key)]
       seen = set()
       for prof in available:
         alias = prof["alias"]
@@ -332,7 +385,7 @@ def _build_rows(cfg: dict) -> list[Row]:
           tag=" / ".join(tag_parts),
         ))
       for alias in configured:
-        if alias not in seen:
+        if alias not in seen and _config_alias_ok(alias, key, types):
           rows.append(SubPathRow(
             kind="subpath", parent=key, subkind="profile", index=0,
             label=alias, enabled=True, tag="not discovered",
@@ -371,6 +424,11 @@ def _append_synthetic_m365_rows(rows: list[Row]) -> None:
   for source_name in ("mail", "calendar", "teams", "teams_channels"):
     if source_name in configured:
       continue
+    eligible = [p for p in piggy if _supports(p, source_name)]
+    if not eligible:
+      # No profile can feed this source (e.g. only google/ado profiles exist);
+      # don't synthesize a row that would ingest nothing.
+      continue
     rows.append(SourceRow(
       kind="source",
       name=source_name,
@@ -378,7 +436,7 @@ def _append_synthetic_m365_rows(rows: list[Row]) -> None:
       summary="not configured — toggle a profile to create the block",
       synthetic=True,
     ))
-    for prof in piggy:
+    for prof in eligible:
       alias = prof["alias"]
       tag = "default" if prof.get("default") else ""
       rows.append(SubPathRow(

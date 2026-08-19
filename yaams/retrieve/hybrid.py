@@ -17,8 +17,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Iterable, Sequence, cast
 
-from yaams.schema import FACTS_FTS_TABLE, FACTS_SOURCE, FACTS_VEC_TABLE
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
+from yaams.schema import FACTS_FTS_TABLE, FACTS_SOURCE, FACTS_VEC_TABLE
 from yaams.time import ensure_utc
 
 DEFAULT_TOP_K = 20

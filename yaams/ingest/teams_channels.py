@@ -187,9 +187,13 @@ class TeamsChannelsAdapter:
         )
         time.sleep(delay)
         continue
+      # Include the verb's own args: a per-channel 403 (rc=12, chatsvc
+      # denying one conversation) is otherwise indistinguishable from a
+      # profile-wide auth failure in the log, and you can't tell which
+      # channel to go look at.
       logger.warning(
-        "owa-teams %s failed (profile=%s rc=%d): %s",
-        verb, self.profile, result.returncode,
+        "owa-teams %s failed (profile=%s rc=%d, args=%s): %s",
+        verb, self.profile, result.returncode, " ".join(args[1:]),
         (result.stderr or "").strip() or "no stderr",
       )
       return []

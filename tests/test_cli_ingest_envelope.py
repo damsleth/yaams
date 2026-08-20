@@ -184,6 +184,46 @@ def test_sources_to_run_skips_disabled_mail_and_calendar_profiles(monkeypatch):
   assert ingest_mod._source_enabled(cfg, "mail_nc") is True
 
 
+def test_sources_to_run_skips_google_profiles_for_graph_only_sources(monkeypatch):
+  """A google profile can only feed drive. Listing it under mail/calendar
+  used to shell owa-mail/owa-cal with a Google token and collect a 401 that
+  reads as "auth expired"; ingest now filters on the owa-piggy profile type
+  the same way `yaams sources` does."""
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+  monkeypatch.setattr(
+    ingest_mod.sources_mod,
+    "discover_teams_profiles",
+    lambda: [
+      {"alias": "brkh", "enabled": True, "type": "m365"},
+      {"alias": "brkh-g", "enabled": True, "type": "google"},
+    ],
+  )
+  cfg = {
+    "ingest": {
+      "mail": {"enabled": True, "profiles": ["brkh", "brkh-g"]},
+      "calendar": {"enabled": True, "profiles": ["brkh", "brkh-g"]},
+      "drive": {"enabled": True, "profiles": ["brkh", "brkh-g"]},
+    }
+  }
+  assert ingest_mod._sources_to_run("mail", cfg) == ["mail_brkh"]
+  assert ingest_mod._sources_to_run("calendar", cfg) == ["calendar_brkh"]
+  # drive picks its provider by token shape, so both belong there.
+  assert ingest_mod._sources_to_run("drive", cfg) == ["drive_brkh", "drive_brkh-g"]
+
+
+def test_sources_to_run_keeps_untyped_profiles_for_all_sources(monkeypatch):
+  """Older owa-piggy emits no `type`; those profiles must keep working
+  everywhere (absent type defaults to m365)."""
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+  monkeypatch.setattr(
+    ingest_mod.sources_mod,
+    "discover_teams_profiles",
+    lambda: [{"alias": "nc", "enabled": True}],
+  )
+  cfg = {"ingest": {"mail": {"enabled": True, "profiles": ["nc"]}}}
+  assert ingest_mod._sources_to_run("mail", cfg) == ["mail_nc"]
+
+
 def test_sources_to_run_keeps_configured_teams_when_discovery_unavailable(monkeypatch):
   ingest_mod = importlib.import_module("yaams.cli.ingest")
   monkeypatch.setattr(

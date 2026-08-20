@@ -46,6 +46,13 @@ logger = logging.getLogger("yaams.ingest.m365_mail")
 DEFAULT_FOLDERS = ("Inbox", "SentItems")
 DEFAULT_CHUNK_DAYS = 30
 
+# owa-tools' owa_core.errors.ExitCode.AUTH_EXPIRED. An auth failure is never a
+# legitimate "no mail in this window" answer, so it must not be swallowed into
+# an empty result the way a genuinely empty folder is: the run summary would
+# report the source as a successful 0-item fetch and the real cause (dead
+# refresh token, wrong-provider profile) would only show up as a log warning.
+_RC_AUTH_EXPIRED = 11
+
 _AUTOMATED_SUBJECT = re.compile(
   r"(unsubscribe|newsletter|digest|weekly update|do not reply"
   # Norwegian equivalents — most of the mailbox is Norwegian and the RFC
@@ -118,10 +125,17 @@ class M365MailAdapter:
       capture_output=True, text=True,
     )
     if result.returncode != 0:
+      stderr = (result.stderr or "").strip() or "no stderr"
+      # Raise rather than degrade: the runner catches this per source and
+      # marks it failed, so a dead token stops looking like a quiet day.
+      if result.returncode == _RC_AUTH_EXPIRED:
+        raise RuntimeError(
+          f"owa-mail auth failed for profile '{self.profile}' "
+          f"(folder={folder} rc={_RC_AUTH_EXPIRED}): {stderr}"
+        )
       logger.warning(
         "owa-mail messages failed (profile=%s folder=%s rc=%d): %s",
-        self.profile, folder, result.returncode,
-        (result.stderr or "").strip() or "no stderr",
+        self.profile, folder, result.returncode, stderr,
       )
       return []
     if not result.stdout.strip():

@@ -940,9 +940,21 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
 
   def _piggy_sources(kind: str, prefix: str) -> list[str]:
     profiles = list((cfg.get("ingest", {}).get(kind, {}) or {}).get("profiles", []))
+    # owa-piggy owns the profile `type`; SOURCES_BY_PROFILE_TYPE says which
+    # sources that type can feed. `yaams sources` already filtered on this,
+    # but ingest did not - so a google profile listed under a Graph-only
+    # source (mail/calendar) shelled owa-mail/owa-cal with a Google token
+    # and got a 401 that reads as "auth expired". Filter here too.
+    types = sources_mod._profile_types()
     active: list[str] = []
     for p in profiles:
-      if _owa_piggy_profile_active(p):
+      if not sources_mod._config_alias_ok(p, kind, types):
+        click.echo(
+          f"  skipping {prefix}{p}: owa-piggy profile '{p}' is type "
+          f"'{types.get(p)}' and cannot feed {kind}",
+          err=True,
+        )
+      elif _owa_piggy_profile_active(p):
         active.append(f"{prefix}{p}")
       else:
         click.echo(

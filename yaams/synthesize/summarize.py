@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from yaams.synthesize.llm import llm_adapter_from_config
 from yaams.time import parse_iso_datetime, to_local
@@ -325,7 +325,12 @@ def write_summary_to_inbox(text: str, *, when: datetime) -> str | None:
     inbox.mkdir(parents=True, exist_ok=True)
   except OSError:
     return None
-  iso = when.isoformat(timespec="seconds")
+  # The ledger's `sleep lint` requires a trailing "Z"; datetime.isoformat()
+  # emits "+00:00" and lint rejects it. yaams was writing notes into the
+  # ledger inbox that the ledger's own lint refused — 2 errors per ingest run,
+  # regenerated every time the old files were hand-fixed.
+  _utc = when.astimezone(timezone.utc) if when.tzinfo else when.replace(tzinfo=timezone.utc)
+  iso = _utc.strftime("%Y-%m-%dT%H:%M:%SZ")
   path = inbox / f"note__ingest_summary_{when.strftime('%Y_%m_%d_%H%M%S')}.md"
   body = (
     f"---\n"

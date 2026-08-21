@@ -706,6 +706,7 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     return TeamsChannelsAdapter(
       profile=profile,
       teams=tuple(cfg.get("teams") or ()),
+      skip_channels=frozenset(cfg.get("skip_channels") or ()),
       limit_pages=int(cfg.get("limit_pages", 4)),
       backfill_limit_pages=int(backfill_raw) if backfill_raw is not None else None,
       skip_bots=bool(cfg.get("skip_bots", True)),

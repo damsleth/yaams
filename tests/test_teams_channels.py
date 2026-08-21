@@ -428,3 +428,22 @@ def test_source_enabled_respects_disabled_block(monkeypatch):
   )
   cfg = {"ingest": {"teams_channels": {"enabled": False, "profiles": ["crayon"]}}}
   assert ingest_mod._source_enabled(cfg, "teams_channels_crayon") is False
+
+
+def test_adapter_skip_channels_denylist(monkeypatch):
+  c1, c2 = "19:c1@thread.tacv2", "19:private@thread.tacv2"
+  adapter = _adapter(
+    monkeypatch,
+    teams_json=[{"id": "team-1", "displayName": "Marketing"}],
+    channels_by_team={"team-1": [
+      {"id": c1, "displayName": "General"},
+      {"id": c2, "displayName": "Test privat kanal"},
+    ]},
+    messages_by_channel={
+      c1: [_row(message_id="a", channel_id=c1, team_id="team-1")],
+      c2: [_row(message_id="b", channel_id=c2, team_id="team-1")],
+    },
+    skip_channels=frozenset({c2}),
+  )
+  items = list(adapter.extract(datetime(2026, 1, 1, tzinfo=UTC)))
+  assert [i.raw_metadata["channel_id"] for i in items] == [c1]

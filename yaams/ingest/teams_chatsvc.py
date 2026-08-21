@@ -331,11 +331,12 @@ class ChatsvcAdapter:
       # real chats, not chats themselves - ingesting them duplicates the
       # underlying messages and bloats the entity graph with self-mentions.
       tt = (chat.get("threadProperties") or {}).get("threadType", "").lower()
-      # streamof* are aggregator pointers (see below); `space` threads are
-      # team-channel spaces (@thread.tacv2) that leak into ME/conversations on
-      # some tenants (e.g. SoftwareOne). Their /messages endpoint 404s here and
-      # they're already ingested via the teams_channels source, so skip them.
-      if tt.startswith("streamof") or tt == "space":
+      # streamof* are aggregator pointers (see below); `space` (team-channel
+      # spaces) and `topic` (channel post-reply threads) are channel threads
+      # that leak into ME/conversations on some tenants (e.g. SoftwareOne).
+      # chatsvc's user-scoped /messages 404s on both, and they're already
+      # ingested via the teams_channels source, so skip them.
+      if tt.startswith("streamof") or tt in ("space", "topic"):
         continue
       last_msg = chat.get("lastMessage") or {}
       last_ts_raw = last_msg.get("originalarrivaltime") or last_msg.get("composetime")

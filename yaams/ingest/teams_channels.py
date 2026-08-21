@@ -65,6 +65,10 @@ _AUTOMATED_CONTENT_RE = re.compile(
 class TeamsChannelsAdapter:
   profile: str
   teams: tuple[str, ...] = ()      # team-id allowlist; empty = all joined teams
+  # Channel-id denylist. Graph's /teams/{id}/channels lists private channels
+  # you can see but not read, so ingest 403s on them every run. Ids are
+  # globally unique, so this is a flat list - no team/profile nesting.
+  skip_channels: frozenset[str] = frozenset()
   limit_pages: int = 4             # owa-teams --limit (pages of ~50)
   # Proper fix: owa-teams --since <date> would avoid pulling all pages; use
   # backfill_limit_pages for now to enable a one-time deep backfill without
@@ -142,7 +146,7 @@ class TeamsChannelsAdapter:
     out: list[tuple[str, str]] = []
     for channel in self._run(["channels", "--team", team_id]):
       channel_id = channel.get("id")
-      if not channel_id:
+      if not channel_id or channel_id in self.skip_channels:
         continue
       out.append((channel_id, (channel.get("displayName") or "").strip()))
     return out

@@ -72,8 +72,30 @@ Tier 1 (raw, high-volume)          Tier 2 (curated, atomic)
 YAAMS is high-volume Tier 1; the ledger is high-precision Tier 2. They
 fuse at query time with a small ledger boost.
 
-Do not write into the cognitive-ledger repo or its ledger store from this
-repo. Cross-repo writes are out of scope. Reads happen through adapters.
+Never write into the cognitive-ledger **repo** (its code) from here. Reads of
+the ledger store happen through adapters.
+
+**Two sanctioned writes into the ledger _store_.** The blanket "no cross-repo
+writes" rule used to be stated absolutely here, but the code has always had two
+exceptions, and an absolute rule the code breaks is worse than a documented
+exception:
+
+| Path | Destination | Gate |
+|---|---|---|
+| `yaams promote review` (accepted candidates) | `promote.inbox_path`, default `~/yaams/ledger-inbox/` — a **staging** dir, not the ledger's own inbox | explicit per-candidate acceptance |
+| post-ingest summary digest (`write_summary_to_inbox`) | the ledger's **real** `00_inbox/`, resolved live via `ledger paths --json` | `summary.to_inbox`, default **on** |
+
+Note the asymmetry: promotion stages outside the ledger, while the summary digest
+lands directly in it. The second is the one that can break the sink.
+
+**If you write into `00_inbox/`, cogled's lint is your contract test.** The
+frontmatter must satisfy `ledger sleep lint` — in particular timestamps are
+`%Y-%m-%dT%H:%M:%SZ`; `datetime.isoformat()` emits `+00:00` and lint **rejects**
+it. That regressed for real: every ingest run filed a note the ledger refused,
+2 errors per run, and hand-fixing the files was useless because the writer
+regenerated them. Run `ledger sleep lint` after touching anything that writes
+there. See `docs/yaams-cogled-interface.md` in the cogled repo for the full
+seam contract.
 
 ## Engine
 

@@ -10,6 +10,18 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Fixed
+- **Ledger inbox notes were written in a format the ledger rejects.**
+  `write_summary_to_inbox` used `datetime.isoformat()`, which emits `+00:00`;
+  cogled's `sleep lint` requires a trailing `Z` and rejects the offset. Every
+  ingest run therefore filed a note into `00_inbox/` that the ledger's own lint
+  refused — 2 errors per run. The cogled-side seam contract
+  (`docs/yaams-cogled-interface.md` §2c) had already specified `Z`, so this was
+  YAAMS violating an existing contract rather than an underspecified one.
+  Hand-fixing the files was cosmetic: the writer regenerated the error on the
+  next ingest. Fixed at the producer; naive and tz-aware `when` now format
+  identically.
+
 ### Added
 - **Chat-summary fact extraction.** The `## Insights / Facts` bullets that
   `capture-chat.sh` already writes into each session summary are now first-class

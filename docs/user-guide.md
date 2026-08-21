@@ -651,6 +651,30 @@ yaams promote review              # interactive: accept / edit / reject / skip
 in `promote.inbox_path` (default `~/yaams/ledger-inbox/`), ready for you to
 file into the ledger proper.
 
+### The other write path: the post-ingest summary
+
+`yaams promote` is not the only thing that writes toward the ledger. After each
+non-dry-run ingest, YAAMS files its digest as a dated note straight into the
+ledger's **real** inbox — `<ledger_notes_dir>/00_inbox/note__ingest_summary_*.md`,
+resolved live via `ledger paths --json`:
+
+```yaml
+summary:
+  to_inbox: true      # default; set false to keep digests out of the ledger
+```
+
+Worth knowing about the asymmetry: accepted *promotions* stage in
+`promote.inbox_path` (outside the ledger), while the *summary digest* lands
+directly inside it. So the digest is the path that can pollute the sink, and it
+is on by default. The notes are meant to be triaged and mostly rejected —
+`ledger inbox cleanup` archives stale auto-generated items for you.
+
+The frontmatter must satisfy cogled's `ledger sleep lint`; timestamps in
+particular are `...Z`, not `+00:00`. If you change anything about how these notes
+are written, run `ledger sleep lint` before calling it done — a producer that
+emits notes the sink rejects is a broken seam even when both repos' own tests
+pass.
+
 ### Two promotion lanes
 
 - `promote generate` clusters raw items by entity and drafts an atomic note per

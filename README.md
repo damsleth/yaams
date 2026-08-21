@@ -204,6 +204,10 @@ fact; it works whether or not the `chats_facts` retrieval tier is enabled.
 Nothing is promoted without your explicit acceptance. Accepted notes land in
 `promote.inbox_path` (default `~/yaams/ledger-inbox/`).
 
+Separately, each ingest run files its digest straight into the ledger's own
+`00_inbox/` as a dated note (`summary.to_inbox`, default on) — triage or reject
+those with `ledger inbox triage` / `ledger inbox cleanup`.
+
 ## Configure
 
 `config.yaml` lives in the repo root (or `~/.config/yaams/config.yaml`, or

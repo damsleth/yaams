@@ -11,10 +11,11 @@ Phase F fusion layer can merge results across the two tiers cheaply.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from array import array
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Sequence, cast
 
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
@@ -108,6 +109,13 @@ class HybridQueryConfig:
   # Set by the eval harness so a replayed gold query can't boost itself (a live
   # query has no self-feedback yet either). None in normal use.
   feedback_boost_exclude_query_id: str | None = None
+  # Recency decay on raw Tier 1 items only: score *= max(floor,
+  # exp(-age_days / tau)). tier2 and consolidations are exempt, and it only
+  # applies to relevance-sorted queries (timestamp sorts use relevance_floor
+  # pre-sort, which decay must not perturb). 0 disables. Lineage: blanket
+  # decay was killed as recency-f0.9; see .plans/recency-decay-v2.md.
+  recency_decay_tau_days: float = 90.0
+  recency_decay_floor: float = 0.9
 
 
 @dataclass
@@ -856,11 +864,20 @@ def _hydrate_item(
     score += cfg.tier2_factual_coverage_gamma / (cfg.rrf_k + components.fts_rank + 1)
   if cfg.tier2_boost != 1.0 and row["source"] == cfg.tier2_source:
     score *= cfg.tier2_boost
+  timestamp = ensure_utc(_parse_iso(row["timestamp"]))
+  if (
+    cfg.recency_decay_tau_days > 0
+    and cfg.sort == "relevance"
+    and row["source"] != cfg.tier2_source
+  ):
+    score *= _recency_factor(
+      timestamp, datetime.now(timezone.utc), cfg.recency_decay_tau_days, cfg.recency_decay_floor
+    )
   return HybridResult(
     id=row["id"],
     kind="item",
     source=row["source"],
-    timestamp=ensure_utc(_parse_iso(row["timestamp"])),
+    timestamp=timestamp,
     sender=row["sender"] or "",
     subject=row["subject"] or "",
     content=row["content"] or "",
@@ -907,3 +924,10 @@ def _hydrate_consolidation(
 
 def _parse_iso(value: str) -> datetime:
   return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _recency_factor(ts: datetime | None, now: datetime, tau_days: float, floor: float) -> float:
+  if ts is None:
+    return 1.0
+  age_days = max(0.0, (now - ensure_utc(ts)).total_seconds() / 86400.0)
+  return max(floor, math.exp(-age_days / tau_days))

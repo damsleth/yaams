@@ -69,3 +69,6 @@ t5-synonyms-rerun	hybrid	dev	0.6015	0.6567	0.4931	230.3	0	ok
 baseline-check-t4	hybrid	dev	0.6076	0.6567	0.4931	156.6	0	ok
 diacritics-0	hybrid	dev	0.5805	0.6567	0.4931	199.1	0	ok
 diacritics-2	hybrid	dev	0.6074	0.6567	0.4931	199.5	0	ok
+baseline-recency2-anchor	hybrid	dev	0.6076	0.6567	0.4931	157.5	0	ok
+recency2-raw-t90-f0.9	hybrid	dev	0.5357	0.597	0.3926	156.8	4	fail:regression
+baseline-post-recency2	hybrid	dev	0.6076	0.6567	0.4931	155.6	0	ok

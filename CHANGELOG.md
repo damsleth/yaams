@@ -10,6 +10,18 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Changed
+- **Recency decay re-measured on the 79-gold era and killed again; no change
+  shipped.** A scoped variant adapted from Headroom's `RecencyBoostRanker`
+  (decay only raw Tier 1 items, only relevance-sorted queries; tau=90d,
+  floor 0.9) regressed 4 gold queries and dropped dev quality 0.6076 -> 0.5357
+  (`recency2-raw-t90-f0.9`, `fail:regression`) - the same signature as the
+  jun18 `recency-f0.9` kill on the ≈46-gold era. Verdict now holds across two
+  eras and two scopings: this corpus does not reward recency; the gold set asks
+  about facts whose correct evidence is old. Experiment code preserved on the
+  `autoresearch/retrieval-recency-v2` branch; rows logged to the experiment
+  timeline. Do not retry without a freshness-sensitive gold population.
+
 ### Fixed
 - **Ledger inbox notes were written in a format the ledger rejects.**
   `write_summary_to_inbox` used `datetime.isoformat()`, which emits `+00:00`;

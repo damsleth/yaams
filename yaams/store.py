@@ -426,6 +426,17 @@ def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]
   return upgraded
 
 
+# SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; stay under it when an
+# id list is built from a result set rather than a bounded batch.
+# ponytail: itertools.batched would do this, but it lands in 3.12 and we support 3.11.
+_SQL_VARS = 900
+
+
+def _chunked(seq: Sequence[str], size: int = _SQL_VARS):
+  for start in range(0, len(seq), size):
+    yield seq[start:start + size]
+
+
 def existing_ids(conn: sqlite3.Connection, ids: Sequence[str]) -> set[str]:
   """Return the subset of ``ids`` already present in the items table.
 
@@ -436,10 +447,7 @@ def existing_ids(conn: sqlite3.Connection, ids: Sequence[str]) -> set[str]:
   loaded at all.
   """
   found: set[str] = set()
-  id_list = list(ids)
-  # Stay under SQLite's default 999-variable limit per statement.
-  for start in range(0, len(id_list), 900):
-    chunk = id_list[start:start + 900]
+  for chunk in _chunked(list(ids)):
     placeholders = ",".join("?" * len(chunk))
     rows = conn.execute(
       f"SELECT id FROM items WHERE id IN ({placeholders})", chunk
@@ -762,11 +770,12 @@ def _mark_items_consolidated(
 ) -> None:
   if not item_ids:
     return
-  placeholders = ",".join("?" * len(item_ids))
-  conn.execute(
-    f"UPDATE items SET consolidated_into = ? WHERE id IN ({placeholders})",
-    (consolidation_id, *item_ids),
-  )
+  for chunk in _chunked(list(item_ids)):
+    placeholders = ",".join("?" * len(chunk))
+    conn.execute(
+      f"UPDATE items SET consolidated_into = ? WHERE id IN ({placeholders})",
+      (consolidation_id, *chunk),
+    )
 
 
 def clear_consolidations(conn: sqlite3.Connection, sources: Sequence[str] | None = None) -> int:
@@ -782,23 +791,25 @@ def clear_consolidations(conn: sqlite3.Connection, sources: Sequence[str] | None
       ]
       if not ids:
         return 0
-      id_placeholders = ",".join("?" * len(ids))
-      conn.execute(
-        f"UPDATE items SET consolidated_into = NULL WHERE consolidated_into IN ({id_placeholders})",
-        tuple(ids),
-      )
-      conn.execute(
-        f"DELETE FROM consolidations_vec WHERE consolidation_id IN ({id_placeholders})",
-        tuple(ids),
-      )
-      conn.execute(
-        f"DELETE FROM consolidations_fts WHERE consolidation_id IN ({id_placeholders})",
-        tuple(ids),
-      )
-      conn.execute(
-        f"DELETE FROM consolidations WHERE id IN ({id_placeholders})",
-        tuple(ids),
-      )
+      for chunk in _chunked(ids):
+        id_placeholders = ",".join("?" * len(chunk))
+        conn.execute(
+          f"UPDATE items SET consolidated_into = NULL "
+          f"WHERE consolidated_into IN ({id_placeholders})",
+          tuple(chunk),
+        )
+        conn.execute(
+          f"DELETE FROM consolidations_vec WHERE consolidation_id IN ({id_placeholders})",
+          tuple(chunk),
+        )
+        conn.execute(
+          f"DELETE FROM consolidations_fts WHERE consolidation_id IN ({id_placeholders})",
+          tuple(chunk),
+        )
+        conn.execute(
+          f"DELETE FROM consolidations WHERE id IN ({id_placeholders})",
+          tuple(chunk),
+        )
       return len(ids)
     count = conn.execute("SELECT count(*) FROM consolidations").fetchone()[0]
     conn.execute("UPDATE items SET consolidated_into = NULL")

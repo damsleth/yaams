@@ -171,7 +171,7 @@ def _to_consolidation(session: Session, cfg: SessionConfig) -> Consolidation:
     participants=session.participants,
     item_count=len(session.items),
     summary=summary,
-    raw_item_ids=raw_ids[:50],
+    raw_item_ids=raw_ids,
   )
 
 

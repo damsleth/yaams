@@ -603,6 +603,13 @@ _THREAD_COHERENCE_OMEGA = 0.15
 
 _RANK_AGREEMENT_DELTA = 0.05
 
+# fts_rank_dominance_tiebreak: after the final rrf_score sort, a single stable
+# adjacent-swap pass promoting B above A when (a) both have fts_rank set,
+# (b) B.fts_rank < A.fts_rank (B is strictly more lexically relevant), and
+# (c) the rrf gap abs(A.rrf - B.rrf) <= EPS * A.rrf.  Ordering-only, zero
+# recall risk.  EPS=0.07 (midpoint of [0.05, 0.10] sweep range).
+_FTS_DOMINANCE_EPS = 0.05
+
 
 def _fuse(
   ranked_lists: Sequence[list[tuple[str, str, int, float]]],
@@ -690,6 +697,26 @@ def _hydrate(
               comp.rrf_score += _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
       # Re-sort after credit injection
       ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
+
+  # fts_rank_dominance_tiebreak: single stable adjacent-swap pass.
+  # Promote B above A when (a) both have fts_rank, (b) B.fts_rank < A.fts_rank
+  # (B is strictly more lexically relevant), and (c) the rrf gap is within
+  # EPS * A.rrf.  Ordering-only — no score mutation, zero recall risk.
+  if _FTS_DOMINANCE_EPS > 0.0:
+    ordered_list = list(ordered)
+    for i in range(len(ordered_list) - 1):
+      key_a, comp_a = ordered_list[i]
+      key_b, comp_b = ordered_list[i + 1]
+      if (
+        comp_a.fts_rank is not None
+        and comp_b.fts_rank is not None
+        and comp_b.fts_rank < comp_a.fts_rank
+        and comp_a.rrf_score > 0.0
+        and abs(comp_a.rrf_score - comp_b.rrf_score)
+        <= _FTS_DOMINANCE_EPS * comp_a.rrf_score
+      ):
+        ordered_list[i], ordered_list[i + 1] = ordered_list[i + 1], ordered_list[i]
+    ordered = ordered_list
 
   results: list[HybridResult] = []
   for (kind, identifier), components in ordered[:cap]:

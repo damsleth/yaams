@@ -454,7 +454,7 @@ def backfill_entity_sources(conn: sqlite3.Connection, dictionary: Iterable[dict]
 _SQL_VARS = 900
 
 
-def _chunked(seq: Sequence[str], size: int = _SQL_VARS):
+def chunked(seq: Sequence[str], size: int = _SQL_VARS):
   for start in range(0, len(seq), size):
     yield seq[start:start + size]
 
@@ -469,7 +469,7 @@ def existing_ids(conn: sqlite3.Connection, ids: Sequence[str]) -> set[str]:
   loaded at all.
   """
   found: set[str] = set()
-  for chunk in _chunked(list(ids)):
+  for chunk in chunked(list(ids)):
     placeholders = ",".join("?" * len(chunk))
     rows = conn.execute(
       f"SELECT id FROM items WHERE id IN ({placeholders})", chunk
@@ -792,7 +792,7 @@ def _mark_items_consolidated(
 ) -> None:
   if not item_ids:
     return
-  for chunk in _chunked(list(item_ids)):
+  for chunk in chunked(list(item_ids)):
     placeholders = ",".join("?" * len(chunk))
     conn.execute(
       f"UPDATE items SET consolidated_into = ? WHERE id IN ({placeholders})",
@@ -813,7 +813,7 @@ def clear_consolidations(conn: sqlite3.Connection, sources: Sequence[str] | None
       ]
       if not ids:
         return 0
-      for chunk in _chunked(ids):
+      for chunk in chunked(ids):
         id_placeholders = ",".join("?" * len(chunk))
         conn.execute(
           f"UPDATE items SET consolidated_into = NULL "

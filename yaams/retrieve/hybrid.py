@@ -19,6 +19,7 @@ from typing import Iterable, Sequence, cast
 
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
 from yaams.schema import FACTS_FTS_TABLE, FACTS_SOURCE, FACTS_VEC_TABLE
+from yaams.store import chunked
 from yaams.time import ensure_utc
 
 DEFAULT_TOP_K = 20
@@ -342,19 +343,21 @@ def _resolve_entity_allowlist(
     r[0] if not hasattr(r, "keys") else r["item_id"] for r in item_rows
   }
   cons_ids: set[str] = set()
-  if item_ids:
-    item_ph = ",".join("?" * len(item_ids))
+  # Chunked: a frequently-mentioned entity can link tens of thousands of
+  # items, which would blow SQLite's 999-variable limit in one statement.
+  for chunk in chunked(list(item_ids)):
+    item_ph = ",".join("?" * len(chunk))
     cons_rows = conn.execute(
       f"""
       SELECT DISTINCT c.id
       FROM consolidations c, json_each(c.raw_item_ids) j
       WHERE j.value IN ({item_ph})
       """,
-      tuple(item_ids),
+      tuple(chunk),
     ).fetchall()
-    cons_ids = {
+    cons_ids.update(
       r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
-    }
+    )
   return item_ids, cons_ids
 
 
@@ -439,15 +442,15 @@ def _assoc_weight_maps(
       item_w[iid] = weight
 
   cons_w: dict[str, float] = {}
-  if item_w:
-    item_ph = ",".join("?" * len(item_w))
+  for chunk in chunked(list(item_w)):
+    item_ph = ",".join("?" * len(chunk))
     for row in conn.execute(
       f"""
       SELECT c.id AS cid, j.value AS iid
       FROM consolidations c, json_each(c.raw_item_ids) j
       WHERE j.value IN ({item_ph})
       """,
-      tuple(item_w.keys()),
+      tuple(chunk),
     ):
       cid = row[0] if not hasattr(row, "keys") else row["cid"]
       iid = row[1] if not hasattr(row, "keys") else row["iid"]
@@ -754,15 +757,29 @@ def _hydrate(
             if comp.rrf_score > top3_cons_thread.get(tid, 0.0):
               top3_cons_thread[tid] = comp.rrf_score
     if top3_cons_thread:
+      # One batched lookup, not one round-trip per candidate: the fused set
+      # runs to several hundred entries once the fetch multipliers apply. The
+      # credit is injected before a full re-sort, so every candidate has to be
+      # considered — narrowing to the hydrate cap would change the ranking,
+      # not just the cost.
+      candidates = [
+        identifier for (kind, identifier), comp in ordered
+        if kind == "item" and comp.fts_rank is not None
+      ]
+      thread_of: dict[str, str] = {}
+      for chunk in chunked(candidates):
+        placeholders = ",".join("?" * len(chunk))
+        for row in conn.execute(
+          f"SELECT id, thread_id FROM items WHERE id IN ({placeholders})", chunk
+        ):
+          tid = row["thread_id"] if hasattr(row, "keys") else row[1]
+          if tid is not None:
+            thread_of[row["id"] if hasattr(row, "keys") else row[0]] = tid
       for (kind, identifier), comp in ordered:
         if kind == "item" and comp.fts_rank is not None:
-          t_row = conn.execute(
-            "SELECT thread_id FROM items WHERE id = ?", (identifier,)
-          ).fetchone()
-          if t_row is not None:
-            tid = t_row[0] if not hasattr(t_row, "keys") else t_row["thread_id"]
-            if tid is not None and tid in top3_cons_thread:
-              comp.rrf_score += _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
+          tid = thread_of.get(identifier)
+          if tid is not None and tid in top3_cons_thread:
+            comp.rrf_score += _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
       # Re-sort after credit injection
       ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
 

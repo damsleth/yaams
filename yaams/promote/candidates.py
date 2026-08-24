@@ -176,6 +176,11 @@ def generate_candidates(
         if on_progress:
           on_progress(f"  skipped (dedup duplicate: {verdict.target_path})")
         continue
+      # The real nearest-neighbour similarity, whatever the decision band was.
+      # `candidate.dedup_similarity` cannot stand in for it: that field is a
+      # merge hint (promote/review.py renders it as one) and is only set inside
+      # the merge band, which would make novelty a cliff instead of a gradient.
+      novelty_similarity = verdict.similarity
       if verdict.decision == "merge":
         candidate.merge_with = verdict.target_path
         candidate.dedup_similarity = verdict.similarity
@@ -220,6 +225,8 @@ def generate_candidates(
           elif cv.classification == "unrelated":
             candidate.merge_with = None
             candidate.dedup_similarity = None
+            # The classifier overruled the embedding match — treat it as novel.
+            novelty_similarity = 0.0
           # For supplement/contradict/unclassified: keep merge_with
 
           # Store all conflict fields regardless
@@ -242,7 +249,7 @@ def generate_candidates(
       for tag in candidate.draft_tags:
         candidate_terms |= _tokenize(tag)
       score, factors = admission_score(
-        dedup_similarity=candidate.dedup_similarity,
+        dedup_similarity=novelty_similarity,
         candidate_terms=candidate_terms,
         utility_terms=utility_terms,
         item_provenances=provenances,

@@ -7,14 +7,22 @@ from pathlib import Path
 from typing import Iterator
 
 from yaams.config import expand_path
+from yaams.ingest._markdown import (
+  H1_RE,
+  MIN_CONTENT_CHARS,
+  collapse_blank_lines,
+  date_from_filename,
+  dated_frontmatter_value,
+  parse_frontmatter,
+  strip_frontmatter,
+  subject_from,
+  walk_markdown,
+)
 from yaams.ingest.base import Item, hash_id
 from yaams.time import ensure_utc
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _EMBED_RE = re.compile(r"!\[\[([^\]]*)\]\]")
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
-_H1_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
-_DATE_FROM_FILENAME = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
 # Frontmatter keys that carry an authorship/creation date, in priority order.
 _FM_DATE_KEYS = ("date", "created", "created_at", "date created")
@@ -41,7 +49,6 @@ _DAY_MONTH_YEAR_RE = re.compile(
 _ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 DEFAULT_SKIP_DIRS = {".obsidian", ".git", ".smartchats", ".smart-env", ".claude"}
-MIN_CONTENT_CHARS = 30
 
 
 @dataclass
@@ -56,13 +63,13 @@ class ObsidianAdapter:
     vault = expand_path(self.vault_path)
     cutoff = ensure_utc(since)
 
-    for md_file in _walk_vault(vault, self.skip_dirs, self.skip_filename_prefixes):
+    for md_file in walk_markdown(vault, self.skip_dirs, self.skip_filename_prefixes):
       mtime = datetime.fromtimestamp(md_file.stat().st_mtime, tz=UTC)
       if mtime < cutoff:
         continue
 
       raw = md_file.read_text(encoding="utf-8", errors="replace")
-      frontmatter = _parse_frontmatter(raw)
+      frontmatter = parse_frontmatter(raw)
       content = _clean_content(raw)
 
       if len(content) < MIN_CONTENT_CHARS:
@@ -72,7 +79,6 @@ class ObsidianAdapter:
       rel = md_file.relative_to(vault)
       source_id = str(rel)
       timestamp, inferred = _note_timestamp(frontmatter, md_file, content, mtime)
-      subject = _note_subject(frontmatter, raw, md_file)
       thread_id = str(rel.parent) if str(rel.parent) != "." else ""
 
       yield Item(
@@ -84,7 +90,7 @@ class ObsidianAdapter:
         sender="me",
         recipients=[],
         content=content,
-        subject=subject,
+        subject=subject_from(frontmatter, raw, md_file),
         thread_id=thread_id or None,
         raw_metadata={
           "vault": str(vault),
@@ -95,39 +101,13 @@ class ObsidianAdapter:
       )
 
 
-def _walk_vault(
-  vault: Path,
-  skip_dirs: set[str],
-  skip_prefixes: tuple[str, ...],
-) -> Iterator[Path]:
-  for path in sorted(vault.rglob("*.md")):
-    if any(part in skip_dirs for part in path.parts):
-      continue
-    if path.name.startswith(skip_prefixes):
-      continue
-    if path.name in {"README.md", "AGENTS.md"}:
-      continue
-    yield path
-
-
-def _parse_frontmatter(text: str) -> dict:
-  m = _FRONTMATTER_RE.match(text)
-  if not m:
-    return {}
-  try:
-    import yaml
-    data = yaml.safe_load(m.group(0).strip("---\n")) or {}
-    return data if isinstance(data, dict) else {}
-  except Exception:
-    return {}
-
-
 def _clean_content(text: str) -> str:
-  text = _FRONTMATTER_RE.sub("", text)
+  """Frontmatter strip, then the Obsidian-only markup: drop embeds and unwrap
+  wikilinks to their display text."""
+  text = strip_frontmatter(text)
   text = _EMBED_RE.sub("", text)
   text = _WIKILINK_RE.sub(lambda m: m.group(2) or m.group(1), text)
-  text = re.sub(r"\n{3,}", "\n\n", text)
-  return text.strip()
+  return collapse_blank_lines(text)
 
 
 def _note_timestamp(
@@ -146,34 +126,13 @@ def _note_timestamp(
 
   Returns ``(timestamp, inferred)``.
   """
-  # 1. Frontmatter date field.
-  for key in _FM_DATE_KEYS:
-    fm_date = frontmatter.get(key)
-    if not fm_date:
-      continue
-    try:
-      if isinstance(fm_date, datetime):
-        return ensure_utc(fm_date), False
-      parsed = datetime.fromisoformat(str(fm_date))
-      return ensure_utc(parsed), False
-    except (ValueError, TypeError):
-      pass
-
-  # 2. YYYY-MM-DD prefix in filename.
-  m = _DATE_FROM_FILENAME.match(path.stem)
-  if m:
-    try:
-      d = datetime.strptime(m.group(1), "%Y-%m-%d")
-      return d.replace(tzinfo=UTC), False
-    except ValueError:
-      pass
-
-  # 3. A date in the title / first H1 (e.g. daily note "# 18.mai 2026").
-  title_date = _date_from_title(frontmatter, content)
-  if title_date is not None:
-    return title_date, False
-
-  # 4. No real signal — fall back to file mtime and mark it inferred.
+  for candidate in (
+    dated_frontmatter_value(frontmatter, _FM_DATE_KEYS),
+    date_from_filename(path),
+    _date_from_title(frontmatter, content),
+  ):
+    if candidate is not None:
+      return candidate, False
   return mtime, True
 
 
@@ -186,7 +145,7 @@ def _date_from_title(frontmatter: dict, content: str) -> datetime | None:
   title = frontmatter.get("title")
   if title:
     candidates.append(str(title))
-  h1 = _H1_RE.search(content)
+  h1 = H1_RE.search(content)
   if h1:
     candidates.append(h1.group(1))
 
@@ -208,13 +167,3 @@ def _date_from_title(frontmatter: dict, content: str) -> datetime | None:
       except ValueError:
         pass
   return None
-
-
-def _note_subject(frontmatter: dict, text: str, path: Path) -> str | None:
-  title = frontmatter.get("title")
-  if title:
-    return str(title)
-  m = _H1_RE.search(_FRONTMATTER_RE.sub("", text))
-  if m:
-    return m.group(1).strip()
-  return path.stem

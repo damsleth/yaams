@@ -293,30 +293,10 @@ class EntityResolver:
     return self._aliases.get(key)
 
 
-def _build_entity_resolver(
-  conn: sqlite3.Connection | None,
-  top_n: int,
-) -> EntityResolver:
+def _rows_to_resolver(rows) -> EntityResolver:
+  """Fold (canonical_name, aliases-json) rows into an EntityResolver."""
   aliases: dict[str, str] = {}
   canonical: list[str] = []
-  if conn is None:
-    return EntityResolver(aliases, canonical)
-
-  try:
-    rows = conn.execute(
-      """
-      SELECT e.canonical_name, e.aliases, COUNT(ie.item_id) AS hits
-      FROM entities e
-      LEFT JOIN item_entities ie ON ie.entity_id = e.id
-      GROUP BY e.id
-      ORDER BY hits DESC, e.canonical_name ASC
-      LIMIT ?
-      """,
-      (top_n,),
-    ).fetchall()
-  except sqlite3.DatabaseError:
-    return EntityResolver(aliases, canonical)
-
   for row in rows:
     canon = row["canonical_name"] if hasattr(row, "keys") else row[0]
     raw_aliases = row["aliases"] if hasattr(row, "keys") else row[1]
@@ -331,6 +311,32 @@ def _build_entity_resolver(
         if isinstance(alias, str) and alias.strip():
           aliases[alias.strip().lower()] = canon
   return EntityResolver(aliases, canonical)
+
+
+def _build_entity_resolver(
+  conn: sqlite3.Connection | None,
+  top_n: int,
+) -> EntityResolver:
+  empty = EntityResolver({}, [])
+  if conn is None:
+    return empty
+
+  try:
+    rows = conn.execute(
+      """
+      SELECT e.canonical_name, e.aliases, COUNT(ie.item_id) AS hits
+      FROM entities e
+      LEFT JOIN item_entities ie ON ie.entity_id = e.id
+      GROUP BY e.id
+      ORDER BY hits DESC, e.canonical_name ASC
+      LIMIT ?
+      """,
+      (top_n,),
+    ).fetchall()
+  except sqlite3.DatabaseError:
+    return empty
+
+  return _rows_to_resolver(rows)
 
 
 def _build_full_entity_resolver(
@@ -352,22 +358,7 @@ def _build_full_entity_resolver(
   except sqlite3.DatabaseError:
     return fallback
 
-  aliases: dict[str, str] = {}
-  canonical: list[str] = []
-  for row in rows:
-    canon = row["canonical_name"] if hasattr(row, "keys") else row[0]
-    raw_aliases = row["aliases"] if hasattr(row, "keys") else row[1]
-    canonical.append(canon)
-    aliases[canon.lower()] = canon
-    if raw_aliases:
-      try:
-        alias_list = json.loads(raw_aliases)
-      except (TypeError, ValueError):
-        alias_list = []
-      for alias in alias_list:
-        if isinstance(alias, str) and alias.strip():
-          aliases[alias.strip().lower()] = canon
-  return EntityResolver(aliases, canonical)
+  return _rows_to_resolver(rows)
 
 
 def _render_entity_list(resolver: EntityResolver) -> str:

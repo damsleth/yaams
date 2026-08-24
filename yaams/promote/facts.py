@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Callable
 
 from yaams.config import expand_path
+from yaams.ingest._markdown import walk_markdown
 from yaams.ingest.base import hash_id
-from yaams.ingest.chats import DEFAULT_SKIP_DIRS, _walk_chats
+from yaams.ingest.chats import DEFAULT_SKIP_DIRS
 from yaams.ingest.chats_facts import facts_from_file
 from yaams.promote.candidates import PromotionCandidate, _candidate_id
 from yaams.promote.dedup import DedupChecker
@@ -58,7 +59,7 @@ def generate_fact_candidates(
   cutoff = ensure_utc(since) if since else None
 
   candidates: list[PromotionCandidate] = []
-  for md_file in _walk_chats(root, set(DEFAULT_SKIP_DIRS), ("_", ".")):
+  for md_file in walk_markdown(root, set(DEFAULT_SKIP_DIRS), ("_", ".")):
     for fact in facts_from_file(md_file, root):
       if cutoff and ensure_utc(fact.timestamp) < cutoff:
         continue

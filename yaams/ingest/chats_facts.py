@@ -8,14 +8,16 @@ from pathlib import Path
 from typing import Iterator
 
 from yaams.config import expand_path
+from yaams.ingest._markdown import (
+  parse_frontmatter,
+  subject_from,
+  walk_markdown,
+)
 from yaams.ingest.base import Item, hash_id
 from yaams.ingest.chats import (
   DEFAULT_SKIP_DIRS,
   _chat_lang,
-  _chat_subject,
   _chat_timestamp,
-  _parse_frontmatter,
-  _walk_chats,
 )
 from yaams.time import ensure_utc
 
@@ -105,10 +107,10 @@ def facts_from_file(md_file: Path, chats_root: Path) -> list[FactRecord]:
   if not bullets:
     return []
 
-  fm = _parse_frontmatter(raw)
+  fm = parse_frontmatter(raw)
   mtime = datetime.fromtimestamp(md_file.stat().st_mtime, tz=UTC)
   timestamp, inferred = _chat_timestamp(fm, md_file, mtime)
-  subject = _chat_subject(fm, raw, md_file)
+  subject = subject_from(fm, raw, md_file)
   lang = _chat_lang(fm)
   raw_tags = fm.get("tags")
   tags = [str(t) for t in raw_tags] if isinstance(raw_tags, list) else []
@@ -146,7 +148,7 @@ class ChatsFactsAdapter:
     if not chats.exists():
       return
 
-    for md_file in _walk_chats(chats, self.skip_dirs, self.skip_filename_prefixes):
+    for md_file in walk_markdown(chats, self.skip_dirs, self.skip_filename_prefixes):
       mtime = datetime.fromtimestamp(md_file.stat().st_mtime, tz=UTC)
       if mtime < cutoff:
         continue

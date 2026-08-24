@@ -286,6 +286,73 @@ def _entry_path_and_enabled(entry: object) -> tuple[str | None, bool]:
   return None, True
 
 
+def _tag_calendar_profile(prof: dict) -> str:
+  parts = []
+  if prof.get("kind"):
+    parts.append(str(prof["kind"]))
+  if prof.get("default"):
+    parts.append("default")
+  return " / ".join(parts)
+
+
+def _tag_m365_profile(prof: dict) -> str:
+  parts = []
+  if prof.get("default"):
+    parts.append("default")
+  if not prof.get("enabled", True):
+    parts.append("disabled")
+  return " / ".join(parts)
+
+
+# Sources whose sub-rows are owa-piggy profiles: key -> (discovery, tag rule).
+# teams/teams_channels/drive all share owa-piggy's profile list — teams and
+# teams_channels are Graph/ic3 (m365 only), drive also accepts google, and
+# _supports filters per key.
+# The discovery entries are lambdas, not direct references, so the lookup
+# happens at call time — tests monkeypatch these module attributes, and a
+# captured function object would not see the patch.
+_PROFILE_SOURCES = {
+  "calendar": (lambda: discover_calendar_profiles(), _tag_calendar_profile),
+  "mail": (lambda: discover_mail_profiles(), _tag_m365_profile),
+  "teams": (lambda: discover_teams_profiles(), _tag_m365_profile),
+  "teams_channels": (lambda: discover_teams_profiles(), _tag_m365_profile),
+  "drive": (lambda: discover_teams_profiles(), _tag_m365_profile),
+}
+
+
+def _profile_subpath_rows(key: str, block: dict) -> list[SubPathRow]:
+  """Profile checkboxes for one source: discovered profiles first, then any
+  configured alias discovery did not return (flagged "not discovered")."""
+  discover, tag_for = _PROFILE_SOURCES[key]
+  configured = list(block.get("profiles") or [])
+  types = _profile_types()
+  if key == "calendar":
+    # owa-cal's list carries no profile type; owa-piggy is the authority.
+    available = [
+      p for p in discover()
+      if _type_supports(types.get(p["alias"], _DEFAULT_PROFILE_TYPE), key)
+    ]
+  else:
+    available = [p for p in discover() if _supports(p, key)]
+
+  out: list[SubPathRow] = []
+  seen: set[str] = set()
+  for prof in available:
+    alias = prof["alias"]
+    seen.add(alias)
+    out.append(SubPathRow(
+      kind="subpath", parent=key, subkind="profile", index=0,
+      label=alias, enabled=alias in configured, tag=tag_for(prof),
+    ))
+  for alias in configured:
+    if alias not in seen and _config_alias_ok(alias, key, types):
+      out.append(SubPathRow(
+        kind="subpath", parent=key, subkind="profile", index=0,
+        label=alias, enabled=True, tag="not discovered",
+      ))
+  return out
+
+
 def _build_rows(cfg: dict) -> list[Row]:
   ingest = cfg.get("ingest") or {}
   rows: list[Row] = []
@@ -320,84 +387,8 @@ def _build_rows(cfg: dict) -> list[Row]:
           kind="subpath", parent=key, subkind="path", index=i,
           label=path, enabled=enabled,
         ))
-    elif key == "calendar":
-      configured = list(block.get("profiles") or [])
-      # owa-cal's list carries no profile type; owa-piggy is the authority.
-      types = _profile_types()
-      available = [
-        p for p in discover_calendar_profiles()
-        if _type_supports(types.get(p["alias"], _DEFAULT_PROFILE_TYPE), key)
-      ]
-      seen: set[str] = set()
-      for prof in available:
-        alias = prof["alias"]
-        seen.add(alias)
-        tag_parts = []
-        if prof.get("kind"):
-          tag_parts.append(str(prof["kind"]))
-        if prof.get("default"):
-          tag_parts.append("default")
-        rows.append(SubPathRow(
-          kind="subpath", parent=key, subkind="profile", index=0,
-          label=alias, enabled=alias in configured,
-          tag=" / ".join(tag_parts),
-        ))
-      for alias in configured:
-        if alias not in seen and _config_alias_ok(alias, key, types):
-          rows.append(SubPathRow(
-            kind="subpath", parent=key, subkind="profile", index=0,
-            label=alias, enabled=True, tag="not discovered",
-          ))
-    elif key == "mail":
-      configured = list(block.get("profiles") or [])
-      types = _profile_types()
-      available = [p for p in discover_mail_profiles() if _supports(p, key)]
-      seen = set()
-      for prof in available:
-        alias = prof["alias"]
-        seen.add(alias)
-        tag_parts = []
-        if prof.get("default"):
-          tag_parts.append("default")
-        if not prof.get("enabled", True):
-          tag_parts.append("disabled")
-        rows.append(SubPathRow(
-          kind="subpath", parent=key, subkind="profile", index=0,
-          label=alias, enabled=alias in configured,
-          tag=" / ".join(tag_parts),
-        ))
-      for alias in configured:
-        if alias not in seen and _config_alias_ok(alias, key, types):
-          rows.append(SubPathRow(
-            kind="subpath", parent=key, subkind="profile", index=0,
-            label=alias, enabled=True, tag="not discovered",
-          ))
-    elif key in ("teams", "teams_channels", "drive"):
-      # All share owa-piggy's profile list. teams/teams_channels are Graph/ic3
-      # (m365 only); drive also accepts google (filtered per-key by _supports).
-      configured = list(block.get("profiles") or [])
-      types = _profile_types()
-      available = [p for p in discover_teams_profiles() if _supports(p, key)]
-      seen = set()
-      for prof in available:
-        alias = prof["alias"]
-        seen.add(alias)
-        tag_parts = []
-        if prof.get("default"):
-          tag_parts.append("default")
-        if not prof.get("enabled", True):
-          tag_parts.append("disabled")
-        rows.append(SubPathRow(
-          kind="subpath", parent=key, subkind="profile", index=0,
-          label=alias, enabled=alias in configured,
-          tag=" / ".join(tag_parts),
-        ))
-      for alias in configured:
-        if alias not in seen and _config_alias_ok(alias, key, types):
-          rows.append(SubPathRow(
-            kind="subpath", parent=key, subkind="profile", index=0,
-            label=alias, enabled=True, tag="not discovered",
-          ))
+    elif key in _PROFILE_SOURCES:
+      rows.extend(_profile_subpath_rows(key, block))
 
   if not any(isinstance(r, SourceRow) and r.name == "folders" for r in rows):
     rows.append(SourceRow(

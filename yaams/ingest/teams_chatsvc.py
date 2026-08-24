@@ -382,7 +382,9 @@ class ChatsvcAdapter:
     """Two-pass over a single chat's messages.
 
     Pass 1: walk all in-window messages into `buffered`, building a
-            mri -> display-name roster from each sender. For 1:1 chats
+            mri -> display-name roster from each *admissible* sender
+            (bots and system messages are excluded here for the same
+            reason pass 2 excludes them). For 1:1 chats
             seed the roster with the other party's MRI extracted from
             the chat ID, so recipients still populate even if the
             other party hasn't spoken in the window.
@@ -432,12 +434,20 @@ class ChatsvcAdapter:
           # with the entire chat.
           stop_walking = True
           break
-        mri = sender_mri(message)
-        display = (message.get("imdisplayname") or "").strip()
-        if mri and display:
-          # Last write wins; display names are stable so the choice
-          # doesn't matter, but this keeps the roster fresh.
-          roster[mri] = display
+        # Apply the same gates pass 2 uses before admitting a sender to the
+        # roster. Otherwise a bot that posts in a group chat is dropped as a
+        # sender but still lands in `recipients` of every human message there,
+        # which then flows into items.recipients and matches participant
+        # filters.
+        if not is_system_chatsvc_message(message) and not (
+          self.skip_bots and is_bot_chatsvc_message(message)
+        ):
+          mri = sender_mri(message)
+          display = (message.get("imdisplayname") or "").strip()
+          if mri and display:
+            # Last write wins; display names are stable so the choice
+            # doesn't matter, but this keeps the roster fresh.
+            roster[mri] = display
         buffered.append(message)
 
     for message in buffered:

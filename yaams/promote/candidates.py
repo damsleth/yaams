@@ -129,8 +129,12 @@ def generate_candidates(
   from yaams.promote.dedup import DedupChecker
   entities = _fetch_dict_entities(conn, config, entity_filter)
   existing_tier2 = _fetch_tier2_titles(conn)
-  index_texts = _load_index_texts(config.note_index_path)
-  utility_terms = _load_utility_terms(config.note_index_path)
+  # Parse note_index.json once: it was read and parsed three times up front
+  # and again in full for every merge-band candidate, which on a large ledger
+  # index is the dominant I/O of a promote run.
+  note_index = _load_index(config.note_index_path)
+  index_texts = _index_texts(note_index)
+  utility_terms = _utility_terms(note_index)
   weights = config.admission_weights or None
   rejected = _load_rejected(config.rejected_log_path)
   dedup_checker = DedupChecker(config.dedup)
@@ -194,9 +198,7 @@ def generate_candidates(
         and candidate.merge_with is not None
         and config.note_index_path is not None
       ):
-        existing_note = _load_note_from_index(
-          config.note_index_path, candidate.merge_with
-        )
+        existing_note = _note_from_index(note_index, candidate.merge_with)
         if existing_note is not None:
           from datetime import UTC
           from datetime import datetime as _dt
@@ -425,11 +427,19 @@ def _fetch_tier2_titles(conn: sqlite3.Connection) -> list[str]:
   return [r["subject"].lower() for r in rows]
 
 
-def _load_index_texts(index_path: Path | None) -> list[str]:
+def _load_index(index_path: Path | None) -> dict:
+  """Parse note_index.json once. Empty dict on any failure — every consumer
+  degrades open rather than raising."""
   if not index_path:
-    return []
+    return {}
   try:
-    index = json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
+    return json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
+  except Exception:
+    return {}
+
+
+def _index_texts(index: dict) -> list[str]:
+  try:
     texts: list[str] = []
     for entry in (index.get("entries") or {}).values():
       c = entry.get("candidate") or {}
@@ -447,19 +457,13 @@ def _tokenize(text: str) -> set[str]:
   return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) >= 3}
 
 
-def _load_utility_terms(index_path: Path | None) -> set[str]:
+def _utility_terms(index: dict) -> set[str]:
   """Tokens from identity + open-loop ledger notes — the future-utility proxy.
 
   Reads note_index.json, keeps entries whose rel_path sits under a
   ``_UTILITY_FOLDERS`` taxonomy folder, and tokenizes their title+statement.
   Empty on any failure (missing/unreadable index) so the utility factor simply
   goes to 0 — degrade open, never raise."""
-  if not index_path:
-    return set()
-  try:
-    index = json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
-  except Exception:
-    return set()
   terms: set[str] = set()
   for key, entry in (index.get("entries") or {}).items():
     parts = str(key).split("/")
@@ -472,20 +476,15 @@ def _load_utility_terms(index_path: Path | None) -> set[str]:
   return terms
 
 
-def _load_note_from_index(
-  index_path: Path,
+def _note_from_index(
+  index: dict,
   target_path: str,
 ) -> dict[str, str] | None:
   """Return {"title": ..., "statement": ...} for target_path from note_index.json.
 
-  Returns None if the file is missing, unreadable, or the entry lacks both
-  title and statement — so the caller can safely skip conflict classification.
+  Returns None if the entry is absent or lacks both title and statement — so
+  the caller can safely skip conflict classification.
   """
-  try:
-    index = json.loads(Path(index_path).expanduser().read_text(encoding="utf-8"))
-  except Exception:
-    return None
-
   entries = index.get("entries") or {}
   entry = entries.get(target_path) or {}
   candidate = entry.get("candidate") or {}
@@ -564,10 +563,23 @@ def _is_covered(
   existing_titles: list[str],
   index_texts: list[str] | None = None,
 ) -> bool:
-  needle = entity_name.lower()
-  if any(needle in t for t in existing_titles):
+  """Is this entity already represented in Tier 2?
+
+  Word-boundary match, not bare containment: "Ada" must not be judged covered
+  by a note titled "adaptation plan", nor "AI" by "Email strategy". \b is
+  Unicode-aware in Python, so Norwegian names (Håkon, Sørensen) behave; names
+  carrying punctuation (O'Brien, Marie-Claire) are escaped and their internal
+  apostrophe/hyphen is matched literally.
+  """
+  needle = entity_name.strip().lower()
+  if not needle:
+    return False
+  # IGNORECASE rather than relying on both haystacks being pre-lowercased by
+  # their producers, which is invisible from here.
+  pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", re.IGNORECASE)
+  if any(pattern.search(t) for t in existing_titles):
     return True
-  if index_texts and any(needle in t for t in index_texts):
+  if index_texts and any(pattern.search(t) for t in index_texts):
     return True
   return False
 

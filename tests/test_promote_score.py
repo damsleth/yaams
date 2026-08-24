@@ -3,8 +3,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from yaams.db import open_db
-from yaams.promote.candidates import PromotionCandidate, fetch_pending, store_candidates
+from yaams.promote.candidates import (
+  PromotionCandidate,
+  _is_covered,
+  fetch_pending,
+  store_candidates,
+)
 from yaams.promote.score import admission_score
 from yaams.schema import init_schema
 
@@ -77,3 +84,39 @@ def test_score_persists_and_orders_best_first(tmp_path):
   assert [r["id"] for r in rows] == ["b", "a"]
   assert rows[0]["admission_score"] == 0.80
   assert json.loads(rows[0]["admission_factors"])["novelty"] == 0.9
+
+
+# --- _is_covered word-boundary matching -------------------------------------
+
+
+@pytest.mark.parametrize(
+  "entity,titles,expected",
+  [
+    # Regression: bare substring containment silently suppressed promotion.
+    ("Ada", ["adaptation plan"], False),
+    ("AI", ["email strategy"], False),
+    ("Ola", ["solar panel notes"], False),
+    # Real matches still hit.
+    ("Ada", ["meeting with ada today"], True),
+    ("AI", ["our ai roadmap"], True),
+    ("Crayon", ["crayon group financials"], True),
+    # Unicode word chars: Norwegian names must behave.
+    ("Håkon", ["lunsj med håkon"], True),
+    ("Sørensen", ["sørensen onboarding"], True),
+    ("Ås", ["påske plans"], False),
+    # Names carrying punctuation are escaped, not treated as regex.
+    ("O'Brien", ["call with o'brien"], True),
+    ("Marie-Claire", ["marie-claire onboarding"], True),
+    ("C++", ["c++ migration"], True),
+    # Degenerate input.
+    ("", ["anything"], False),
+    ("   ", ["anything"], False),
+  ],
+)
+def test_is_covered_matches_on_word_boundaries(entity, titles, expected):
+  assert _is_covered(entity, titles) is expected
+
+
+def test_is_covered_also_checks_the_note_index():
+  assert _is_covered("Ada", [], ["ada owns the rollout"]) is True
+  assert _is_covered("Ada", [], ["adaptation plan"]) is False

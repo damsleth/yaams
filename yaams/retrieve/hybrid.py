@@ -28,6 +28,11 @@ RRF_K = 30
 HIGH_QUALITY_FETCH_MULTIPLIER = 2
 TIMESTAMP_SORT_FETCH_MULTIPLIER = 4
 ENTITY_FILTER_FETCH_MULTIPLIER = 4
+# A date window is a post-KNN predicate like the entity/participant filters:
+# the vector arm takes the global top-k and *then* drops everything outside
+# [since, until], so without a wider fetch a windowed query returns few or no
+# vector hits and silently degrades to FTS-only.
+DATE_FILTER_FETCH_MULTIPLIER = 4
 # Per-field bm25 weights (FTS5 bm25() takes one weight per column, in
 # table-declaration order; UNINDEXED columns get 0).
 FTS_ITEM_WEIGHTS = (0.0, 1.0, 2.0, 1.0)  # item_id, content, subject, sender
@@ -176,6 +181,8 @@ def query(
     fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
   if cfg.participant_filter:
     fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
+  if cfg.since is not None or cfg.until is not None:
+    fetch_k = max(fetch_k, cfg.per_index_k * DATE_FILTER_FETCH_MULTIPLIER)
   fetch_cfg = replace(cfg, per_index_k=fetch_k) if fetch_k != cfg.per_index_k else cfg
 
   item_allow: set[str] | None = None

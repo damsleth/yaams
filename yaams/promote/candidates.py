@@ -186,13 +186,11 @@ def generate_candidates(
         candidate.dedup_similarity = verdict.similarity
 
       # --- Phase E: conflict classification --------------------------------
+      # Merge-band only: classification needs an existing note to compare
+      # against, and merge_with is the only thing that names one.
       if (
         conflict_cfg is not None
         and conflict_cfg.enabled
-        and (
-          not conflict_cfg.only_for_merge_band
-          or verdict.decision == "merge"
-        )
         and candidate.merge_with is not None
         and config.note_index_path is not None
       ):

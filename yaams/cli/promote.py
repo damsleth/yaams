@@ -198,7 +198,6 @@ def promote_generate(
     conflict_det_raw = promote_cfg_raw.get("conflict_detection") or {}
     conflict_cfg = ConflictConfig(
       enabled=bool(conflict_det_raw.get("enabled", False)),
-      only_for_merge_band=bool(conflict_det_raw.get("only_for_merge_band", True)),
       confidence_threshold=float(conflict_det_raw.get("confidence_threshold", 0.7)),
     )
 

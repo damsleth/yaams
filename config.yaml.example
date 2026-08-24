@@ -152,7 +152,6 @@ promote:
   # `synth` section. Off by default; flip `enabled: true` after enabling dedup.
   conflict_detection:
     enabled: false
-    only_for_merge_band: true   # only classify merge-band candidates
     confidence_threshold: 0.7   # below this -> "unclassified"
 
 entities:

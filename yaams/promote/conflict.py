@@ -52,7 +52,6 @@ class ConflictVerdict:
 @dataclass
 class ConflictConfig:
     enabled: bool = False
-    only_for_merge_band: bool = True
     confidence_threshold: float = 0.7
 
 

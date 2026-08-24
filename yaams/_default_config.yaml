@@ -216,7 +216,6 @@ promote:
     timeout_s: 15
   conflict_detection:
     enabled: false
-    only_for_merge_band: true
     confidence_threshold: 0.7
   # Multi-factor admission scoring (plan 01). `promote generate` scores each
   # candidate on novelty/utility/confidence/trust and stores admission_score;

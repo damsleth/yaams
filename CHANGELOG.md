@@ -10,6 +10,70 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Fixed
+- **Consolidations recorded only the first 50 of their raw item ids.**
+  `_to_consolidation` truncated `raw_item_ids` to 50 while `item_count` stayed
+  the true count. The cap silently matched `DEFAULT_MAX_SESSION_ITEMS`, so it
+  was invisible on the default config — but `max_session_items` is a supported
+  key, and past 50 items the extras never got `consolidated_into` set. They
+  came back from item search alongside the consolidation that already
+  summarized them, were re-consolidated on the next run, and went missing from
+  the entity-routing and lang-filter joins that read `raw_item_ids`.
+- **Timestamp-sorted retrieval returned the weakest of tied results first.**
+  The sort key `(timestamp, -score)` under `reverse=True` inverted the
+  secondary key along with the primary. Same-minute chat messages and
+  day-granularity document timestamps hit this constantly, so "what's the
+  latest on X" surfaced the worst match of that timestamp.
+- **Time-windowed queries lost any session that straddled the window edge.**
+  Consolidation windowing required containment (`start >= since AND end <=
+  until`), so a session running 23:00 Monday to 01:00 Tuesday matched neither
+  day — and because the item arms filter on `consolidated_into IS NULL`, its
+  member items were excluded too. Now overlap.
+- **Date-windowed queries silently degraded to FTS-only.** `since`/`until` are
+  applied after the vector KNN, exactly like the entity and participant
+  filters, but only those two widened `fetch_k`. The vector arm ran at base `k`
+  and usually returned nothing after filtering.
+- **Entity normalization could resurrect a denied entity.**
+  `normalize_entities` excluded denied rows from its grouping query but
+  resolved the merge survivor with `resolve_entity_id`, which does not filter
+  on `pending_review`. A punctuation variant produced by a later NER pass
+  merged the live entity's links, tags and promotion candidates into the
+  pruned row.
+- **Promotion novelty was a cliff, not a gradient.** `admission_score` derives
+  `novelty = 1 - dedup_similarity`, but `dedup_similarity` was only assigned
+  inside the merge band, so a candidate at 0.79 similarity scored as fully
+  novel — identical to one at 0.0.
+- **`_is_covered` suppressed promotion on unrelated notes.** Bare substring
+  containment meant entity "Ada" was judged already-covered by a note titled
+  "adaptation plan", and "AI" by "email strategy". Now word-boundary matched.
+- **Bots leaked into chatsvc recipients.** The Teams chatsvc adapter built its
+  display-name roster in pass 1, before the bot and system gates in pass 2, so
+  a bot posting in a group chat was dropped as a sender but still appeared in
+  `recipients` of every human message in that chat.
+- `promote generate`/`from-facts` now report the count of *newly stored*
+  candidates rather than attempts (`store_candidates` counts `INSERT OR IGNORE`
+  rowcount), so a re-run correctly reports `0 new`.
+
+- **Ledger inbox notes were written in a format the ledger rejects.**
+  `write_summary_to_inbox` used `datetime.isoformat()`, which emits `+00:00`;
+  cogled's `sleep lint` requires a trailing `Z` and rejects the offset. Every
+  ingest run therefore filed a note into `00_inbox/` that the ledger's own lint
+  refused — 2 errors per run. The cogled-side seam contract
+  (`docs/yaams-cogled-interface.md` §2c) had already specified `Z`, so this was
+  YAAMS violating an existing contract rather than an underspecified one.
+  Hand-fixing the files was cosmetic: the writer regenerated the error on the
+  next ingest. Fixed at the producer; naive and tz-aware `when` now format
+  identically.
+
+### Changed
+- `merge_entities` no longer returns `tags`/`meta`/`relations` counts. Nothing
+  ever incremented them, so every caller reported a hard 0. `victims` and
+  `item_links` are unchanged.
+- Removed the `promote.conflict_detection.only_for_merge_band` config key. The
+  guard it fed also required `merge_with is not None`, which is only ever set
+  in the merge band, so setting it `false` did nothing. Configs still setting
+  it are ignored, not rejected.
+
 ### Internal
 - **Recency decay v2 was a void measurement, not a kill; recency at tau=90
   remains untested on the 79-gold era.** The variant scored raw Tier 1 items by
@@ -37,41 +101,22 @@ surface; pin to a specific version if you need stability.
   `recency_decay_tau_days` to `90.0` where the pre-registered plan specified
   `0.0` (disabled) — merging or cherry-picking it as-is would ship the
   degenerate decay on by default.
-
-### Fixed
-- **Ledger inbox notes were written in a format the ledger rejects.**
-  `write_summary_to_inbox` used `datetime.isoformat()`, which emits `+00:00`;
-  cogled's `sleep lint` requires a trailing `Z` and rejects the offset. Every
-  ingest run therefore filed a note into `00_inbox/` that the ledger's own lint
-  refused — 2 errors per run. The cogled-side seam contract
-  (`docs/yaams-cogled-interface.md` §2c) had already specified `Z`, so this was
-  YAAMS violating an existing contract rather than an underspecified one.
-  Hand-fixing the files was cosmetic: the writer regenerated the error on the
-  next ingest. Fixed at the producer; naive and tz-aware `when` now format
-  identically.
-
-### Added
-- **Chat-summary fact extraction.** The `## Insights / Facts` bullets that
-  `capture-chat.sh` already writes into each session summary are now first-class
-  atomic facts, via two sinks over one pure extractor
-  (`yaams/ingest/chats_facts.py`):
-  - `chats_facts` — an **opt-in retrieval tier** (`ingest.chats_facts.enabled`,
-    default off). Each bullet is indexed as its own item in **separate** fts/vec
-    tables (`chats_facts_fts`/`chats_facts_vec`), searched only via `--source
-    chats_facts`. The separate indexes are deliberate: pooling ~600 short facts
-    into the shared index shifted BM25 corpus statistics and regressed default
-    retrieval ~5% even when the facts were filtered from results; isolated, the
-    tier leaves default retrieval byte-identical to a facts-free corpus.
-  - `yaams promote from-facts` — drafts each bullet as a Tier-2 ledger
-    **promotion candidate** (no LLM, no entity clustering; reviewed via the
-    existing `promote list`/`review` flow). `chats_facts` items are excluded
-    from the entity-clustered `promote generate` path so facts promote only
-    through this verb.
-
-### Fixed
-- `promote generate`/`from-facts` now report the count of *newly stored*
-  candidates rather than attempts (`store_candidates` counts `INSERT OR IGNORE`
-  rowcount), so a re-run correctly reports `0 new`.
+- Thread-coherence scoring now does one batched id lookup instead of a query
+  per fused candidate, and the unbounded `IN (...)` lists in entity-allowlist
+  resolution, association weighting and consolidation clearing are chunked
+  under SQLite's 999-variable limit.
+- `note_index.json` is parsed once per promote run instead of three times up
+  front plus once per merge-band candidate.
+- The Obsidian and chats ingest adapters share their markdown plumbing via
+  `yaams/ingest/_markdown.py`; the three duplicated profile-row branches in the
+  sources TUI collapse to one table-driven helper. Both verified
+  behaviour-preserving.
+- First tests for `yaams/ingest/teams_chatsvc.py`, which had none — including
+  the `space`/`topic` conversation filter whose fix in 348e358 only tested the
+  `teams_channels` half.
+- Deleted dead code: `reset_reranker_cache`, `has_sqlite_vec`,
+  `consolidation_metadata`, `FTS_CONS_WEIGHTS`, and `_stash_component`'s unused
+  `is_item` parameter.
 
 ## [0.10.0] - 2026-07-08
 

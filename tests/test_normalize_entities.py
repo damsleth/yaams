@@ -9,6 +9,7 @@ from yaams.schema import init_schema
 from yaams.store import (
   canonical_norm,
   normalize_entities,
+  prune_entity,
   resolve_entity_id,
   store_items,
 )
@@ -126,3 +127,24 @@ def test_normalize_leaves_distinct_entities_alone():
   result = normalize_entities(conn)
   assert result["merged"] == 0
   assert resolve_entity_id(conn, "Crayon AS") is not None
+
+
+def test_normalize_never_merges_into_a_denied_entity():
+  # Regression: normalize_entities excluded denied rows from its grouping
+  # query but resolved the survivor with resolve_entity_id, which does not
+  # filter on pending_review. A punctuation variant created by a later NER
+  # pass would then merge the live entity INTO the pruned one, resurrecting
+  # junk that prune_entity documents as sticky.
+  conn = _open_db()
+  denied = _ent(conn, "Hamas")
+  prune_entity(conn, denied)
+  variant = _ent(conn, "Hamas'")
+
+  normalize_entities(conn)
+
+  row = conn.execute(
+    "SELECT pending_review FROM entities WHERE id = ?", (denied,)
+  ).fetchone()
+  assert row["pending_review"] == 2, "denial must stay sticky"
+  # The live variant is untouched — not folded into the denied row.
+  assert resolve_entity_id(conn, "Hamas'") == variant

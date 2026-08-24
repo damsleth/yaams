@@ -67,6 +67,23 @@ def resolve_entity_id(conn: sqlite3.Connection, name: str) -> int | None:
   return row[0] if not hasattr(row, "keys") else row["id"]
 
 
+def _resolve_live_entity_id(conn: sqlite3.Connection, name: str) -> int | None:
+  """resolve_entity_id, but never returns a denied (pending_review=2) row.
+
+  Normalization must not adopt a denied entity as a merge survivor: that would
+  pull the live entity's links, tags and promotion candidates into a row the
+  user explicitly pruned, resurrecting junk that prune_entity documents as
+  sticky.
+  """
+  row = conn.execute(
+    "SELECT id FROM entities WHERE lower(canonical_name) = lower(?) AND pending_review != 2",
+    (name.strip(),),
+  ).fetchone()
+  if row is None:
+    return None
+  return row[0] if not hasattr(row, "keys") else row["id"]
+
+
 def add_entity_tags(conn: sqlite3.Connection, entity_id: int, tags: Iterable[str]) -> int:
   """Attach lowercased membership tags to an entity. Idempotent. Returns the
   number of tags newly inserted."""
@@ -299,7 +316,7 @@ def normalize_entities(
     member_ids = {m[0] for m in members}
     will_rename = False
     if survivor_id is None:
-      existing = resolve_entity_id(conn, clean)
+      existing = _resolve_live_entity_id(conn, clean)
       if existing is not None and existing not in member_ids:
         survivor_id = existing
       else:
@@ -326,7 +343,12 @@ def normalize_entities(
         renamed += 1
       except sqlite3.IntegrityError:
         # `clean` already exists as another entity — merge into it instead.
-        survivor_id = resolve_entity_id(conn, clean) or survivor_id
+        live = _resolve_live_entity_id(conn, clean)
+        if live is None:
+          # The only row holding `clean` is denied. Leave the group alone
+          # rather than merging live data into a pruned entity.
+          continue
+        survivor_id = live
         victim_ids = [m[0] for m in members if m[0] != survivor_id]
     if victim_ids:
       merge_entities(conn, survivor_id, victim_ids)

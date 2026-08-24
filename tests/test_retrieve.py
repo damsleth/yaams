@@ -792,3 +792,33 @@ def test_desc_sort_breaks_timestamp_ties_by_score_desc():
   assert len(results) == 2
   assert results[0].timestamp == results[1].timestamp
   assert results[0].score >= results[1].score
+
+
+def test_session_straddling_the_window_edge_is_still_found():
+  # Regression: consolidation windowing used containment
+  # (start >= since AND end <= until), so a session spanning midnight was
+  # excluded from BOTH days' queries. Its member items are filtered out by
+  # `consolidated_into IS NULL`, so the whole session went invisible.
+  conn = _open_db()
+  # 23:30 Monday -> 00:30 Tuesday, one gap-free session.
+  base = datetime(2026, 4, 6, 23, 30, tzinfo=UTC)
+  items = [
+    _make_item(content=f"straddle-token note {i}", ts=base + timedelta(minutes=i * 10),
+               msg_id=f"s{i}")
+    for i in range(7)
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+  cons = build_consolidations(items)
+  assert len(cons) == 1
+  assert cons[0].start_timestamp.day == 6 and cons[0].end_timestamp.day == 7
+  store_consolidations(conn, cons, embeddings=[b"\x00" * 16])
+
+  for day in (6, 7):
+    cfg = HybridQueryConfig(
+      since=datetime(2026, 4, day, 0, 0, tzinfo=UTC),
+      until=datetime(2026, 4, day, 23, 59, tzinfo=UTC),
+    )
+    results = query(conn, "straddle-token", config=cfg)
+    assert any(r.kind == "consolidation" for r in results), (
+      f"session straddling midnight vanished from the day-{day} window"
+    )

@@ -506,8 +506,12 @@ def _fts_search_consolidations(
     JOIN consolidations ON consolidations.id = consolidations_fts.consolidation_id
     WHERE consolidations_fts MATCH ?
       AND (? = '' OR consolidations.source IN (SELECT value FROM json_each(?)))
-      AND (? IS NULL OR consolidations.start_timestamp >= ?)
-      AND (? IS NULL OR consolidations.end_timestamp <= ?)
+      -- Overlap, not containment: a session that straddles the window edge
+      -- (starts Mon 23:00, ends Tue 01:00) still belongs to both days. Its
+      -- member items are filtered out by `consolidated_into IS NULL`, so
+      -- excluding the consolidation would hide the whole session.
+      AND (? IS NULL OR consolidations.end_timestamp >= ?)
+      AND (? IS NULL OR consolidations.start_timestamp <= ?)
       AND (? IS NULL OR EXISTS (
             SELECT 1 FROM items i, json_each(consolidations.raw_item_ids) j
             WHERE i.id = j.value AND i.lang = ?))
@@ -568,8 +572,12 @@ def _vec_search_consolidations(
     WHERE consolidations_vec.embedding MATCH ?
       AND k = ?
       AND (? = '' OR consolidations.source IN (SELECT value FROM json_each(?)))
-      AND (? IS NULL OR consolidations.start_timestamp >= ?)
-      AND (? IS NULL OR consolidations.end_timestamp <= ?)
+      -- Overlap, not containment: a session that straddles the window edge
+      -- (starts Mon 23:00, ends Tue 01:00) still belongs to both days. Its
+      -- member items are filtered out by `consolidated_into IS NULL`, so
+      -- excluding the consolidation would hide the whole session.
+      AND (? IS NULL OR consolidations.end_timestamp >= ?)
+      AND (? IS NULL OR consolidations.start_timestamp <= ?)
       AND (? IS NULL OR EXISTS (
             SELECT 1 FROM items i, json_each(consolidations.raw_item_ids) j
             WHERE i.id = j.value AND i.lang = ?))
@@ -807,8 +815,9 @@ def _browse_window(
       """
       SELECT id FROM consolidations
       WHERE (? = '' OR source IN (SELECT value FROM json_each(?)))
-        AND (? IS NULL OR start_timestamp >= ?)
-        AND (? IS NULL OR end_timestamp <= ?)
+        -- Overlap, not containment (see _fts_search_consolidations).
+        AND (? IS NULL OR end_timestamp >= ?)
+        AND (? IS NULL OR start_timestamp <= ?)
       ORDER BY start_timestamp DESC
       LIMIT ?
       """,

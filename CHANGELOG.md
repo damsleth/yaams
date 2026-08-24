@@ -10,17 +10,33 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
-### Changed
-- **Recency decay re-measured on the 79-gold era and killed again; no change
-  shipped.** A scoped variant adapted from Headroom's `RecencyBoostRanker`
-  (decay only raw Tier 1 items, only relevance-sorted queries; tau=90d,
-  floor 0.9) regressed 4 gold queries and dropped dev quality 0.6076 -> 0.5357
-  (`recency2-raw-t90-f0.9`, `fail:regression`) - the same signature as the
-  jun18 `recency-f0.9` kill on the ≈46-gold era. Verdict now holds across two
-  eras and two scopings: this corpus does not reward recency; the gold set asks
-  about facts whose correct evidence is old. Experiment code preserved on the
-  `autoresearch/retrieval-recency-v2` branch; rows logged to the experiment
-  timeline. Do not retry without a freshness-sensitive gold population.
+### Internal
+- **Recency decay v2 was a void measurement, not a kill; recency at tau=90
+  remains untested on the 79-gold era.** The variant scored raw Tier 1 items by
+  `max(floor, exp(-age/tau))` with `tau=90d, floor=0.9`, so the floor binds for
+  anything older than `90*ln(1/0.9)` = 9.49 days. The frozen fixture's *newest*
+  item is `2026-06-30T20:30Z` and the run was 2026-08-21 — a minimum age of 52
+  days (`exp(-52/90)` = 0.56). The factor was therefore exactly `0.9` for all
+  70,134 items, and a uniform multiplier cannot reorder them. Because the decay
+  skips `cfg.tier2_source`, the only ranking effect was a flat 10% demotion of
+  raw Tier 1 against exempt `tier2_ledger` rows and consolidations: the 4
+  regressions and the 0.6076 -> 0.5357 drop measure tier demotion, not age.
+  No change shipped, and none was warranted — but the earlier conclusion drawn
+  from it ("this corpus does not reward recency", "holds across two eras and
+  two scopings") is withdrawn. It rests only on the jun18 `recency-f0.9` run on
+  the ≈46-gold era. A retry needs a floor that does not bind across the
+  fixture's age range, or `now` pinned to the fixture's max timestamp.
+  Correction logged as `recency2-raw-t90-f0.9-void` (seq 86) against the
+  original `recency2-raw-t90-f0.9` (seq 84), which stays as recorded — the
+  timeline is append-only.
+- **The recency-v2 experiment branch is local-only.**
+  `autoresearch/retrieval-recency-v2` (`e0dbeab`) has no remote ref and no
+  upstream, its timeline rows carry an empty `commit`, and the code comment on
+  it points at `.plans/recency-decay-v2.md`, which is gitignored. A fresh clone
+  cannot reach any of it. Note also that the branch defaults
+  `recency_decay_tau_days` to `90.0` where the pre-registered plan specified
+  `0.0` (disabled) — merging or cherry-picking it as-is would ship the
+  degenerate decay on by default.
 
 ### Fixed
 - **Ledger inbox notes were written in a format the ledger rejects.**

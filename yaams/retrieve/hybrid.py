@@ -295,7 +295,12 @@ def query(
         r.score *= weight
   if cfg.sort in ("asc", "desc"):
     hydrated = _apply_relevance_floor(hydrated, cfg.relevance_floor)
-    hydrated.sort(key=lambda r: (r.timestamp, -r.score), reverse=cfg.sort == "desc")
+    # Sort on the primary key alone and reverse it, then break ties by score
+    # descending in a second stable pass. Folding -score into the key breaks
+    # under reverse=True: it flips the secondary key too, so the *weakest*
+    # same-timestamp match would win the "most recent" slot.
+    hydrated.sort(key=lambda r: r.score, reverse=True)
+    hydrated.sort(key=lambda r: r.timestamp, reverse=cfg.sort == "desc")
   else:
     hydrated.sort(key=lambda r: r.score, reverse=True)
   if cfg.assoc_weights:

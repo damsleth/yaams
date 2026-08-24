@@ -772,3 +772,23 @@ def test_score_components_record_fts_rank():
   assert top.components.fts_rank == 0
   assert top.components.fts_score is not None
   assert top.components.rrf_score > 0
+
+
+def test_desc_sort_breaks_timestamp_ties_by_score_desc():
+  # Regression: sorting on (timestamp, -score) with reverse=True flipped the
+  # secondary key too, so among same-timestamp hits the WEAKEST match was
+  # returned first. Two items share a timestamp; the one matching the query
+  # twice must outrank the one matching once.
+  conn = _open_db()
+  ts = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  items = [
+    _make_item(content="tiebreak-token weak filler text", ts=ts, msg_id="weak"),
+    _make_item(content="tiebreak-token tiebreak-token strong", ts=ts, msg_id="strong"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  cfg = HybridQueryConfig(sort="desc", include_consolidations=False)
+  results = query(conn, "tiebreak-token", config=cfg)
+  assert len(results) == 2
+  assert results[0].timestamp == results[1].timestamp
+  assert results[0].score >= results[1].score

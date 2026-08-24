@@ -36,7 +36,6 @@ DATE_FILTER_FETCH_MULTIPLIER = 4
 # Per-field bm25 weights (FTS5 bm25() takes one weight per column, in
 # table-declaration order; UNINDEXED columns get 0).
 FTS_ITEM_WEIGHTS = (0.0, 1.0, 2.0, 1.0)  # item_id, content, subject, sender
-FTS_CONS_WEIGHTS = (0.0, 1.0, 1.0)  # consolidation_id, summary, participants
 
 # Precision-with-use feedback boost (cfg.feedback_boost). Per-signal weight and
 # cap mirror the display-side validation boost in retrieve.trust so the two
@@ -702,7 +701,12 @@ def _fuse(
       if kind == "consolidation" and cfg.prefer_consolidations:
         contribution *= cfg.consolidation_boost
       comp.rrf_score += contribution
-      _stash_component(comp, ranking is ranked_lists[0] or ranking is ranked_lists[1], rank, raw_score, kind == "item")
+      _stash_component(
+        comp,
+        ranking is ranked_lists[0] or ranking is ranked_lists[1],
+        rank,
+        raw_score,
+      )
   # Post-loop pass: reward mutual top-of-both-index agreement.
   # Only fires when a doc is strongly ranked in BOTH FTS and vector (rank<=2
   # in each), the cleanest "both modalities are confident" signal that RRF
@@ -723,7 +727,6 @@ def _stash_component(
   is_fts: bool,
   rank: int,
   raw_score: float,
-  is_item: bool,
 ) -> None:
   if is_fts:
     if comp.fts_rank is None or rank < comp.fts_rank:

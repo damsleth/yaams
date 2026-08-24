@@ -200,9 +200,6 @@ def generate_candidates(
       ):
         existing_note = _note_from_index(note_index, candidate.merge_with)
         if existing_note is not None:
-          from datetime import UTC
-          from datetime import datetime as _dt
-
           from yaams.promote.conflict import classify_pair, strip_private_fences
           cv = classify_pair(
             existing_note["title"],
@@ -213,8 +210,8 @@ def generate_candidates(
             adapter,
             conflict_cfg,
           )
-          now_str = _dt.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-          existing_stmt_hash = "sha256:" + __import__("hashlib").sha256(
+          now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+          existing_stmt_hash = "sha256:" + sha256(
             existing_note["statement"].encode()
           ).hexdigest()
 

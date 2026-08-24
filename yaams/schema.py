@@ -7,18 +7,6 @@ SCHEMA_VERSION = 7
 DEFAULT_EMBEDDING_DIM = 1024
 
 
-def has_sqlite_vec(conn: sqlite3.Connection) -> bool:
-  row = conn.execute(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items_vec'"
-  ).fetchone()
-  if row is None:
-    return False
-  sql = conn.execute(
-    "SELECT sql FROM sqlite_master WHERE name = 'items_vec'"
-  ).fetchone()
-  return bool(sql and "vec0" in (sql[0] or "").lower())
-
-
 def init_schema(
   conn: sqlite3.Connection,
   embedding_dim: int = DEFAULT_EMBEDDING_DIM,

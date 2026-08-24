@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Iterable, Iterator, Sequence
@@ -190,12 +189,3 @@ def _consolidation_id(session: Session, raw_ids: list[str]) -> str:
   digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()
   return f"cons:{digest[:32]}"
 
-
-def consolidation_metadata(consolidation: Consolidation) -> str:
-  return json.dumps(
-    {
-      "participants": consolidation.participants,
-      "raw_item_ids": consolidation.raw_item_ids,
-    },
-    ensure_ascii=False,
-  )

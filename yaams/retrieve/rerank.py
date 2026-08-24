@@ -40,10 +40,6 @@ def get_reranker(model_name: str, max_length: int = 512, device: str | None = No
   return model
 
 
-def reset_reranker_cache() -> None:
-  _RERANKER_CACHE.clear()
-
-
 def candidate_text(title: str, body: str, max_chars: int = 2048) -> str:
   """Build the candidate text passed to the cross-encoder.
 

@@ -177,9 +177,13 @@ def merge_entities(
   entity_meta (survivor's existing values win), entity_relations (dedupe +
   drop self-loops), promotion_candidates (matched by canonical name). Drops
   the victims' learned entity_assoc rows (rebuild with `assoc build`).
+
+  Returns counts for the two things it actually tallies: `victims` and
+  `item_links`. It used to advertise `tags`/`meta`/`relations` too, but
+  nothing ever incremented them, so every caller reported a hard 0.
   """
   victims = [v for v in victim_ids if v != survivor_id]
-  stats = {"victims": 0, "item_links": 0, "tags": 0, "meta": 0, "relations": 0}
+  stats = {"victims": 0, "item_links": 0}
   if not victims:
     return stats
 

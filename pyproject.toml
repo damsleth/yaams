@@ -8,6 +8,11 @@ dependencies = [
   "click>=8.1",
   "cryptography>=42.0",
   "pyyaml>=6.0",
+  # Not imported by yaams (only passed as the convert_to_numpy=True flag to
+  # sentence-transformers) — this entry exists solely to hold the <2 pin.
+  # yaams is the only package in the lock that bounds numpy at all; spacy,
+  # thinc, blis, scipy and transformers all take it unbounded, so dropping
+  # this moves every fresh install to numpy 2.x.
   "numpy<2",
   "pyobjc-framework-Cocoa>=12.1; sys_platform == 'darwin'",
   "sentence-transformers>=3.0",

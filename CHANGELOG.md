@@ -93,14 +93,18 @@ surface; pin to a specific version if you need stability.
   Correction logged as `recency2-raw-t90-f0.9-void` (seq 86) against the
   original `recency2-raw-t90-f0.9` (seq 84), which stays as recorded — the
   timeline is append-only.
-- **The recency-v2 experiment branch is local-only.**
-  `autoresearch/retrieval-recency-v2` (`e0dbeab`) has no remote ref and no
-  upstream, its timeline rows carry an empty `commit`, and the code comment on
-  it points at `.plans/recency-decay-v2.md`, which is gitignored. A fresh clone
-  cannot reach any of it. Note also that the branch defaults
+- **Both experiment branches are now published.**
+  `autoresearch/retrieval-recency-v2` (`e0dbeab`, the recency decay v2 variant)
+  and `worktree-wf_4f4cb97e-5bf-5` (`e48347b`, an unfinished
+  `fts_rank_dominance_tiebreak` pass recovered from a stale worktree) were
+  local-only — no remote ref, no upstream, and timeline rows carrying an empty
+  `commit`, so a fresh clone could not reach either. Both are pushed and
+  tracking. Their `.plans/*.md` design notes remain gitignored, so the branch
+  code is now the record.
+  Two warnings for anyone picking these up: `retrieval-recency-v2` defaults
   `recency_decay_tau_days` to `90.0` where the pre-registered plan specified
-  `0.0` (disabled) — merging or cherry-picking it as-is would ship the
-  degenerate decay on by default.
+  `0.0` (disabled), so merging it as-is ships the degenerate decay on by
+  default; and `worktree-wf_4f4cb97e-5bf-5` was never measured at all.
 - Thread-coherence scoring now does one batched id lookup instead of a query
   per fused candidate, and the unbounded `IN (...)` lists in entity-allowlist
   resolution, association weighting and consolidation clearing are chunked

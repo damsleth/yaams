@@ -11,6 +11,11 @@ surface; pin to a specific version if you need stability.
 ## [Unreleased]
 
 ### Fixed
+- **The post-ingest briefing could end with a chat-style question.** The
+  summary is written one-way into the ledger inbox, but the model kept closing
+  with "Vil du at jeg drafter svar...?" style offers to help. `build_prompt`
+  now forbids it explicitly. Recovered from `worktree-no-question-summary`,
+  where the fix had sat unmerged since 2026-07-08.
 - **Consolidations recorded only the first 50 of their raw item ids.**
   `_to_consolidation` truncated `raw_item_ids` to 50 while `item_count` stayed
   the true count. The cap silently matched `DEFAULT_MAX_SESSION_ITEMS`, so it

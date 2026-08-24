@@ -104,6 +104,20 @@ def test_build_prompt_groups_by_source_and_anchors_time():
   assert "relative phrase" in prompt.lower()
 
 
+def test_build_prompt_forbids_a_chat_style_sign_off():
+  # The briefing is written one-way into the ledger inbox, so the model must
+  # not close with "Vil du at jeg drafter svar...?" style offers. Prompt rules
+  # are easy to drop silently in a later edit, so pin this one.
+  prompt = build_prompt(
+    [{"source": "teams", "date": "2026-06-28 09:00", "sender": "a",
+      "subject": "", "content": "hi"}],
+    total_new=1,
+    now=datetime(2026, 6, 28, 15, 0, tzinfo=UTC),
+  )
+  assert "one-way briefing" in prompt
+  assert "Do NOT end with a question" in prompt
+
+
 def test_summarize_ingest_skips_when_no_new_items():
   conn = _items_db()
   res = summarize_ingest(conn, {}, run_started_at=datetime.now(UTC), total_new=0)

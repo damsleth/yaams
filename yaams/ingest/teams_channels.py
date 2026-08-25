@@ -8,16 +8,12 @@ maps its JSON rows to `Item`s. One yaams source per profile:
 ``teams_channels_<profile>`` — distinct from chat ingestion's ``teams_<profile>``
 so routing and watermarks tell channels apart from chats.
 
-Cost note: a naive run is 1 ``teams`` call + 1 ``channels`` call per team +
+Cost note: a run is 1 ``teams`` call + 1 ``channels`` call per team +
 1 ``messages`` call per channel (an N+1 subprocess fan-out, each re-minting a
-token). Use the ``teams`` allowlist to ingest only the teams you care about;
-the default config ships ``enabled: false`` for the same reason.
-
-``owa-teams messages`` has no ``--since`` yet, so v1 fetches ``--limit`` pages
-(newest-first; owa-teams reverses to chronological) and filters
-``timestamp <= cutoff`` here. Steady-state daily ingest is fine; a cold start
-of a very busy channel can miss history older than ``limit_pages × ~50``
-messages — acceptable for v1, removed once owa-teams grows ``--since``.
+token). The two fan-out levels run in a small thread pool — the work is all
+subprocess wait — and ``owa-teams messages --since`` stops paging at the
+watermark, so a steady-state run is ~1 page per channel. Use the ``teams``
+allowlist to bound the fan-out further.
 """
 
 from __future__ import annotations
@@ -27,6 +23,7 @@ import logging
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator
@@ -69,12 +66,15 @@ class TeamsChannelsAdapter:
   # you can see but not read, so ingest 403s on them every run. Ids are
   # globally unique, so this is a flat list - no team/profile nesting.
   skip_channels: frozenset[str] = frozenset()
-  limit_pages: int = 4             # owa-teams --limit (pages of ~50)
-  # Proper fix: owa-teams --since <date> would avoid pulling all pages; use
-  # backfill_limit_pages for now to enable a one-time deep backfill without
-  # changing the default steady-state page budget.
-  # Set teams_channels.backfill_limit_pages in config for first all-profile run.
-  backfill_limit_pages: int | None = None  # overrides limit_pages when set
+  limit_pages: int = 4             # owa-teams --limit safety cap (pages of ~50)
+  # Overrides limit_pages for a one-time deep backfill (set
+  # teams_channels.backfill_limit_pages in config) without raising the
+  # steady-state cap. Rarely needed now that --since bounds the paging.
+  backfill_limit_pages: int | None = None
+  # Threads for the channels/messages fan-out. Small on purpose: the outer
+  # ingest already runs up to 8 sources at once, and chatsvc rate-limits.
+  # ponytail: fixed 4; make it configurable only if 429 retries show up.
+  max_workers: int = 4
   skip_bots: bool = True
   max_retries: int = DEFAULT_MAX_RETRIES  # retries per owa-teams verb on 429
   skipped_bots: int = field(default=0, init=False)
@@ -88,41 +88,49 @@ class TeamsChannelsAdapter:
     self.skipped_automated = 0
     self.rate_limit_retries = 0
     cutoff = ensure_utc(since)
-    for team_id, team_name in self._teams():
-      for ch_id, ch_name in self._channels(team_id):
-        for row in self._messages(ch_id, team_id):
-          ts_str = row.get("timestamp")
-          if not ts_str:
-            self.skipped_empty += 1
-            continue
-          try:
-            ts = parse_iso_datetime(ts_str)
-          except ValueError:
-            self.skipped_empty += 1
-            continue
-          # owa-teams returns chronological (oldest-first) and has no --since
-          # yet, so drop pre-cutoff rows here rather than break early.
-          # TODO(watermark early-exit): once owa-teams exposes per-page newest
-          # timestamp, check after page 1 whether newest_ts <= cutoff and skip
-          # remaining pages. Depends on owa-teams --since or a page-envelope
-          # with newest_timestamp. See TODO 10.
-          if ts <= cutoff:
-            continue
-          if self.skip_bots and _is_bot_row(row):
-            self.skipped_bots += 1
-            continue
-          # Content-pattern filter: drop automated admin digest / connector posts
-          # whose body matches well-known machine-generated patterns (MC IDs,
-          # published-date headers, Message Center advisories).
-          content_raw = (row.get("content") or "").strip()
-          if _AUTOMATED_CONTENT_RE.search(content_raw):
-            self.skipped_automated += 1
-            continue
-          item = _to_item(row, self.profile, team_id, team_name, ch_name)
-          if item is None:
-            self.skipped_empty += 1
-            continue
-          yield item
+    teams = self._teams()  # serial: warms the owa-piggy token cache
+    with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+      # (team_id, team_name, channel_id, channel_name) for every channel.
+      targets = [
+        (team_id, team_name, ch_id, ch_name)
+        for (team_id, team_name), channels in zip(
+          teams, pool.map(lambda t: self._channels(t[0]), teams)
+        )
+        for ch_id, ch_name in channels
+      ]
+      rows_per_channel = pool.map(
+        lambda t: self._messages(t[2], t[0], cutoff), targets
+      )
+      fanned = list(zip(targets, rows_per_channel))
+    for (team_id, team_name, _ch_id, ch_name), rows in fanned:
+      for row in rows:
+        ts_str = row.get("timestamp")
+        if not ts_str:
+          self.skipped_empty += 1
+          continue
+        try:
+          ts = parse_iso_datetime(ts_str)
+        except ValueError:
+          self.skipped_empty += 1
+          continue
+        # --since is inclusive ("at/after"), so the boundary row comes back.
+        if ts <= cutoff:
+          continue
+        if self.skip_bots and _is_bot_row(row):
+          self.skipped_bots += 1
+          continue
+        # Content-pattern filter: drop automated admin digest / connector posts
+        # whose body matches well-known machine-generated patterns (MC IDs,
+        # published-date headers, Message Center advisories).
+        content_raw = (row.get("content") or "").strip()
+        if _AUTOMATED_CONTENT_RE.search(content_raw):
+          self.skipped_automated += 1
+          continue
+        item = _to_item(row, self.profile, team_id, team_name, ch_name)
+        if item is None:
+          self.skipped_empty += 1
+          continue
+        yield item
 
   def _teams(self) -> list[tuple[str, str]]:
     """Yield (team_id, team_name) for joined teams, honoring the allowlist."""
@@ -151,16 +159,13 @@ class TeamsChannelsAdapter:
       out.append((channel_id, (channel.get("displayName") or "").strip()))
     return out
 
-  def _messages(self, channel_id: str, team_id: str) -> list[dict]:
-    # Proper fix: owa-teams --since <date> would avoid pulling all pages; use
-    # backfill_limit_pages for now (set teams_channels.backfill_limit_pages in
-    # config for first all-profile run; crayon channels cap at ~190-199 msgs,
-    # so ~40 pages covers a full backfill).
+  def _messages(self, channel_id: str, team_id: str, cutoff: datetime) -> list[dict]:
     pages = self.backfill_limit_pages if self.backfill_limit_pages is not None else self.limit_pages
     return self._run([
       "messages",
       "--channel", channel_id,
       "--team", team_id,
+      "--since", cutoff.isoformat(),
       "--limit", str(pages),
     ])
 

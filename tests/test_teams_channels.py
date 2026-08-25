@@ -447,3 +447,25 @@ def test_adapter_skip_channels_denylist(monkeypatch):
   )
   items = list(adapter.extract(datetime(2026, 1, 1, tzinfo=UTC)))
   assert [i.raw_metadata["channel_id"] for i in items] == [c1]
+
+
+def test_messages_cmd_passes_since_watermark(monkeypatch):
+  """--since lets owa-teams stop paging at the watermark (the speed win)."""
+  import yaams.ingest.teams_channels as mod
+  seen: list[list[str]] = []
+  chan = "19:chan@thread.tacv2"
+  inner = _fake_run(
+    [{"id": "team-1", "displayName": "Marketing"}],
+    {"team-1": [{"id": chan, "displayName": "General"}]},
+    {chan: [_row()]},
+  )
+
+  def run(cmd, capture_output=True, text=True):
+    seen.append(cmd)
+    return inner(cmd, capture_output=capture_output, text=text)
+
+  monkeypatch.setattr(mod.subprocess, "run", run)
+  adapter = TeamsChannelsAdapter(profile="work")
+  list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
+  msg_cmd = next(c for c in seen if c[1] == "messages")
+  assert msg_cmd[msg_cmd.index("--since") + 1] == "2026-04-01T00:00:00+00:00"

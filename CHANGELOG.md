@@ -10,6 +10,24 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Changed
+- **Ingest went from 4m20s to ~22s, almost all of it `teams_channels`.** Three
+  fixes, each found by measuring rather than reasoning. `owa-teams messages`
+  had grown a `--since` flag while the adapter's docstring still said it
+  hadn't, so every run pulled `limit_pages` of history per channel and threw
+  away everything before the watermark; it now stops paging at the cutoff and
+  `limit_pages` is just a safety cap. The per-team `channels` and per-channel
+  `messages` calls are subprocess waits, so they now run in a thread pool -
+  one task per team doing its own channels-then-messages calls, deliberately
+  not two `map` passes, which barriered every messages call behind the slowest
+  channels call. And roughly one `owa-teams` call per run hangs and returns at
+  ~61s, which alone was the difference between a 19s and a 1m32s ingest, so
+  `_run` now caps a call at 20s and retries through its existing retry loop
+  (counted in `timed_out_calls`). A companion owa-piggy fix - serving
+  `token --json` from the access-token cache instead of round-tripping AAD on
+  every call - cut the auth cost of each `owa-*` invocation from 0.31s to
+  0.03s and took the cheap sources down with it (mail 1.1s -> 0.66s).
+
 ### Fixed
 - **The post-ingest briefing could end with a chat-style question.** The
   summary is written one-way into the ledger inbox, but the model kept closing

@@ -49,6 +49,13 @@ DEFAULT_MAX_RETRIES = 5
 _BACKOFF_BASE_SEC = 1.0
 _BACKOFF_CAP_SEC = 30.0
 
+# Per-call wall-clock cap. Measured: `owa-teams channels` returns in 0.6-2.2s,
+# but roughly one call per run hangs and comes back at ~61s (a chatsvc request
+# with no client-side timeout riding some upstream 60s limit). One such hang
+# was the whole difference between a 19s and a 1m32s ingest, so cut it off and
+# retry instead of waiting it out.
+_CALL_TIMEOUT_SEC = 20.0
+
 # Content-pattern filter: skip automated/system posts whose body starts with
 # well-known Microsoft admin digest / Message Center patterns.
 _AUTOMATED_CONTENT_RE = re.compile(
@@ -73,36 +80,37 @@ class TeamsChannelsAdapter:
   backfill_limit_pages: int | None = None
   # Threads for the channels/messages fan-out. Small on purpose: the outer
   # ingest already runs up to 8 sources at once, and chatsvc rate-limits.
-  # ponytail: fixed 4; make it configurable only if 429 retries show up.
-  max_workers: int = 4
+  # ponytail: fixed 8; make it configurable only if 429 retries show up.
+  max_workers: int = 8
   skip_bots: bool = True
   max_retries: int = DEFAULT_MAX_RETRIES  # retries per owa-teams verb on 429
   skipped_bots: int = field(default=0, init=False)
   skipped_empty: int = field(default=0, init=False)
   skipped_automated: int = field(default=0, init=False)  # content-pattern filtered
   rate_limit_retries: int = field(default=0, init=False)  # 429 backoffs this run
+  timed_out_calls: int = field(default=0, init=False)     # calls cut off as hung
 
   def extract(self, since: datetime) -> Iterator[Item]:
     self.skipped_bots = 0
     self.skipped_empty = 0
     self.skipped_automated = 0
     self.rate_limit_retries = 0
+    self.timed_out_calls = 0
     cutoff = ensure_utc(since)
     teams = self._teams()  # serial: warms the owa-piggy token cache
+    # One task per team, each doing its own channels-then-messages calls.
+    # Deliberately not two pool.map passes: that barriers every messages
+    # call behind the slowest channels call, and per-call latency is 0.6-6s
+    # of server variance, so one outlier stalls the whole source.
+    # ponytail: inner calls stay serial per team — nesting submits into the
+    # same pool risks deadlock, and team-level width is enough.
     with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-      # (team_id, team_name, channel_id, channel_name) for every channel.
-      targets = [
-        (team_id, team_name, ch_id, ch_name)
-        for (team_id, team_name), channels in zip(
-          teams, pool.map(lambda t: self._channels(t[0]), teams)
-        )
-        for ch_id, ch_name in channels
+      fanned = [
+        fetched
+        for per_team in pool.map(lambda t: self._fetch_team(t, cutoff), teams)
+        for fetched in per_team
       ]
-      rows_per_channel = pool.map(
-        lambda t: self._messages(t[2], t[0], cutoff), targets
-      )
-      fanned = list(zip(targets, rows_per_channel))
-    for (team_id, team_name, _ch_id, ch_name), rows in fanned:
+    for (team_id, team_name, ch_name), rows in fanned:
       for row in rows:
         ts_str = row.get("timestamp")
         if not ts_str:
@@ -131,6 +139,16 @@ class TeamsChannelsAdapter:
           self.skipped_empty += 1
           continue
         yield item
+
+  def _fetch_team(
+    self, team: tuple[str, str], cutoff: datetime,
+  ) -> list[tuple[tuple[str, str, str], list[dict]]]:
+    """Fetch every channel's messages for one team: 1 channels call + N."""
+    team_id, team_name = team
+    return [
+      ((team_id, team_name, ch_name), self._messages(ch_id, team_id, cutoff))
+      for ch_id, ch_name in self._channels(team_id)
+    ]
 
   def _teams(self) -> list[tuple[str, str]]:
     """Yield (team_id, team_name) for joined teams, honoring the allowlist."""
@@ -183,7 +201,18 @@ class TeamsChannelsAdapter:
     cmd = ["owa-teams", *args, "--profile", self.profile]
     attempts = max(self.max_retries, 0) + 1
     for attempt in range(attempts):
-      result = subprocess.run(cmd, capture_output=True, text=True)
+      try:
+        result = subprocess.run(
+          cmd, capture_output=True, text=True, timeout=_CALL_TIMEOUT_SEC,
+        )
+      except subprocess.TimeoutExpired:
+        self.timed_out_calls += 1
+        logger.warning(
+          "owa-teams %s hung past %.0fs; retrying (attempt %d/%d, profile=%s, args=%s)",
+          verb, _CALL_TIMEOUT_SEC, attempt + 1, attempts, self.profile,
+          " ".join(args[1:]),
+        )
+        continue
       if result.returncode == 0:
         return _parse_rows(result.stdout, verb, self.profile)
       if _is_rate_limited(result) and attempt + 1 < attempts:

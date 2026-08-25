@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
 from datetime import UTC, datetime
 
 from yaams.ingest.teams_channels import (
@@ -58,7 +59,7 @@ def _fake_run(
   messages_by_channel: dict[str, list[dict]],
 ):
   """Build a subprocess.run replacement dispatching on the owa-teams verb."""
-  def run(cmd, capture_output=True, text=True):  # noqa: ARG001
+  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
     assert cmd[0] == "owa-teams"
     assert "--profile" in cmd
     verb = cmd[1]
@@ -313,7 +314,7 @@ def test_adapter_populated_allowlist_restricts(monkeypatch):
 def test_adapter_tolerates_failed_owa_teams(monkeypatch):
   import yaams.ingest.teams_channels as mod
 
-  def boom(cmd, capture_output=True, text=True):  # noqa: ARG001
+  def boom(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
     return _FakeProc(stdout="", returncode=1, stderr="auth blew up")
 
   monkeypatch.setattr(mod.subprocess, "run", boom)
@@ -333,7 +334,7 @@ def _seq_run(monkeypatch, responses):
   calls: list[list[str]] = []
   slept: list[float] = []
 
-  def run(cmd, capture_output=True, text=True):  # noqa: ARG001
+  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
     calls.append(cmd)
     return responses[min(len(calls) - 1, len(responses) - 1)]
 
@@ -460,12 +461,30 @@ def test_messages_cmd_passes_since_watermark(monkeypatch):
     {chan: [_row()]},
   )
 
-  def run(cmd, capture_output=True, text=True):
+  def run(cmd, capture_output=True, text=True, timeout=None):
     seen.append(cmd)
-    return inner(cmd, capture_output=capture_output, text=text)
+    return inner(cmd, capture_output=capture_output, text=text, timeout=timeout)
 
   monkeypatch.setattr(mod.subprocess, "run", run)
   adapter = TeamsChannelsAdapter(profile="work")
   list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
   msg_cmd = next(c for c in seen if c[1] == "messages")
   assert msg_cmd[msg_cmd.index("--since") + 1] == "2026-04-01T00:00:00+00:00"
+
+
+def test_run_retries_a_hung_call_then_succeeds(monkeypatch):
+  """A call that hangs past the timeout is cut off and retried, not waited out."""
+  import yaams.ingest.teams_channels as mod
+  calls = {"n": 0}
+
+  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
+    calls["n"] += 1
+    if calls["n"] == 1:
+      raise subprocess.TimeoutExpired(cmd, timeout or 0)
+    return _FakeProc(json.dumps([{"id": "team-1", "displayName": "T"}]))
+
+  monkeypatch.setattr(mod.subprocess, "run", run)
+  adapter = TeamsChannelsAdapter(profile="work")
+  assert adapter._run(["teams"]) == [{"id": "team-1", "displayName": "T"}]
+  assert calls["n"] == 2
+  assert adapter.timed_out_calls == 1

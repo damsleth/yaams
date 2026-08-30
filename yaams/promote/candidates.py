@@ -141,6 +141,11 @@ def generate_candidates(
   candidates: list[PromotionCandidate] = []
   total = len(entities)
 
+  # Pass 1 - draft. Dedup wants every statement of the run up front so it can
+  # resolve them in one `ledger embed search --batch` call (one warm encoder
+  # instead of a cold model load per candidate), so drafting is separated from
+  # the dedup/conflict/scoring pass below.
+  drafted: list[tuple[PromotionCandidate, list]] = []
   for i, (entity_name, entity_id, window_days) in enumerate(entities, 1):
     if on_progress:
       on_progress(f"[{i}/{total}] {entity_name} ...")
@@ -167,100 +172,111 @@ def generate_candidates(
           on_progress("  skipped (previously rejected)")
         continue
     candidate = _draft(adapter, entity_name, cluster)
-    if candidate:
-      # Rule 3: entity + title fallback, only for pre-v1 rejections that
-      # lacked id/item-ids. Requires the drafted title, so it runs post-draft.
-      if rejected.entity_titles and _rejected_by_entity_title(rejected, candidate):
-        if on_progress:
-          on_progress("  skipped (previously rejected)")
-        continue
-      # --- Phase C: dedup check -------------------------------------------
-      verdict = dedup_checker.check(candidate.draft_statement)
-      if verdict.decision == "duplicate":
-        if on_progress:
-          on_progress(f"  skipped (dedup duplicate: {verdict.target_path})")
-        continue
-      # The real nearest-neighbour similarity, whatever the decision band was.
-      # `candidate.dedup_similarity` cannot stand in for it: that field is a
-      # merge hint (promote/review.py renders it as one) and is only set inside
-      # the merge band, which would make novelty a cliff instead of a gradient.
-      novelty_similarity = verdict.similarity
-      if verdict.decision == "merge":
-        candidate.merge_with = verdict.target_path
-        candidate.dedup_similarity = verdict.similarity
-
-      # --- Phase E: conflict classification --------------------------------
-      # Merge-band only: classification needs an existing note to compare
-      # against, and merge_with is the only thing that names one.
-      if (
-        conflict_cfg is not None
-        and conflict_cfg.enabled
-        and candidate.merge_with is not None
-        and config.note_index_path is not None
-      ):
-        existing_note = _note_from_index(note_index, candidate.merge_with)
-        if existing_note is not None:
-          from yaams.promote.conflict import classify_pair, strip_private_fences
-          cv = classify_pair(
-            existing_note["title"],
-            existing_note["statement"],
-            candidate.draft_title,
-            candidate.draft_statement,
-            candidate.merge_with,
-            adapter,
-            conflict_cfg,
-          )
-          now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-          existing_stmt_hash = "sha256:" + sha256(
-            existing_note["statement"].encode()
-          ).hexdigest()
-
-          if cv.classification == "duplicate":
-            if on_progress:
-              on_progress("  skipped (conflict: duplicate via LLM)")
-            continue
-          elif cv.classification == "unrelated":
-            candidate.merge_with = None
-            candidate.dedup_similarity = None
-            # The classifier overruled the embedding match — treat it as novel.
-            novelty_similarity = 0.0
-          # For supplement/contradict/unclassified: keep merge_with
-
-          # Store all conflict fields regardless
-          candidate.conflict_classification = cv.classification
-          candidate.conflict_confidence = cv.confidence
-          candidate.conflict_reason = strip_private_fences(cv.reason)
-          candidate.conflict_model = cv.model
-          candidate.conflict_checked_at = now_str
-          candidate.conflict_target_statement_hash = existing_stmt_hash
-          candidate.conflict_prompt_version = cv.prompt_version
-
-      # --- Admission scoring (plan 01) -------------------------------------
-      # Score the candidate on novelty/utility/confidence/trust. Advisory only:
-      # it ranks and gates, never auto-rejects. `cluster` is still in scope for
-      # provenance (best evidence channel) and corroboration (source count).
-      provenances = [
-        (r.get("provenance") or derive_provenance(r["source"])) for r in cluster
-      ]
-      candidate_terms = _tokenize(candidate.entity)
-      for tag in candidate.draft_tags:
-        candidate_terms |= _tokenize(tag)
-      score, factors = admission_score(
-        dedup_similarity=novelty_similarity,
-        candidate_terms=candidate_terms,
-        utility_terms=utility_terms,
-        item_provenances=provenances,
-        source_count=len(candidate.source_item_ids),
-        weights=weights,
-      )
-      candidate.admission_score = score
-      candidate.admission_factors = factors
-
-      candidates.append(candidate)
+    if not candidate:
       if on_progress:
-        on_progress(f"  drafted: {candidate.draft_title}")
-    elif on_progress:
-      on_progress("  LLM draft failed")
+        on_progress("  LLM draft failed")
+      continue
+    # Rule 3: entity + title fallback, only for pre-v1 rejections that
+    # lacked id/item-ids. Requires the drafted title, so it runs post-draft.
+    if rejected.entity_titles and _rejected_by_entity_title(rejected, candidate):
+      if on_progress:
+        on_progress("  skipped (previously rejected)")
+      continue
+    drafted.append((candidate, cluster))
+
+  # One dedup resolution for the whole run: a single --batch subprocess when
+  # the ledger CLI supports it, else the per-statement path (see dedup.py).
+  dedup_checker.prime([c.draft_statement for c, _ in drafted])
+
+  # Pass 2 - dedup verdict (served from the primed cache), conflict
+  # classification, admission scoring. Progress lines carry the entity name
+  # since the per-entity headers all printed during pass 1.
+  for candidate, cluster in drafted:
+    # --- Phase C: dedup check -------------------------------------------
+    verdict = dedup_checker.check(candidate.draft_statement)
+    if verdict.decision == "duplicate":
+      if on_progress:
+        on_progress(f"  {candidate.entity}: skipped (dedup duplicate: {verdict.target_path})")
+      continue
+    # The real nearest-neighbour similarity, whatever the decision band was.
+    # `candidate.dedup_similarity` cannot stand in for it: that field is a
+    # merge hint (promote/review.py renders it as one) and is only set inside
+    # the merge band, which would make novelty a cliff instead of a gradient.
+    novelty_similarity = verdict.similarity
+    if verdict.decision == "merge":
+      candidate.merge_with = verdict.target_path
+      candidate.dedup_similarity = verdict.similarity
+
+    # --- Phase E: conflict classification --------------------------------
+    # Merge-band only: classification needs an existing note to compare
+    # against, and merge_with is the only thing that names one.
+    if (
+      conflict_cfg is not None
+      and conflict_cfg.enabled
+      and candidate.merge_with is not None
+      and config.note_index_path is not None
+    ):
+      existing_note = _note_from_index(note_index, candidate.merge_with)
+      if existing_note is not None:
+        from yaams.promote.conflict import classify_pair, strip_private_fences
+        cv = classify_pair(
+          existing_note["title"],
+          existing_note["statement"],
+          candidate.draft_title,
+          candidate.draft_statement,
+          candidate.merge_with,
+          adapter,
+          conflict_cfg,
+        )
+        now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        existing_stmt_hash = "sha256:" + sha256(
+          existing_note["statement"].encode()
+        ).hexdigest()
+
+        if cv.classification == "duplicate":
+          if on_progress:
+            on_progress(f"  {candidate.entity}: skipped (conflict: duplicate via LLM)")
+          continue
+        elif cv.classification == "unrelated":
+          candidate.merge_with = None
+          candidate.dedup_similarity = None
+          # The classifier overruled the embedding match — treat it as novel.
+          novelty_similarity = 0.0
+        # For supplement/contradict/unclassified: keep merge_with
+
+        # Store all conflict fields regardless
+        candidate.conflict_classification = cv.classification
+        candidate.conflict_confidence = cv.confidence
+        candidate.conflict_reason = strip_private_fences(cv.reason)
+        candidate.conflict_model = cv.model
+        candidate.conflict_checked_at = now_str
+        candidate.conflict_target_statement_hash = existing_stmt_hash
+        candidate.conflict_prompt_version = cv.prompt_version
+
+    # --- Admission scoring (plan 01) -------------------------------------
+    # Score the candidate on novelty/utility/confidence/trust. Advisory only:
+    # it ranks and gates, never auto-rejects. `cluster` is still in scope for
+    # provenance (best evidence channel) and corroboration (source count).
+    provenances = [
+      (r.get("provenance") or derive_provenance(r["source"])) for r in cluster
+    ]
+    candidate_terms = _tokenize(candidate.entity)
+    for tag in candidate.draft_tags:
+      candidate_terms |= _tokenize(tag)
+    score, factors = admission_score(
+      dedup_similarity=novelty_similarity,
+      candidate_terms=candidate_terms,
+      utility_terms=utility_terms,
+      item_provenances=provenances,
+      source_count=len(candidate.source_item_ids),
+      weights=weights,
+    )
+    candidate.admission_score = score
+    candidate.admission_factors = factors
+
+    candidates.append(candidate)
+    if on_progress:
+      on_progress(f"  drafted: {candidate.draft_title}")
 
   return candidates
 

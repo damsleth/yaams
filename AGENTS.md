@@ -138,6 +138,17 @@ Any retrieval/promote experiment that *measures* fitness — `quality`, `hit_rat
 - **`disposition`** drives the chart: `keep`/`baseline` advance the accepted-baseline line; `kill` is a floating × off it. The harness infers it from the tag (`-keep`/`-win` → keep, `baseline`/`anchor` → baseline, else kill); promote a trial by re-tagging or logging it manually. Record the *final* disposition — a win later reverted as a held-out overfit is a `kill`.
 - **Dataset:** `docs/experiments/experiments.jsonl`, append-only, one object per line. Schema: `key, date, era, disposition, status, delta, note, commit, metrics{quality,hit_rate,mrr,recall@10,latency_p95_ms}`; null any metric not measured. If you do hand-edit it, a git pre-commit hook rebuilds `index.html`.
 - The autoresearch loop also logs raw rows to `scripts/autoresearch_*.tsv` (the upstream ledgers). `docs/experiments/seed.py` shows how the pre-2026-06-30 history was reconstructed from them; new experiments flow through `log_experiment.py`.
+- **Skill proposals are preserved in the wiki, win or lose.** The autoresearch
+  wiki (`docs/experiments/wiki/`, after WikiSkill, arXiv 2608.27454) is the
+  loop's persistent knowledge layer above the raw TSV/JSONL traces:
+  `patterns.md` holds consolidated cross-experiment knowledge, `proposals/`
+  preserves every proposal diff with its verdict (rejected diffs included -
+  they are how later proposals account for failed attempts), `evolution.md`
+  is the append-only index. Record with `python docs/experiments/wiki.py
+  --key ... --verdict ... --diff-file ...`. **Read `patterns.md` before
+  planning any retrieval experiment** and never propose an idea a pattern
+  marks dead; the wiki persists across rejected skill updates, so never
+  delete or weaken a pattern because its proposal failed.
 
 This module is self-contained under `docs/experiments/` so it can later be extracted to its own repo (like ux-loop).
 
@@ -173,7 +184,7 @@ YAAMS/
 │   └── watermark.py
 ├── tests/
 ├── scripts/                   # init_db, ingest, reset_db, analyze, autoresearch_*.tsv
-└── docs/experiments/          # autoresearch experiment timeline (jsonl + self-contained viewer)
+└── docs/experiments/          # autoresearch experiment timeline (jsonl + viewer) + wiki/ (consolidated knowledge, WikiSkill-style)
 ```
 
 ## Phases

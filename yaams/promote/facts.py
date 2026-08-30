@@ -58,7 +58,7 @@ def generate_fact_candidates(
     return []
   cutoff = ensure_utc(since) if since else None
 
-  candidates: list[PromotionCandidate] = []
+  gathered: list[PromotionCandidate] = []
   for md_file in walk_markdown(root, set(DEFAULT_SKIP_DIRS), ("_", ".")):
     for fact in facts_from_file(md_file, root):
       if cutoff and ensure_utc(fact.timestamp) < cutoff:
@@ -67,7 +67,7 @@ def generate_fact_candidates(
       # with the raw item when the opt-in tier is also ingested (enables
       # event-time enrichment + promoted_to marking); harmless when it isn't.
       item_id = hash_id(FACTS_SOURCE, fact.source_id)
-      cand = PromotionCandidate(
+      gathered.append(PromotionCandidate(
         id=_candidate_id("", [item_id]),
         entity="",
         draft_type="fact",
@@ -77,15 +77,22 @@ def generate_fact_candidates(
         draft_tags=list(fact.tags),
         source_item_ids=[item_id],
         backend="chats_facts",
-      )
-      if dedup is not None:
-        verdict = dedup.check(fact.content)
-        if verdict.decision == "duplicate":
-          if on_progress:
-            on_progress(f"  skip dup ({verdict.similarity:.2f}): {cand.draft_title}")
-          continue
-        if verdict.decision == "merge":
-          cand.merge_with = verdict.target_path
-          cand.dedup_similarity = verdict.similarity
-      candidates.append(cand)
+      ))
+  if dedup is None:
+    return gathered
+
+  # All statements are known up front here, so one --batch subprocess covers
+  # the whole run when the ledger CLI supports it (see promote/dedup.py).
+  dedup.prime([c.draft_statement for c in gathered])
+  candidates: list[PromotionCandidate] = []
+  for cand in gathered:
+    verdict = dedup.check(cand.draft_statement)
+    if verdict.decision == "duplicate":
+      if on_progress:
+        on_progress(f"  skip dup ({verdict.similarity:.2f}): {cand.draft_title}")
+      continue
+    if verdict.decision == "merge":
+      cand.merge_with = verdict.target_path
+      cand.dedup_similarity = verdict.similarity
+    candidates.append(cand)
   return candidates

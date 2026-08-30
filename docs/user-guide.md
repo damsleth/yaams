@@ -688,7 +688,10 @@ pass.
   retrieval tier is not enabled. With `promote.semantic_dedup` off (the
   default) it drafts every bullet, so expect to reject low-value ones during
   review; enable semantic dedup (needs the `ledger` CLI) to suppress
-  near-duplicates of existing notes.
+  near-duplicates of existing notes. Dedup resolves a whole run in one
+  `ledger embed search --batch` call when the installed ledger supports it
+  (probed automatically; older ledgers get the per-statement path), and logs
+  the phase's wall time either way.
 
 #### The `chats_facts` retrieval tier
 

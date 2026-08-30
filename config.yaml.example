@@ -139,6 +139,9 @@ promote:
   # search` to check whether an equivalent note already exists in Tier 2.
   # Requires cognitive-ledger installed and `ledger embed build` run first.
   # Off by default; flip `enabled: true` once the index is built.
+  # When the installed ledger supports `embed search --batch` (probed once per
+  # run), a whole promote run resolves in one warm-encoder call; older ledgers
+  # fall back to one call per statement. No key to set - it's automatic.
   semantic_dedup:
     enabled: false
     duplicate_threshold: 0.92   # >= this -> skip (already exists)

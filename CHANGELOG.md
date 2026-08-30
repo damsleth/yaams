@@ -11,6 +11,14 @@ surface; pin to a specific version if you need stability.
 ## [Unreleased]
 
 ### Added
+- **`yaams ingest --full` repeats the first-run full pass on demand.** The
+  flag makes each source ignore its stored watermark for that one run and
+  re-walk history from the configured `ingest.since`, exactly like the first
+  run against an empty database. Already-seen items are still dropped cheaply
+  (combine with `--reindex` to re-store them), and `ingest_source` now keeps
+  watermarks monotonic - a full re-walk that scans nothing newer can no
+  longer rewind one (a no-op for normal runs, which always start at the
+  watermark).
 - **Promote dedup resolves a whole run in one call.** When the installed
   ledger CLI supports `embed search --batch` (probed via `--help` once per
   run), `DedupChecker.prime` collects every candidate statement first and

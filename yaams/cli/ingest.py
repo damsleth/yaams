@@ -80,6 +80,14 @@ from yaams.watermark import get_watermark, update_watermark
 )
 @click.option("--dry-run", is_flag=True)
 @click.option(
+  "--full",
+  is_flag=True,
+  help="Ignore per-source watermarks for this run and re-walk history from "
+  "the configured ingest.since (the first-run full pass, on demand). "
+  "Already-seen items are dropped cheaply; combine with --reindex to "
+  "re-store them. The watermark never moves backwards.",
+)
+@click.option(
   "--reindex",
   is_flag=True,
   help="Re-store items even if their id already exists (refreshes derived "
@@ -104,6 +112,7 @@ def ingest(
   config_path: str,
   source: str,
   dry_run: bool,
+  full: bool,
   reindex: bool,
   batch_size: int,
   require_vec: bool,
@@ -146,7 +155,9 @@ def ingest(
 
     # `since` is read from the DB; resolve it on the main thread before
     # fanning out, since a sqlite connection can't be shared across threads.
-    since_by_source = {src: _effective_since(conn, src, cfg) for src in sources_planned}
+    since_by_source = {
+      src: _effective_since(conn, src, cfg, full=full) for src in sources_planned
+    }
 
     # Phase 1 — fetch every source concurrently. Sources are network/IO-bound
     # (owa-* subprocesses, Graph round-trips) and independent, so wall-clock
@@ -525,6 +536,12 @@ def ingest_source(
   if scanned_through is not None and scanned_through > latest_ts:
     latest_ts = scanned_through
   if not dry_run:
+    # Watermarks only move forward. Normal runs start `since` at the stored
+    # watermark so this is a no-op; a `--full` re-walk starts far behind it,
+    # and an empty or old-only re-scan must not rewind it.
+    current = get_watermark(conn, source)
+    if current is not None and current > latest_ts:
+      latest_ts = current
     update_watermark(conn, source, latest_ts)
     conn.commit()
   duration_ms = fetch_ms + (time.perf_counter() - store_start) * 1000
@@ -929,8 +946,13 @@ def _print_run_table(
   return totals
 
 
-def _effective_since(conn, source: str, cfg: dict) -> datetime:
+def _effective_since(conn, source: str, cfg: dict, *, full: bool = False) -> datetime:
   configured = parse_iso_datetime(cfg["ingest"]["since"])
+  if full:
+    # `--full`: re-walk history from the configured floor, as a first run
+    # (no watermark yet) would. ingest_source keeps the watermark monotonic,
+    # so a full re-walk can never rewind it.
+    return configured
   watermark = get_watermark(conn, source)
   floor = datetime.min.replace(tzinfo=UTC)
   return max(configured, watermark or floor)

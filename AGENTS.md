@@ -163,6 +163,30 @@ This module is self-contained under `docs/experiments/` so it can later be extra
 
 **LLM backend is pluggable.** The `parse` and `answer` steps go through a thin adapter so any of the following can be the backend: `ollama`, `llama-cpp-python`, `claude`, `codex`, `pi`, `copilot`. Default to whatever is already running locally; don't hard-code a single backend.
 
+## memcore dependency policy
+
+`yaams/retrieve/rerank.py`, `yaams/retrieve/trust.py`, and `yaams/trust.py`
+are ports of cognitive-ledger code that is being extracted into the
+installable `memcore` package (ScoredResult, rrf, rerank, trust). The policy
+is **never re-fork: import or block.**
+
+- When memcore is installable (`import memcore` works, or
+  `../cognitive-ledger/memcore` exists to `pip install -e`), replace the
+  forked bodies with imports from memcore. Keep the yaams module paths so
+  internal imports don't churn, and verify with the retrieval harness
+  (`scripts/autoresearch_retrieval.py --split dev --json`) before and after -
+  quality must be bit-identical, since these are ports of the same code. Any
+  diff means the copies drifted: stop, document the divergence, and prefer
+  memcore's behavior only if the harness says it's neutral or better.
+- Until then, never hand-sync code from the ledger repo into these modules.
+  `tests/test_memcore_drift.py` compares the forks against memcore (installed
+  or as a sibling checkout) and fails on divergence; it skips when memcore is
+  nowhere to be found.
+- The CLI seam with the ledger (`ledger embed search` single and `--batch`,
+  `ledger paths --json`) is locked by `tests/test_ledger_seam.py` (skipped
+  without `ledger` on PATH); cogled's `docs/yaams-cogled-interface.md`
+  documents the producing side.
+
 ## Layout
 
 ```

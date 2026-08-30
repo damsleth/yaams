@@ -49,3 +49,8 @@ And the four loop roles:
 - **Read before proposing.** Any agent planning a retrieval experiment reads
   `patterns.md` before the idea ledger. Do not propose anything a pattern
   marks dead.
+- **Cross-tier read.** When the sibling cognitive-ledger repo keeps its own
+  wiki patterns file, the autoresearch loop reads it alongside this one under
+  the same never-pursue-a-dead-idea rule (candidate paths and the
+  `ledgerWiki` override live in `scripts/autoresearch_loop.workflow.js`;
+  the cross-read is silently off when no such file exists).

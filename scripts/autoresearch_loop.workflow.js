@@ -27,7 +27,19 @@ const MIN_DELTA = (args && args.minDelta) || 0.01    // keep only if quality bea
 const MAX_PLAUSIBLE_QUALITY = 0.8 // anchor sanity bound: quality scale is ~0.4-0.55, so >0.8 means the baseline agent misreported (wrong field / cwd)
 const HARNESS =
   '.venv/bin/python scripts/autoresearch_retrieval.py --split dev --json'
-const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code), docs/experiments/wiki/patterns.md (the wiki - consolidated cross-campaign knowledge; do not propose or pursue anything a pattern there marks dead), and scripts/autoresearch_ideas.md (the ledger) first.'
+// Cross-tier wiki read: the sibling cognitive-ledger repo may keep its own
+// consolidated patterns file. Candidates are checked in order relative to the
+// campaign cwd; the first that exists is read alongside our own wiki, and if
+// none exists the cross-read is silently off. Override with args.ledgerWiki.
+const LEDGER_WIKI_CANDIDATES = (args && args.ledgerWiki)
+  ? [args.ledgerWiki]
+  : [
+      '../cognitive-ledger/docs/wiki/patterns.md',
+      '../cognitive-ledger/docs/experiments/wiki/patterns.md',
+      '../cognitive-ledger/out/wiki/patterns.md',
+    ]
+const CROSS_WIKI = `Cross-tier wiki: if any of [${LEDGER_WIKI_CANDIDATES.join(', ')}] exists (first match wins), read it alongside our patterns.md under the same rule - never pursue an idea EITHER file marks dead; if none exists, skip the cross-read silently.`
+const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code), docs/experiments/wiki/patterns.md (the wiki - consolidated cross-campaign knowledge; do not propose or pursue anything a pattern there marks dead), and scripts/autoresearch_ideas.md (the ledger) first. ' + CROSS_WIKI
 
 const BASELINE = {
   type: 'object',
@@ -291,7 +303,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       `${PROGRAM}\nCompleteness critic. Re-read scripts/autoresearch_results.tsv and the diagnostic ` +
         `signals: replay the correction-labeled gold queries against ~/brain/autoresearch_fixture.db and ` +
         `look for ranking failure modes NOT yet in the ledger Backlog. Check every candidate against ` +
-        `docs/experiments/wiki/patterns.md and skip anything a pattern marks dead. Append 2-4 concrete, ` +
+        `docs/experiments/wiki/patterns.md and skip anything a pattern marks dead. ${CROSS_WIKI} Append 2-4 concrete, ` +
         `in-scope (ranking-only, yaams/retrieve/* excl. parse.py) untried ideas to the Backlog section of ` +
         `scripts/autoresearch_ideas.md. Commit the ledger. Return a one-line summary.`,
       { label: 'critic', phase: 'Critic', model: 'opus' },

@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "yaams-cogled/candidate_bundle/v1",
+  "title": "YAAMS -> cognitive-ledger promotion candidate bundle (contract v1)",
+  "description": "Versioned export of one promotion run's note candidates. Produced by YAAMS (`yaams promote export --run-id ... --jsonl`, planned), consumed by cognitive-ledger's validator and shadow A/B harness. Additive evolution only: consumers must tolerate unknown fields (additionalProperties stays true everywhere); breaking changes bump bundle_schema_version. Evidence is carried as source item IDs, hashes and bounded excerpts — never full raw payloads. Owned by cognitive-ledger (docs/yaams-cogled-interface.md); yaams keeps a byte-identical copy as its contract fixture.",
+  "type": "object",
+  "required": ["bundle_schema_version", "run_id", "snapshot_id", "generated_at", "candidates"],
+  "additionalProperties": true,
+  "properties": {
+    "bundle_schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identity of the frozen scenario the run selected from (e.g. the manifest's fixture_sha256)."
+    },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "backend": { "type": "string" },
+        "model": { "type": "string" },
+        "prompt_version": { "type": ["string", "integer"] },
+        "temperature": { "type": ["number", "null"] },
+        "seed": { "type": ["integer", "null"] }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The frozen item window the run drew evidence from, as an (ingested_at, id) cursor range.",
+      "properties": {
+        "selection_start": { "type": ["string", "null"] },
+        "selection_end": { "type": ["string", "null"] }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate" }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["candidate_id", "proposed_action"],
+      "additionalProperties": true,
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "proposed_action": { "enum": ["ADD", "MERGE", "SUPERSEDE", "NOOP", "REVIEW"] },
+        "target_path": {
+          "type": ["string", "null"],
+          "description": "Existing logical note path for MERGE/SUPERSEDE, e.g. notes/02_facts/fact__x.md."
+        },
+        "target_statement_hash": {
+          "type": ["string", "null"],
+          "description": "Hash of the target note's statement at proposal time; drift invalidates the action."
+        },
+        "note": { "$ref": "#/$defs/note" },
+        "source_item_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Frozen-snapshot YAAMS item IDs supporting the whole note. Unknown or out-of-window IDs are a hard rejection."
+        },
+        "evidence_map": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" },
+          "description": "Claim-to-evidence map: one entry per factual sentence."
+        },
+        "generator_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "event_time": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "valid_from": { "type": ["string", "null"] },
+            "origin": { "enum": ["source_timestamp", "inferred"] }
+          }
+        },
+        "durability_rationale": { "type": ["string", "null"] },
+        "mechanical": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Mechanical validation/admission result (versioned factor breakdown)."
+        },
+        "judge": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Adversarial LLM judge verdict, version and model."
+        },
+        "gate_status": { "enum": ["pending", "reject", "review", "inbox-approved"] },
+        "human_disposition": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "proposed_action": { "enum": ["ADD", "MERGE", "SUPERSEDE"] } } },
+          "then": {
+            "required": ["note", "source_item_ids"],
+            "properties": { "source_item_ids": { "minItems": 1 } }
+          }
+        },
+        {
+          "if": { "properties": { "proposed_action": { "enum": ["MERGE", "SUPERSEDE"] } } },
+          "then": {
+            "required": ["target_path"],
+            "properties": { "target_path": { "type": "string", "minLength": 1 } }
+          }
+        }
+      ]
+    },
+    "note": {
+      "type": "object",
+      "required": ["type", "title", "statement"],
+      "additionalProperties": true,
+      "description": "The proposed ledger note. `type`/`scope`/`lang` values are validated against cognitive-ledger's schema.yaml by the consumer, not pinned here.",
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "body": { "type": ["string", "null"] },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "lang": { "type": ["string", "null"] },
+        "scope": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["claim", "source_item_ids"],
+      "additionalProperties": true,
+      "properties": {
+        "claim": { "type": "string", "minLength": 1 },
+        "source_item_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "excerpt": {
+          "type": ["string", "null"],
+          "description": "Bounded supporting excerpt for audit; never the full raw payload."
+        },
+        "excerpt_hash": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

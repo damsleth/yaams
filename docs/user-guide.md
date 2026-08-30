@@ -174,6 +174,14 @@ yaams ingest --source imessage   # one source only
 yaams refresh              # ingest + safe maintenance + associations
 ```
 
+The first run is automatically a full pass: with no watermark stored yet,
+every source ingests from the configured `ingest.since`. Later runs are
+incremental from each source's watermark. `yaams ingest --full` repeats the
+full pass on demand - it ignores the watermarks for that one run and re-walks
+history from `ingest.since` again. Already-seen items are dropped cheaply
+(ingest is idempotent); add `--reindex` if you also want them re-stored so
+derived fields refresh. A `--full` run never moves a watermark backwards.
+
 ### Sources
 
 | source | what it ingests |

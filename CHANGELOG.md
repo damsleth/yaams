@@ -11,6 +11,34 @@ surface; pin to a specific version if you need stability.
 ## [Unreleased]
 
 ### Added
+- **Promote dedup resolves a whole run in one call.** When the installed
+  ledger CLI supports `embed search --batch` (probed via `--help` once per
+  run), `DedupChecker.prime` collects every candidate statement first and
+  makes a single JSONL-on-stdin batch call - one warm encoder instead of a
+  cold model load per statement - mapping results back by line order. Older
+  ledgers fall back to the per-statement path unchanged; the per-statement
+  cache and the degrade-open contract (any subprocess error means verdict
+  "new") are intact in both paths, and the dedup phase logs its wall time so
+  the speedup is measurable. `promote generate` now drafts in one pass and
+  dedups/classifies/scores in a second so all statements exist before the
+  batch call; `promote from-facts` primes the same way.
+- **memcore drift guard.** `yaams/retrieve/rerank.py`, `yaams/retrieve/trust.py`,
+  and `yaams/trust.py` are ports of cognitive-ledger code being extracted into
+  the installable `memcore` package. Until yaams can import it,
+  `tests/test_memcore_drift.py` compares the forks against memcore (installed,
+  or a `../cognitive-ledger` sibling checkout) and fails on divergence -
+  skipped when memcore is nowhere to be found. Policy in AGENTS.md: never
+  re-fork, import or block.
+- **Ledger seam golden tests.** `tests/test_ledger_seam.py` locks the JSON
+  shapes yaams consumes from the `ledger` CLI (`embed search` single and
+  `--batch` line, `paths --json`, `paths --field ledger_notes_dir`), skipped
+  when `ledger` is not on PATH, with each consumer named so a breakage is
+  traceable from either repo.
+- **Cross-tier wiki read in the autoresearch loop.** When the sibling
+  cognitive-ledger repo keeps its own wiki patterns file, the loop's agents
+  and the Opus critic read it alongside `docs/experiments/wiki/patterns.md`
+  under the same never-pursue-a-dead-idea rule (candidate paths configurable
+  via the workflow's `ledgerWiki` arg; silently off when no file exists).
 - **The autoresearch loop grew a persistent knowledge wiki** (WikiSkill,
   arXiv 2608.27454) at `docs/experiments/wiki/`. The loop already had raw
   traces (results/campaign TSVs, experiments.jsonl), an evolvable skill

@@ -22,11 +22,12 @@ const ISOLATION = FANOUT > 1 ? 'worktree' : undefined
 const MAX_ROUNDS = (args && args.rounds) || 20       // hard cap
 const CRITIC_EVERY = (args && args.criticEvery) || 5 // Opus critic cadence
 const DRY_LIMIT = (args && args.dryLimit) || 2       // stop after N dry rounds
+const WIKI_EVERY = (args && args.wikiEvery) || 1     // wiki-maintainer cadence (WikiSkill, arXiv 2608.27454)
 const MIN_DELTA = (args && args.minDelta) || 0.01    // keep only if quality beats anchor by >= this (noise floor; dev metric jitter is ~±0.006)
 const MAX_PLAUSIBLE_QUALITY = 0.8 // anchor sanity bound: quality scale is ~0.4-0.55, so >0.8 means the baseline agent misreported (wrong field / cwd)
 const HARNESS =
   '.venv/bin/python scripts/autoresearch_retrieval.py --split dev --json'
-const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code) and scripts/autoresearch_ideas.md (the ledger) first.'
+const PROGRAM = 'IMPORTANT: this campaign lives in /Users/damsleth/code/yaams, which is NOT your current working directory. Before anything else, run `cd /Users/damsleth/code/yaams` as a standalone Bash call (the cwd persists across your subsequent Bash calls); every relative path, git command, and harness invocation below assumes that cwd. Read .plans/program-retrieve.md (the org code), docs/experiments/wiki/patterns.md (the wiki - consolidated cross-campaign knowledge; do not propose or pursue anything a pattern there marks dead), and scripts/autoresearch_ideas.md (the ledger) first.'
 
 const BASELINE = {
   type: 'object',
@@ -213,6 +214,10 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       hit_rate: r.hit_rate ?? '', mrr: r.mrr ?? '', p95: r.p95 ?? '',
       regressions: r.regressions, status: r.status,
       verdict: best && r.key === best.key ? 'WIN' : 'discard',
+      note: r.note || '',
+      // full diff rides along so the recorder can preserve EVERY proposal in
+      // the wiki (WikiSkill audit trail) - rejected diffs included
+      diff: r.diff || '',
     }))
   const recorded = await agent(
     `${PROGRAM}\nRecord this round's experiment statistics, then apply the winner if any.\n` +
@@ -224,18 +229,25 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
       `from the Backlog to the Tried section of scripts/autoresearch_ideas.md with its verdict ` +
       `(kept / discarded / crashed) and delta, so the planner never re-picks a tried idea. ` +
       `Do this for discards too, not just wins.\n` +
+      `1c. WIKI AUDIT TRAIL - preserve EVERY proposal, win or lose: for each experiment row above, ` +
+      `write its diff field to a temp file (omit --diff-file when the diff is empty) and run ` +
+      `\`.venv/bin/python docs/experiments/wiki.py --key <key> --verdict <verdict> --quality <quality> ` +
+      `--delta <delta> --round ${round} --idea "<idea>" --note "<note>" --diff-file <tempfile>\`. ` +
+      `Verdict mapping: the WIN row -> kept (use apply-failed if the apply below fails), ` +
+      `status crash -> crashed, everything else -> discarded. Rejected diffs matter as much as ` +
+      `the win: they are how later proposals account for failed attempts.\n` +
       (best
         ? `2. Apply the winning diff below: write it to a temp file and \`git apply\` it to yaams/retrieve/. ` +
           `If git apply fails, set applied=false, change that row's verdict to "apply-failed", and skip to commit. ` +
           `Then run \`${HARNESS} --tag ${best.key}-keep\` (NO --no-write) to update the anchor state + results.tsv. ` +
           `Move idea "${best.key}" to the Tried section of scripts/autoresearch_ideas.md as kept (with delta). ` +
-          `3. Commit yaams/retrieve/*, scripts/autoresearch_ideas.md, scripts/autoresearch_results.tsv, and ` +
-          `scripts/autoresearch_campaign.tsv with message "feat(retrieve): ${best.key} (autoresearch, ` +
+          `3. Commit yaams/retrieve/*, scripts/autoresearch_ideas.md, scripts/autoresearch_results.tsv, ` +
+          `scripts/autoresearch_campaign.tsv, and docs/experiments/wiki/ with message "feat(retrieve): ${best.key} (autoresearch, ` +
           `q ${anchor.toFixed(4)}->${best.quality.toFixed(4)})". After committing, return ` +
           `{applied: bool, quality: number, head: "<git rev-parse HEAD>"} — head is the NEW commit sha.\n` +
           `\n--- DIFF ---\n${best.diff}`
-        : `2. No winner this round. Commit scripts/autoresearch_campaign.tsv AND ` +
-          `scripts/autoresearch_ideas.md with message ` +
+        : `2. No winner this round. Commit scripts/autoresearch_campaign.tsv, ` +
+          `scripts/autoresearch_ideas.md, AND docs/experiments/wiki/ with message ` +
           `"chore(autoresearch): round ${round} stats (dry)". Return {applied: false}.`),
     { label: best ? `keep:${best.key}` : `record:r${round}`, phase: PH, model: 'sonnet',
       schema: { type: 'object', properties: { applied: { type: 'boolean' }, quality: { type: 'number' }, head: { type: 'string' } }, required: ['applied'] } },
@@ -251,14 +263,36 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
     dry++
   }
 
+  // WikiSkill maintainer (arXiv 2608.27454): consolidate this round's raw
+  // traces into the persistent wiki. Runs win or lose - the wiki compounds
+  // even when every skill proposal was rejected, which is exactly when the
+  // knowledge is worth keeping.
+  if (round % WIKI_EVERY === 0) {
+    await agent(
+      `${PROGRAM}\nYou are the wiki maintainer. This round's proposals (round ${round}; keys: ` +
+        `${ideas.map((it) => it.key).join(', ')}) were just preserved under docs/experiments/wiki/proposals/. ` +
+        `Read them plus this round's rows in scripts/autoresearch_campaign.tsv, then consolidate into ` +
+        `docs/experiments/wiki/patterns.md: where a result adds evidence for an existing pattern, extend ` +
+        `that pattern's evidence list; where 2+ results (this round, or one here plus prior proposals) ` +
+        `point the same way and no pattern covers it, append a new numbered pattern section with its ` +
+        `evidence keys and the implication for future proposals. NEVER delete or weaken a pattern, and ` +
+        `never edit proposals/ or evolution.md - the wiki is append-mostly and persists across rejected ` +
+        `skill updates. A single unremarkable result consolidates to nothing: in that case make no edits. ` +
+        `If you changed patterns.md, commit it with message "docs(wiki): consolidate round ${round}". ` +
+        `Return a one-line summary.`,
+      { label: `wiki:r${round}`, phase: PH, model: 'sonnet' },
+    )
+  }
+
   // Periodic Opus completeness-critic: seed fresh ideas into the ledger.
   if (round % CRITIC_EVERY === 0) {
     phase('Critic')
     await agent(
       `${PROGRAM}\nCompleteness critic. Re-read scripts/autoresearch_results.tsv and the diagnostic ` +
         `signals: replay the correction-labeled gold queries against ~/brain/autoresearch_fixture.db and ` +
-        `look for ranking failure modes NOT yet in the ledger Backlog. Append 2-4 concrete, in-scope ` +
-        `(ranking-only, yaams/retrieve/* excl. parse.py) untried ideas to the Backlog section of ` +
+        `look for ranking failure modes NOT yet in the ledger Backlog. Check every candidate against ` +
+        `docs/experiments/wiki/patterns.md and skip anything a pattern marks dead. Append 2-4 concrete, ` +
+        `in-scope (ranking-only, yaams/retrieve/* excl. parse.py) untried ideas to the Backlog section of ` +
         `scripts/autoresearch_ideas.md. Commit the ledger. Return a one-line summary.`,
       { label: 'critic', phase: 'Critic', model: 'opus' },
     )

@@ -10,6 +10,22 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+- **The autoresearch loop grew a persistent knowledge wiki** (WikiSkill,
+  arXiv 2608.27454) at `docs/experiments/wiki/`. The loop already had raw
+  traces (results/campaign TSVs, experiments.jsonl), an evolvable skill
+  surface (`yaams/retrieve/*`), and validation gating; what it lost between
+  campaigns was consolidated knowledge and the diffs of rejected proposals.
+  Now `patterns.md` carries cross-experiment patterns (seeded by
+  consolidating the jun-aug 2026 campaign history), `proposals/` preserves
+  every proposal's full diff and verdict - rejected ones included - via
+  `docs/experiments/wiki.py`, and `evolution.md` indexes them. The workflow
+  (`scripts/autoresearch_loop.workflow.js`) gained a per-round wiki
+  maintainer step that consolidates traces into patterns, its planner,
+  experiment, and critic agents now read the wiki first, and its recorder
+  preserves every experiment's diff. The wiki persists across rejected skill
+  updates, so knowledge compounds even in dry rounds.
+
 ### Changed
 - **Ingest went from 4m20s to ~22s, almost all of it `teams_channels`.** Three
   fixes, each found by measuring rather than reasoning. `owa-teams messages`

@@ -21,6 +21,8 @@ noise for a trend.
 | `build.py` | Inlines `experiments.jsonl` into `index.html`. Run by the logger; rarely run by hand. |
 | `CURRENT_ERA` | One line: the gold-set version new experiments are tagged with. Bump on reseed. |
 | `seed.py` | One-shot reconstruction of pre-2026-06-30 history from `scripts/autoresearch_*.tsv`. Provenance only. |
+| `wiki/` | The persistent knowledge layer (WikiSkill, arXiv 2608.27454): consolidated `patterns.md`, append-only `evolution.md`, preserved proposal diffs in `proposals/`. See `wiki/README.md`. |
+| `wiki.py` | Record one skill proposal (metadata + verdict + full diff) into the wiki. Used by the autoresearch loop for every experiment, rejected ones included. |
 
 ## View it
 
@@ -55,6 +57,29 @@ python docs/experiments/log_experiment.py --key my_idea --disposition kill \
 - `era`: defaults to `CURRENT_ERA`; bump that file whenever the gold set or metric definition changes.
 - Omit any metric you didn't measure; the viewer skips gaps.
 - A git pre-commit hook rebuilds `index.html` if you hand-edit `experiments.jsonl`.
+
+## The wiki layer (consolidated knowledge)
+
+The timeline is the **raw layer**: every measured run, win or lose. The
+**wiki** (`wiki/`) sits above it as the persistent, consolidated layer,
+after WikiSkill (arXiv 2608.27454): `patterns.md` distills cross-experiment
+patterns the planner must read before proposing, `proposals/` preserves every
+proposal's full diff with its verdict so failed attempts are never repeated
+blind, and `evolution.md` indexes them. The wiki persists across rejected
+skill updates - a discarded experiment still compounds knowledge.
+
+Record a proposal (the loop's recorder step does this for every experiment):
+
+```sh
+python docs/experiments/wiki.py --key my_idea --verdict discarded \
+  --quality 0.62 --delta 0.0 --round 3 --note "why" --diff-file /tmp/my_idea.diff
+```
+
+- `verdict`: `kept` · `discarded` · `crashed` · `apply-failed` · `parked`.
+- Proposal files are immutable once written; a later revert gets a new entry.
+- Consolidation into `patterns.md` is the wiki maintainer's job (a per-round
+  step in `scripts/autoresearch_loop.workflow.js`); patterns are
+  append-mostly and never deleted or weakened.
 
 ### Why log every run, not just the wins
 

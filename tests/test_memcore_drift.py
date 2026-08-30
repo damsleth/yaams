@@ -19,6 +19,7 @@ from __future__ import annotations
 import sys
 from itertools import product
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ _SIBLING = _REPO.parent / "cognitive-ledger"
 
 def _load_memcore():
   try:
-    import memcore
+    import memcore  # type: ignore
     return memcore
   except ImportError:
     pass
@@ -39,7 +40,7 @@ def _load_memcore():
       continue
     sys.path.insert(0, str(root))
     try:
-      import memcore
+      import memcore  # type: ignore
       return memcore
     except ImportError:
       sys.path.remove(str(root))
@@ -103,7 +104,7 @@ def test_trust_verdict_matches():
     (False, True),
     (0.0, 0.14, 0.15, 1.0),
   ):
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
       effective_confidence=conf,
       validation_count=validations,
       contradicted=contradicted,

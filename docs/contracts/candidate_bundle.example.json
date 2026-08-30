@@ -1,0 +1,71 @@
+{
+  "bundle_schema_version": 1,
+  "run_id": "run-2026-08-30-example",
+  "snapshot_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "generated_at": "2026-08-30T12:00:00Z",
+  "generator": {
+    "backend": "example",
+    "model": "example-model-1",
+    "prompt_version": 1,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  "selection": {
+    "selection_start": "2026-08-01T00:00:00Z",
+    "selection_end": "2026-08-29T23:59:59Z"
+  },
+  "candidates": [
+    {
+      "candidate_id": "cand-0001",
+      "proposed_action": "ADD",
+      "note": {
+        "type": "fact",
+        "title": "SP betyr serviceprovider i NOCOS",
+        "statement": "I NOCOS betyr `SP` normalt `serviceprovider`, ikke `SharePoint`.",
+        "body": "Forkortelsen er kontekstavhengig: utenfor NOCOS brukes SP ofte om SharePoint.",
+        "tags": ["abbreviation", "glossary", "nocos"],
+        "lang": "no",
+        "scope": "work"
+      },
+      "source_item_ids": ["item-aaa", "item-bbb"],
+      "evidence_map": [
+        {
+          "claim": "I NOCOS betyr SP normalt serviceprovider.",
+          "source_item_ids": ["item-aaa"],
+          "excerpt": "…SP (serviceprovider) må registreres før…",
+          "excerpt_hash": "sha1:1111111111111111111111111111111111111111"
+        },
+        {
+          "claim": "SP brukes også om SharePoint i andre kontekster.",
+          "source_item_ids": ["item-bbb"],
+          "excerpt": "…legg dokumentet på SP (SharePoint)…",
+          "excerpt_hash": "sha1:2222222222222222222222222222222222222222"
+        }
+      ],
+      "generator_confidence": 0.85,
+      "event_time": { "valid_from": "2026-08-12T09:30:00Z", "origin": "source_timestamp" },
+      "durability_rationale": "Stable glossary mapping, reusable beyond the source window.",
+      "gate_status": "pending",
+      "human_disposition": null
+    },
+    {
+      "candidate_id": "cand-0002",
+      "proposed_action": "MERGE",
+      "target_path": "notes/02_facts/fact__abbreviation_sp__nocos.md",
+      "target_statement_hash": "sha1:3333333333333333333333333333333333333333",
+      "note": {
+        "type": "fact",
+        "title": "SP-kollisjon: serviceprovider vs SharePoint",
+        "statement": "SP er tvetydig: serviceprovider i NOCOS, SharePoint ellers."
+      },
+      "source_item_ids": ["item-ccc"],
+      "generator_confidence": 0.6,
+      "gate_status": "review"
+    },
+    {
+      "candidate_id": "cand-0003",
+      "proposed_action": "NOOP",
+      "durability_rationale": "Evidence window contains only ephemeral scheduling chatter."
+    }
+  ]
+}

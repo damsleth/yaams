@@ -11,6 +11,31 @@ surface; pin to a specific version if you need stability.
 ## [Unreleased]
 
 ### Added
+
+- `yaams entities import-contacts` imports the macOS address book into the
+  entity dictionary, the local-address-book sibling of `entities
+  import-people`. Aliases are E.164 phone numbers and lowercased emails, which
+  is the exact form iMessage ingest writes into `items.sender`, so
+  `resolve_sender` maps a bare number to a real name instead of leaving the
+  summariser to guess one from surrounding chatter. That guess is why this
+  exists: a consolidation run on 2026-08-27 pulled an unrelated name onto an
+  unnamed number and wrote a false open loop off the back of it.
+
+  Reads the AddressBook sqlite stores read-only (`immutable=1`) rather than
+  going through AppleScript, which launches Contacts.app, blocks on a TCC
+  prompt, and took over two minutes to return a bare count on a 700-contact
+  book. The schema is private to macOS, so an unreadable or renamed store
+  degrades to a per-store warning instead of failing the import.
+
+  Cards sharing an identifier are folded into one entity, ranked by structured
+  surname, then card richness, then name-part count. Address books accumulate
+  nickname cards on the same number, and taking whichever card came back first
+  reliably picked the joke entry: "Mamma" over the full name, and a
+  novelty card over the owner's daughter. The losing card's name is kept as an
+  alias, so the nickname stays usable rather than becoming a rival entity that
+  can claim the number. Every fold is reported for review.
+
+### Added
 - **`yaams ingest --full` repeats the first-run full pass on demand.** The
   flag makes each source ignore its stored watermark for that one run and
   re-walk history from the configured `ingest.since`, exactly like the first

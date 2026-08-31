@@ -9,6 +9,7 @@ import click
 from yaams.cli._root import cli
 from yaams.cli._shared import _embedding_dim, config_option
 from yaams.config import get_db_path, load_config
+from yaams.contacts_import import contacts_to_entries, fetch_contacts
 from yaams.conventions import (
   EXIT_USER_ERROR,
   action_envelope,
@@ -378,6 +379,115 @@ def entities_import_people(
     return
   click.echo(f"Imported {fetched} people -> {stats['added']} added, "
              f"{stats['updated']} updated (+{stats['aliases_added']} aliases).")
+
+
+@entities_group.command("import-contacts")
+@config_option
+@click.option("--type", "etype", default="person", show_default=True,
+              help="Entity type for imported people.")
+@click.option("--org-type", default="org", show_default=True,
+              help="Entity type for company cards (no person name, only an organization).")
+@click.option("--default-cc", default="+47", show_default=True,
+              help="Country code applied to bare national numbers of that country's length.")
+@click.option("--tag", "tags", multiple=True, help="Tag attached to every imported entity (repeatable).")
+@click.option("--dry-run", is_flag=True, help="Preview entries without writing config or seeding the DB.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+def entities_import_contacts(
+  config_path: str,
+  etype: str,
+  org_type: str,
+  default_cc: str,
+  tags: tuple[str, ...],
+  dry_run: bool,
+  as_json: bool,
+) -> None:
+  """Import the macOS address book into the entity dictionary.
+
+  Reads every AddressBook store read-only, maps each card to a
+  {canonical, type, aliases} entry whose aliases are E.164 phone numbers and
+  lowercased emails, and seeds them so the tagger resolves iMessage senders
+  instead of leaving them as bare numbers. Existing entries gain new aliases;
+  nothing is removed. An identifier claimed by two different cards is left with
+  whoever holds it and reported as a warning, never silently reassigned.
+  """
+  t0 = time.monotonic()
+  contacts, warnings = fetch_contacts()
+  entries, collisions = contacts_to_entries(
+    contacts, etype=etype, org_type=org_type, default_cc=default_cc
+  )
+  warnings = [*warnings, *collisions]
+  fetched = len(contacts)
+
+  if fetched == 0:
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities import-contacts", ok=False,
+        error={"code": "no_contacts",
+               "message": "no readable AddressBook store returned any contact"},
+        warnings=warnings, duration_ms=duration_ms,
+      ))
+      sys.exit(EXIT_USER_ERROR)
+    click.echo("No contacts imported - no readable AddressBook store:", err=True)
+    for w in warnings:
+      click.echo(f"  - {w}", err=True)
+    sys.exit(EXIT_USER_ERROR)
+
+  cfg = load_config(config_path)
+  entities_cfg = dict(cfg.get("entities") or {})
+  dictionary = list(entities_cfg.get("dictionary") or [])
+  merged, stats = merge_into_dictionary(dictionary, entries)
+  changed = bool(stats["added"] or stats["updated"])
+
+  if dry_run:
+    duration_ms = (time.monotonic() - t0) * 1000.0
+    if as_json:
+      emit_action(action_envelope(
+        command="entities import-contacts", ok=True,
+        stats={"fetched": fetched, "entries": len(entries), "dry_run": True, **stats},
+        warnings=warnings, duration_ms=duration_ms,
+      ))
+      return
+    click.echo(f"[dry-run] {fetched} contacts read, {len(entries)} unique; "
+               f"would add {stats['added']}, update {stats['updated']} "
+               f"(+{stats['aliases_added']} aliases).")
+    for w in warnings:
+      click.echo(f"  warning: {w}", err=True)
+    return
+
+  if changed:
+    entities_cfg["dictionary"] = merged
+    _save_entities(config_path, entities_cfg)
+
+  db_path = get_db_path(cfg)
+  conn = open_db(db_path)
+  applied_tags = 0
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh)
+    backfill_entity_sources(conn, fresh)
+    if tags:
+      for entry in entries:
+        eid = resolve_entity_id(conn, entry["canonical"])
+        if eid is not None:
+          applied_tags += add_entity_tags(conn, eid, tags)
+  finally:
+    conn.close()
+
+  duration_ms = (time.monotonic() - t0) * 1000.0
+  if as_json:
+    emit_action(action_envelope(
+      command="entities import-contacts", ok=True,
+      stats={"fetched": fetched, "entries": len(entries),
+             "tags_added": applied_tags, **stats},
+      warnings=warnings, duration_ms=duration_ms,
+    ))
+    return
+  click.echo(f"Imported {fetched} contacts -> {stats['added']} added, "
+             f"{stats['updated']} updated (+{stats['aliases_added']} aliases).")
+  for w in warnings:
+    click.echo(f"  warning: {w}", err=True)
   if applied_tags:
     click.echo(f"  tagged +{applied_tags}: {', '.join(t.lower() for t in tags)}")
   for w in warnings:

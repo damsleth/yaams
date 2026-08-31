@@ -1,0 +1,12 @@
+{
+  "created_at": "2026-08-31T07:10:26Z",
+  "fixture": "/Users/damsleth/brain/promotion_fixture.db",
+  "algorithm": "sha1(group_key) % 10: 0-7 train, 8 dev, 9 holdout; group_key = source:thread_id, else item:id",
+  "item_count": 87718,
+  "split_counts": {
+    "train": 74706,
+    "dev": 5678,
+    "holdout": 7334
+  },
+  "assignment_hash": "d80ba48fa124ca3ff035ecac7ad67450f6b4d5e1"
+}

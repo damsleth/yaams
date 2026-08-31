@@ -127,8 +127,10 @@ def fetch_new_items(
   """Rows ingested at or after `since` (this run), newest last, capped.
 
   `ingested_at` is stamped when the Item is created during extraction, so
-  `>= run_start` selects exactly this run's new rows. Content is truncated and
-  newlines flattened to keep the prompt bounded.
+  `>= run_start` selects exactly this run's new rows. When the run ingested
+  more than `max_items` (e.g. a --full backfill), the cap keeps the NEWEST
+  rows — capping the other end summarized January of last year. Content is
+  truncated and newlines flattened to keep the prompt bounded.
 
   `sender` is resolved through the entity dictionary (phone/email -> name) and
   each item carries a pre-computed local time + elapsed ("~5h ago") so the LLM
@@ -139,11 +141,13 @@ def fetch_new_items(
   aliases = sender_aliases or {}
   rows = conn.execute(
     """
-    SELECT source, timestamp, sender, subject, content
-    FROM items
-    WHERE ingested_at >= ?
-    ORDER BY timestamp
-    LIMIT ?
+    SELECT * FROM (
+      SELECT source, timestamp, sender, subject, content
+      FROM items
+      WHERE ingested_at >= ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
     """,
     (since.isoformat(), max_items),
   ).fetchall()

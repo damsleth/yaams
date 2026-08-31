@@ -70,6 +70,22 @@ def test_fetch_new_items_filters_by_run_start_and_truncates():
   assert len(rows[0]["content"]) == 301  # 300 chars + ellipsis
 
 
+def test_fetch_new_items_cap_keeps_newest_rows():
+  # A --full backfill ingests years of history in one run; the max_items cap
+  # must keep the newest rows, not fill up on January of last year.
+  conn = _items_db()
+  run_start = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
+  ingested = (run_start + timedelta(seconds=1)).isoformat()
+  for i in range(10):
+    conn.execute(
+      "INSERT INTO items VALUES (?,'imessage',?,'x','',?,?)",
+      (str(i), (run_start - timedelta(days=400 - i)).isoformat(), f"msg {i}", ingested),
+    )
+  conn.commit()
+  rows = fetch_new_items(conn, run_start, max_items=3, content_chars=300, now=run_start)
+  assert [r["content"] for r in rows] == ["msg 7", "msg 8", "msg 9"]  # newest 3, oldest first
+
+
 def test_fetch_new_items_resolves_sender_and_tags_elapsed():
   from yaams.synthesize.summarize import build_sender_aliases
   conn = _items_db()

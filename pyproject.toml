@@ -26,6 +26,10 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
   "pyright>=1.1.380",
+  # tests/test_candidate_bundle_contract.py validates the promotion candidate
+  # bundle against a JSON Schema. Not a runtime dependency: yaams itself never
+  # imports it.
+  "jsonschema>=4.0",
 ]
 mcp = [
   "mcp>=1.0",

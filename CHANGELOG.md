@@ -12,6 +12,23 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- `yaams entities rename OLD NEW` and `yaams entities unalias NAME ALIAS...`
+  close the two gaps that made a routine dictionary cleanup impossible without
+  hand-editing the JSON store: there was no way to change a canonical name,
+  and no way to drop a single alias (`remove` deletes the whole entity).
+
+  `rename` renames the row in place rather than creating and merging, so item
+  links, tags, meta and relations follow without repointing. OLD is kept as an
+  alias by default, because the corpus still says it and dropping it would
+  stop historical mentions resolving; `--drop-old-alias` is for typos. A NEW
+  that already names a different entity is refused with a pointer to `merge`,
+  which is the operation that actually folds two entities together.
+
+  `unalias` removes named aliases case-insensitively and reports any that were
+  not present rather than silently succeeding. Both write through the JSON
+  dictionary store and reseed, so the change survives the next reseed instead
+  of being undone by it.
+
 - `yaams entities import-contacts` imports the macOS address book into the
   entity dictionary, the local-address-book sibling of `entities
   import-people`. Aliases are E.164 phone numbers and lowercased emails, which

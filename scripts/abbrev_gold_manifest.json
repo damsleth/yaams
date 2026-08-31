@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-08-31T07:13:54Z",
+  "gold_csv": "/Users/damsleth/brain/promotion_abbrev_gold.csv",
+  "gold_sha256": "545a9d3f4f3804cb27a757885aa06b37e6c949efb7acf86be3041e50b3475e0b",
+  "row_count": 130,
+  "unreviewed_rows": 7,
+  "relation_type_counts": {
+    "unknown": 60,
+    "nickname": 20,
+    "initialism": 13,
+    "shorthand": 11,
+    "identifier": 9,
+    "abbreviation": 9,
+    "acronym": 4,
+    "code": 4
+  },
+  "label_source_counts": {
+    "manual": 130
+  }
+}

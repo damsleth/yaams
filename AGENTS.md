@@ -178,6 +178,11 @@ is **never re-fork: import or block.**
   quality must be bit-identical, since these are ports of the same code. Any
   diff means the copies drifted: stop, document the divergence, and prefer
   memcore's behavior only if the harness says it's neutral or better.
+- Seam state after the extraction (ledger 3335193): memcore keeps `clamp01`
+  private (`_clamp01`) and does not ship `effective_confidence` at all —
+  provenance-weighted confidence stays producer-side and is injected into
+  `attach_trust_verdicts` as a `confidence_of` callable. Those two stay
+  yaams-owned; the adoption imports cover schema/rrf/rerank/trust verdicts.
 - Until then, never hand-sync code from the ledger repo into these modules.
   `tests/test_memcore_drift.py` compares the forks against memcore (installed
   or as a sibling checkout) and fails on divergence; it skips when memcore is

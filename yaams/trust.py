@@ -119,6 +119,11 @@ class TrustVerdict:
   score: float = 0.0  # [0,1] continuous, for sorting/debug only
 
 
+def _affirmations(count: float) -> float | int:
+  """Render an affirmation count without a spurious trailing .0."""
+  return int(count) if count == int(count) else round(count, 1)
+
+
 def trust_verdict(
   *,
   effective_confidence: float,
@@ -141,19 +146,20 @@ def trust_verdict(
   """
   conf = clamp01(effective_confidence)
   if superseded:
-    return TrustVerdict("low", "superseded by a consolidation", conf * 0.5)
+    return TrustVerdict("low", "superseded by a newer note", conf * 0.5)
   if contradicted:
-    return TrustVerdict("low", "contradicted by feedback", conf * 0.5)
+    return TrustVerdict("low", "contradicted by another note", conf * 0.5)
   if conf >= high_confidence and validation_count >= 1:
-    n = (
-      int(validation_count)
-      if validation_count == int(validation_count)
-      else round(validation_count, 1)
+    return TrustVerdict(
+      "high", f"high-confidence, affirmed {_affirmations(validation_count)}×", conf
     )
-    return TrustVerdict("high", f"high-confidence, affirmed {n}×", conf)
   if conf >= high_confidence:
     return TrustVerdict("high", "high-confidence", conf)
   if conf >= medium_confidence:
+    if validation_count >= 1:
+      return TrustVerdict(
+        "medium", f"moderate confidence, affirmed {_affirmations(validation_count)}×", conf
+      )
     return TrustVerdict("medium", "moderate confidence, unaffirmed", conf)
   if recency < 0.15:
     return TrustVerdict("low", "low confidence and stale", conf)

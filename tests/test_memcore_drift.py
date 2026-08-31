@@ -30,6 +30,7 @@ _SIBLING = _REPO.parent / "cognitive-ledger"
 def _load_memcore():
   try:
     import memcore  # type: ignore
+    import memcore.rerank  # noqa: F401  (not re-exported by __init__; lazy ST import)
     return memcore
   except ImportError:
     pass
@@ -41,6 +42,7 @@ def _load_memcore():
     sys.path.insert(0, str(root))
     try:
       import memcore  # type: ignore
+      import memcore.rerank  # noqa: F401
       return memcore
     except ImportError:
       sys.path.remove(str(root))
@@ -63,8 +65,12 @@ def _sym(name: str):
   to import moved.
   """
   for holder in (memcore, getattr(memcore, "trust", None), getattr(memcore, "rerank", None)):
-    if holder is not None and hasattr(holder, name):
-      return getattr(holder, name)
+    if holder is None:
+      continue
+    # memcore keeps some helpers private (e.g. _clamp01); drift still matters.
+    for candidate in (name, f"_{name}"):
+      if hasattr(holder, candidate):
+        return getattr(holder, candidate)
   pytest.fail(
     f"memcore does not expose {name!r} (looked in memcore, memcore.trust, "
     f"memcore.rerank) - the import seam has moved; update the adoption plan"
@@ -78,20 +84,10 @@ def test_clamp01_matches():
     assert clamp01(v) == theirs(v), f"clamp01({v}) diverged"
 
 
-def test_effective_confidence_matches():
-  from yaams.trust import effective_confidence
-  theirs = _sym("effective_confidence")
-  provenances = ["curated", "authored", "structured", "conversational",
-                 "imported", "inferred", "unknown-class", ""]
-  for base, prov, validations in product(
-    (0.0, 0.4, 0.85, 1.0, 1.4), provenances, (0, 1, 3, 10),
-  ):
-    ours = effective_confidence(base, prov, validations)
-    them = theirs(base, prov, validations)
-    assert ours == pytest.approx(them), (
-      f"effective_confidence({base}, {prov!r}, {validations}): "
-      f"ours={ours} memcore={them}"
-    )
+# effective_confidence is deliberately NOT in memcore: the extraction (ledger
+# 3335193) kept provenance-weighted confidence ledger-side and injects it into
+# memcore.trust.attach_trust_verdicts as a `confidence_of` callable. yaams owns
+# its own copy in yaams/trust.py; there is no upstream symbol to drift against.
 
 
 def test_trust_verdict_matches():

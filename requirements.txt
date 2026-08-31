@@ -9,3 +9,4 @@ spacy>=3.7
 sqlite-vec>=0.1.6
 tqdm>=4.66
 pytest>=8.0
+jsonschema>=4.0

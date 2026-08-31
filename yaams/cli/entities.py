@@ -896,6 +896,146 @@ def entities_untag(name: str, tags: tuple[str, ...], as_json: bool, config_path:
   click.echo(f"Untagged '{name}' (-{removed}).")
 
 
+def _dictionary_entry(dictionary: list[dict], canonical: str) -> dict | None:
+  """Find a dictionary entry by canonical name, case-insensitively."""
+  target = canonical.casefold()
+  for entry in dictionary:
+    if str(entry.get("canonical", "")).casefold() == target:
+      return entry
+  return None
+
+
+@entities_group.command("rename")
+@click.argument("old")
+@click.argument("new")
+@click.option("--drop-old-alias", is_flag=True,
+              help="Do not keep OLD as an alias. Only for a typo fix, where nothing "
+                   "in the corpus actually uses the old spelling.")
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_rename(old: str, new: str, drop_old_alias: bool, as_json: bool,
+                    config_path: str) -> None:
+  """Rename an entity's canonical name, keeping OLD as an alias.
+
+  Renaming in place rather than merging keeps the entity row, so every item
+  link, tag, meta value and relation follows automatically. OLD is kept as an
+  alias by default because the corpus still says it: dropping it would stop
+  historical mentions resolving. Use --drop-old-alias only for a typo.
+
+  If NEW already names a different entity this refuses and points at `merge`,
+  which is the operation that folds two entities together.
+  """
+  new = new.strip()
+  if not new:
+    click.echo("New name cannot be empty.", err=True)
+    sys.exit(EXIT_USER_ERROR)
+  conn, eid = _open_for_entity(config_path, "entities rename", old, as_json, readonly=False)
+  try:
+    canonical, etype, aliases = _entity_row(conn, eid)
+    clash = resolve_entity_id(conn, new)
+    if clash is not None and clash != eid:
+      conn.close()
+      msg = f"'{new}' already names a different entity"
+      if as_json:
+        emit_data_error(data_error(
+          command="entities rename", code="name_taken", message=msg,
+          hint=f"To combine them: yaams entities merge {new!r} {canonical!r}"))
+      else:
+        click.echo(msg + f". To combine them: yaams entities merge {new!r} {canonical!r}", err=True)
+      sys.exit(EXIT_USER_ERROR)
+
+    kept = list(aliases) if drop_old_alias else [canonical, *aliases]
+    kept = _dedupe_ci(kept, exclude={new.casefold()})
+
+    cfg = load_config(config_path)
+    entities_cfg = dict(cfg.get("entities") or {})
+    dictionary = list(entities_cfg.get("dictionary") or [])
+    entry = _dictionary_entry(dictionary, canonical)
+    if entry is None:
+      entry = {"canonical": new, "type": etype}
+      dictionary.append(entry)
+    entry["canonical"] = new
+    if kept:
+      entry["aliases"] = kept
+    else:
+      entry.pop("aliases", None)
+    entities_cfg["dictionary"] = dictionary
+    _save_entities(config_path, entities_cfg)
+
+    # Rename the row itself before reseeding: seed_entities matches on
+    # canonical_name, so reseeding first would create a second entity and
+    # strand every existing link on the old one.
+    with conn:
+      conn.execute("UPDATE entities SET canonical_name = ? WHERE id = ?", (new, eid))
+    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh)
+  finally:
+    conn.close()
+
+  if as_json:
+    emit_action(action_envelope(command="entities rename", ok=True, stats={
+      "old": canonical, "new": new, "aliases": kept, "old_kept_as_alias": not drop_old_alias,
+    }))
+    return
+  click.echo(f"Renamed '{canonical}' -> '{new}'.")
+  click.echo(f"  aliases now: {', '.join(kept) if kept else '-'}")
+
+
+@entities_group.command("unalias")
+@click.argument("name")
+@click.argument("aliases", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
+@config_option
+def entities_unalias(name: str, aliases: tuple[str, ...], as_json: bool,
+                     config_path: str) -> None:
+  """Remove ALIASES from an entity, leaving the entity itself in place.
+
+  `remove` deletes a whole entity, which is the wrong tool when one alias is
+  simply wrong: a shared phone number folded onto the wrong card, or a
+  descriptive card name ("Cecilie Emilie Sin Venn") that should never have
+  become a way of referring to someone. Matching is case-insensitive, and an
+  alias that is not present is reported rather than silently ignored.
+  """
+  conn, eid = _open_for_entity(config_path, "entities unalias", name, as_json, readonly=False)
+  try:
+    canonical, etype, current = _entity_row(conn, eid)
+    drop = {a.strip().casefold() for a in aliases if a.strip()}
+    cfg = load_config(config_path)
+    entities_cfg = dict(cfg.get("entities") or {})
+    dictionary = list(entities_cfg.get("dictionary") or [])
+    entry = _dictionary_entry(dictionary, canonical)
+    source = list(entry.get("aliases") or []) if entry else list(current)
+    kept = [a for a in source if a.strip().casefold() not in drop]
+    removed = [a for a in source if a.strip().casefold() in drop]
+    missing = sorted(drop - {a.strip().casefold() for a in removed})
+
+    if entry is None:
+      entry = {"canonical": canonical, "type": etype}
+      dictionary.append(entry)
+    if kept:
+      entry["aliases"] = kept
+    else:
+      entry.pop("aliases", None)
+    entities_cfg["dictionary"] = dictionary
+    _save_entities(config_path, entities_cfg)
+    # seed_entities rewrites the aliases column wholesale, so a reseed is what
+    # actually drops them from the DB.
+    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh)
+  finally:
+    conn.close()
+
+  if as_json:
+    emit_action(action_envelope(command="entities unalias", ok=True, stats={
+      "entity": canonical, "removed": removed, "not_found": missing, "aliases": kept,
+    }))
+    return
+  click.echo(f"Unaliased '{canonical}' (-{len(removed)}).")
+  if missing:
+    click.echo(f"  not an alias: {', '.join(missing)}", err=True)
+  click.echo(f"  aliases now: {', '.join(kept) if kept else '-'}")
+
+
 @entities_group.command("set")
 @click.argument("name")
 @click.argument("attrs", nargs=-1, required=True)

@@ -18,9 +18,12 @@ allowlist to bound the fan-out further.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import re
+import signal
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -56,6 +59,14 @@ _BACKOFF_CAP_SEC = 30.0
 # retry instead of waiting it out.
 _CALL_TIMEOUT_SEC = 20.0
 
+# Audiences owa-teams needs: `teams` and `channels` run on graph, `messages` on
+# ic3 (owa_teams/cli.py tags each verb with `auth=`). Both are warmed up front.
+_PREWARM_AUDIENCES = ("graph", "ic3")
+
+# Cap for a prewarm mint. A cold one launches a headless Edge and takes ~40s;
+# this is the one call in the run that must be allowed to finish.
+_PREWARM_TIMEOUT_SEC = 180.0
+
 # Content-pattern filter: skip automated/system posts whose body starts with
 # well-known Microsoft admin digest / Message Center patterns.
 _AUTOMATED_CONTENT_RE = re.compile(
@@ -63,6 +74,95 @@ _AUTOMATED_CONTENT_RE = re.compile(
   r"(Type|Category):\s*(Message center|Advisory))",
   re.IGNORECASE | re.MULTILINE,
 )
+
+
+# Grace between SIGTERM and SIGKILL for a timed-out call's process group.
+# Enough for Chromium to clear its SingletonLock on the way out.
+_KILL_GRACE_SEC = 2.0
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+  """SIGTERM the child's whole process group, then SIGKILL the survivors.
+
+  ``start_new_session=True`` makes the child a group leader, so its pid doubles
+  as the pgid and one signal reaches every descendant.
+  """
+  pgid = proc.pid
+  with contextlib.suppress(OSError):
+    os.killpg(pgid, signal.SIGTERM)
+  with contextlib.suppress(subprocess.TimeoutExpired):
+    proc.wait(timeout=_KILL_GRACE_SEC)
+  with contextlib.suppress(OSError):
+    os.killpg(pgid, signal.SIGKILL)
+
+
+def _run_capped(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+  """``subprocess.run`` with a wall-clock cap that also kills the child's
+  *descendants*.
+
+  ``subprocess.run(timeout=...)`` kills only the direct child, and that is not
+  enough here. ``owa-teams`` shells out to ``owa-piggy token``, which launches a
+  headless Edge holding Chromium's SingletonLock on the profile dir. Kill the
+  middle process alone and Edge is reparented to init and squats that dir, so
+  the retry we are about to make gets singleton-forwarded, never binds its debug
+  port and times out too - leaking one more Edge per attempt and burning the
+  whole retry ladder on a fault we caused ourselves. Observed 2026-09-07 on
+  profile nc, where it outlived the ingest that started it.
+
+  The ``finally`` covers the other direction: if yaams is interrupted mid-call,
+  the child group goes down with us instead of being orphaned. Nothing helps
+  against a SIGKILL to yaams itself.
+
+  Raises `subprocess.TimeoutExpired` exactly like `subprocess.run`, so callers
+  keep their existing except-clause.
+  """
+  with subprocess.Popen(
+    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    start_new_session=True,
+  ) as proc:
+    try:
+      out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+      _kill_group(proc)
+      out, err = proc.communicate()
+      raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
+    finally:
+      if proc.poll() is None:
+        _kill_group(proc)
+  return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def _prewarm_tokens(profile: str) -> None:
+  """Mint each audience owa-teams needs once, serially, before the fan-out.
+
+  Without this the source livelocks on a cold cache. `_CALL_TIMEOUT_SEC` is 20s,
+  but a cold `owa-piggy token` mint launches a headless Edge and takes ~38s, so
+  every capped call was killed *before* it could write the token to cache. The
+  retry then paid the same doomed mint, and so did every later channel: 25
+  timeouts and zero rows, observed 2026-09-07 on profile nc. Warming here moves
+  that one-time cost outside the cap; calls afterwards return in ~0.5s.
+
+  `extract` already ran `_teams()` serially "to warm the token cache", but that
+  only ever covered the graph audience - `messages` runs on ic3 and stayed cold,
+  which is exactly the call that spent the whole run timing out.
+
+  Best-effort by design: a failure here is not fatal. The fan-out still tries on
+  its own and reports through the normal per-call error path.
+  """
+  for audience in _PREWARM_AUDIENCES:
+    cmd = ["owa-piggy", "token", "--audience", audience, "--profile", profile]
+    try:
+      result = _run_capped(cmd, _PREWARM_TIMEOUT_SEC)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+      logger.warning("token prewarm %s/%s failed: %s", profile, audience, exc)
+      continue
+    if result.returncode != 0:
+      # stdout carries the token itself, so only stderr is ever logged.
+      logger.warning(
+        "token prewarm %s/%s failed (rc=%d): %s",
+        profile, audience, result.returncode,
+        (result.stderr or "").strip() or "no stderr",
+      )
 
 
 @dataclass
@@ -97,7 +197,8 @@ class TeamsChannelsAdapter:
     self.rate_limit_retries = 0
     self.timed_out_calls = 0
     cutoff = ensure_utc(since)
-    teams = self._teams()  # serial: warms the owa-piggy token cache
+    _prewarm_tokens(self.profile)  # both audiences, before anything is capped
+    teams = self._teams()
     # One task per team, each doing its own channels-then-messages calls.
     # Deliberately not two pool.map passes: that barriers every messages
     # call behind the slowest channels call, and per-call latency is 0.6-6s
@@ -202,9 +303,7 @@ class TeamsChannelsAdapter:
     attempts = max(self.max_retries, 0) + 1
     for attempt in range(attempts):
       try:
-        result = subprocess.run(
-          cmd, capture_output=True, text=True, timeout=_CALL_TIMEOUT_SEC,
-        )
+        result = _run_capped(cmd, _CALL_TIMEOUT_SEC)
       except subprocess.TimeoutExpired:
         self.timed_out_calls += 1
         logger.warning(

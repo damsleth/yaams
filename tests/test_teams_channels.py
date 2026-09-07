@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 import subprocess
+
+import pytest
 from datetime import UTC, datetime
 
 from yaams.ingest.teams_channels import (
@@ -59,7 +61,9 @@ def _fake_run(
   messages_by_channel: dict[str, list[dict]],
 ):
   """Build a subprocess.run replacement dispatching on the owa-teams verb."""
-  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
+  def run(cmd, timeout=None):  # noqa: ARG001
+    if cmd[0] == "owa-piggy":  # token prewarm shares this subprocess seam
+      return _FakeProc("{}")
     assert cmd[0] == "owa-teams"
     assert "--profile" in cmd
     verb = cmd[1]
@@ -178,7 +182,7 @@ def _adapter(monkeypatch, *, teams_json, channels_by_team, messages_by_channel, 
   `owa-teams teams` listing; the adapter's own `teams` allowlist comes via kw."""
   import yaams.ingest.teams_channels as mod
   monkeypatch.setattr(
-    mod.subprocess, "run",
+    mod, "_run_capped",
     _fake_run(teams_json, channels_by_team, messages_by_channel),
   )
   return TeamsChannelsAdapter(profile="work", **kw)
@@ -314,10 +318,10 @@ def test_adapter_populated_allowlist_restricts(monkeypatch):
 def test_adapter_tolerates_failed_owa_teams(monkeypatch):
   import yaams.ingest.teams_channels as mod
 
-  def boom(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
+  def boom(cmd, timeout=None):  # noqa: ARG001
     return _FakeProc(stdout="", returncode=1, stderr="auth blew up")
 
-  monkeypatch.setattr(mod.subprocess, "run", boom)
+  monkeypatch.setattr(mod, "_run_capped", boom)
   adapter = TeamsChannelsAdapter(profile="work")
   assert list(adapter.extract(datetime(2026, 1, 1, tzinfo=UTC))) == []
 
@@ -334,11 +338,11 @@ def _seq_run(monkeypatch, responses):
   calls: list[list[str]] = []
   slept: list[float] = []
 
-  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
+  def run(cmd, timeout=None):  # noqa: ARG001
     calls.append(cmd)
     return responses[min(len(calls) - 1, len(responses) - 1)]
 
-  monkeypatch.setattr(mod.subprocess, "run", run)
+  monkeypatch.setattr(mod, "_run_capped", run)
   monkeypatch.setattr(mod.time, "sleep", lambda d: slept.append(d))
   return calls, slept
 
@@ -461,11 +465,11 @@ def test_messages_cmd_passes_since_watermark(monkeypatch):
     {chan: [_row()]},
   )
 
-  def run(cmd, capture_output=True, text=True, timeout=None):
+  def run(cmd, timeout=None):
     seen.append(cmd)
-    return inner(cmd, capture_output=capture_output, text=text, timeout=timeout)
+    return inner(cmd, timeout=timeout)
 
-  monkeypatch.setattr(mod.subprocess, "run", run)
+  monkeypatch.setattr(mod, "_run_capped", run)
   adapter = TeamsChannelsAdapter(profile="work")
   list(adapter.extract(datetime(2026, 4, 1, tzinfo=UTC)))
   msg_cmd = next(c for c in seen if c[1] == "messages")
@@ -477,14 +481,115 @@ def test_run_retries_a_hung_call_then_succeeds(monkeypatch):
   import yaams.ingest.teams_channels as mod
   calls = {"n": 0}
 
-  def run(cmd, capture_output=True, text=True, timeout=None):  # noqa: ARG001
+  def run(cmd, timeout=None):  # noqa: ARG001
     calls["n"] += 1
     if calls["n"] == 1:
       raise subprocess.TimeoutExpired(cmd, timeout or 0)
     return _FakeProc(json.dumps([{"id": "team-1", "displayName": "T"}]))
 
-  monkeypatch.setattr(mod.subprocess, "run", run)
+  monkeypatch.setattr(mod, "_run_capped", run)
   adapter = TeamsChannelsAdapter(profile="work")
   assert adapter._run(["teams"]) == [{"id": "team-1", "displayName": "T"}]
   assert calls["n"] == 2
   assert adapter.timed_out_calls == 1
+
+
+def test_run_capped_kills_grandchildren_on_timeout(tmp_path):
+  """A timed-out call takes its whole process tree with it.
+
+  This is the 2026-09-07 leak: `subprocess.run(timeout=...)` reaps only the
+  direct child, so the `owa-piggy` + headless Edge underneath survived, kept
+  Chromium's SingletonLock on the profile dir, and made every retry time out
+  too. The grandchild here stands in for that Edge.
+  """
+  import os
+  import signal
+  import subprocess
+  import time
+
+  from yaams.ingest.teams_channels import _run_capped
+
+  pidfile = tmp_path / "grandchild.pid"
+  # Child spawns a long-lived grandchild, records its pid, then hangs.
+  script = f"sleep 300 & echo $! > {pidfile}; sleep 300"
+
+  start = time.monotonic()
+  with pytest.raises(subprocess.TimeoutExpired):
+    _run_capped(["sh", "-c", script], timeout=1.0)
+  assert time.monotonic() - start < 20, "timeout was not enforced"
+
+  grandchild = int(pidfile.read_text().strip())
+  for _ in range(50):  # killpg is async; give it a beat
+    try:
+      os.kill(grandchild, 0)
+    except OSError:
+      break
+    time.sleep(0.1)
+  else:
+    os.kill(grandchild, signal.SIGKILL)  # don't leak it out of the test
+    pytest.fail(f"grandchild {grandchild} survived the timeout")
+
+
+def test_run_capped_returns_output_on_success():
+  """The happy path still behaves like subprocess.run."""
+  from yaams.ingest.teams_channels import _run_capped
+
+  result = _run_capped(["sh", "-c", "printf hei; exit 3"], timeout=10.0)
+  assert result.returncode == 3
+  assert result.stdout == "hei"
+
+
+def test_prewarm_mints_both_audiences_before_the_capped_fanout(monkeypatch):
+  """Both audiences are warmed, serially, with the generous cap.
+
+  The 2026-09-07 livelock was ic3 staying cold: `extract` warmed only graph via
+  `_teams()`, but `messages` runs on ic3, so every capped call died mid-mint.
+  """
+  import yaams.ingest.teams_channels as mod
+
+  calls: list[tuple[list[str], float]] = []
+
+  def fake(cmd, timeout=None):
+    calls.append((cmd, timeout))
+    return _FakeProc(stdout="{}")
+
+  monkeypatch.setattr(mod, "_run_capped", fake)
+  mod._prewarm_tokens("nc")
+
+  audiences = [c[c.index("--audience") + 1] for c, _ in calls]
+  assert audiences == ["graph", "ic3"], "messages runs on ic3; warming graph alone is the bug"
+  assert all(c[0] == "owa-piggy" and "--profile" in c for c, _ in calls)
+  # The whole point: the mint must outlive the per-call cap.
+  assert all(t == mod._PREWARM_TIMEOUT_SEC for _, t in calls)
+  assert mod._PREWARM_TIMEOUT_SEC > mod._CALL_TIMEOUT_SEC
+
+
+def test_prewarm_failure_is_not_fatal(monkeypatch):
+  """A dead prewarm logs and moves on; the fan-out reports errors its own way."""
+  import subprocess
+
+  import yaams.ingest.teams_channels as mod
+
+  def boom(cmd, timeout=None):  # noqa: ARG001
+    raise subprocess.TimeoutExpired(cmd, timeout or 0)
+
+  monkeypatch.setattr(mod, "_run_capped", boom)
+  mod._prewarm_tokens("nc")  # must not raise
+
+
+def test_extract_prewarms_before_fetching(monkeypatch):
+  """extract() warms tokens first, so no capped call ever pays a cold mint."""
+  import yaams.ingest.teams_channels as mod
+
+  order: list[str] = []
+  monkeypatch.setattr(mod, "_prewarm_tokens", lambda p: order.append(f"prewarm:{p}"))
+
+  inner = _fake_run([{"id": "team-1", "displayName": "T"}], {"team-1": []}, {})
+
+  def run(cmd, timeout=None):
+    order.append(cmd[1])
+    return inner(cmd, timeout=timeout)
+
+  monkeypatch.setattr(mod, "_run_capped", run)
+  list(TeamsChannelsAdapter(profile="nc").extract(datetime(2026, 1, 1, tzinfo=UTC)))
+  assert order[0] == "prewarm:nc", f"prewarm did not run first: {order}"

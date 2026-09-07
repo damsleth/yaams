@@ -3,9 +3,9 @@ from __future__ import annotations
 import importlib
 import json
 import subprocess
+from datetime import UTC, datetime
 
 import pytest
-from datetime import UTC, datetime
 
 from yaams.ingest.teams_channels import (
   TeamsChannelsAdapter,

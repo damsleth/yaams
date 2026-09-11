@@ -40,6 +40,8 @@ _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
 sys.path.insert(0, str(_REPO / "scripts"))
 
+from datetime import UTC, datetime
+
 from autoresearch_retrieval import _parsed_from_json  # type: ignore
 
 from yaams.cli._shared import _embed_config, _self_identities
@@ -52,8 +54,6 @@ from yaams.retrieve.parse import parse_query
 from yaams.retrieve.synonyms import normalize_synonym_groups
 from yaams.synthesize.llm import llm_adapter_from_config
 from yaams.time import parse_iso_datetime
-
-from datetime import UTC, datetime  # noqa: E402
 
 
 def now_iso() -> str:

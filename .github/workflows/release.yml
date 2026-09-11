@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check yaams tests
+      - run: ruff check yaams tests scripts
 
   test:
     runs-on: ubuntu-latest

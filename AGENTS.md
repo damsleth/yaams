@@ -281,7 +281,7 @@ match: `pyproject.toml` `version` and `yaams/__init__.py` `__version__`.
 Pre-1.0, bump the minor for new features and the patch for fixes.
 
 1. Make sure `main` is green: `.venv/bin/pytest -q` and
-   `.venv/bin/ruff check yaams tests`.
+   `.venv/bin/ruff check yaams tests scripts`.
 2. Bump the version in both `pyproject.toml` and `yaams/__init__.py`, and add
    a dated section to `CHANGELOG.md` for the new version (move items out of
    `[Unreleased]`). Keep the existing `[x.y.z]` sections; never rewrite a

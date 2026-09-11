@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
-from pathlib import Path
 import platform
 import sys
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from yaams.config import load_config
-
 
 DEFAULT_CONFIG = {
   "db_path": "~/yaams/data.db",

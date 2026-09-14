@@ -65,6 +65,20 @@ def _configured_synonym_groups(cfg: dict) -> list[list[str]]:
   return normalize_synonym_groups(raw)
 
 
+def apply_recency_decay_config(qcfg, cfg: dict) -> None:
+  """Opt-in `retrieve.recency_decay: {tau_days, floor}` from config.
+
+  Default-off: recency decay was killed twice on the eval gold set (see
+  .plans/recency-decay-v2.md), so it only applies when a user opts in.
+  """
+  retrieve = cfg.get("retrieve")
+  raw = retrieve.get("recency_decay") if isinstance(retrieve, dict) else None
+  if not isinstance(raw, dict) or not raw.get("tau_days"):
+    return
+  qcfg.recency_decay_tau_days = float(raw["tau_days"])
+  qcfg.recency_decay_floor = float(raw.get("floor", qcfg.recency_decay_floor))
+
+
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
   """Parse --meta KEY=VALUE flags into a dict. Pairs without '=' or with an
   empty key are skipped (silently tolerant; the resolver AND-s what remains)."""
@@ -391,6 +405,7 @@ def query_cmd(
           qcfg.reranker_device = rerank_cfg.get("device")
       if (cfg.get("retrieve") or {}).get("feedback_boost"):
         qcfg.feedback_boost = True
+      apply_recency_decay_config(qcfg, cfg)
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

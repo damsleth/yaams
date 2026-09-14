@@ -117,16 +117,28 @@ def promote_group() -> None:
 @click.option("--days", default=None, type=int, help="Override window_days from config")
 @click.option("--min-cluster", default=None, type=int, help="Override min_cluster_items")
 @click.option("--entity", default=None, help="Generate for a single entity name only")
+@click.option(
+  "--snapshot-id",
+  default=None,
+  help="Identity of the frozen scenario this run selects from (e.g. fixture_sha256).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
 def promote_generate(
   config_path: str,
   days: int | None,
   min_cluster: int | None,
   entity: str | None,
+  snapshot_id: str | None,
   as_json: bool,
 ) -> None:
-  from yaams.promote.candidates import PromoteConfig, generate_candidates, store_candidates
+  from yaams.promote.candidates import (
+    GENERATE_PROMPT,
+    PromoteConfig,
+    generate_candidates,
+    store_candidates,
+  )
   from yaams.promote.conflict import ConflictConfig
+  from yaams.promote.runs import finish_run, hash_payload, start_run
   from yaams.synthesize import llm_adapter_from_config
 
   t0 = time.monotonic()
@@ -201,13 +213,29 @@ def promote_generate(
       confidence_threshold=float(conflict_det_raw.get("confidence_threshold", 0.7)),
     )
 
+    run_id = start_run(
+      conn,
+      snapshot_id=snapshot_id,
+      backend=str(cfg.get("llm", {}).get("backend", "")),
+      model=getattr(adapter, "model", None),
+      prompt_version="GENERATE_PROMPT",
+      prompt_hash=hash_payload(GENERATE_PROMPT),
+      config_hash=hash_payload(promote_cfg_raw),
+    )
     candidates = generate_candidates(
       conn, adapter, pcfg,
       entity_filter=entity,
       on_progress=progress_sink,
       conflict_cfg=conflict_cfg,
     )
-    stored = store_candidates(conn, candidates)
+    stored = store_candidates(conn, candidates, run_id=run_id)
+    item_ids = sorted({i for c in candidates for i in c.source_item_ids})
+    finish_run(
+      conn, run_id,
+      item_ids=item_ids,
+      candidate_count=len(candidates),
+      duration_ms=(time.monotonic() - t0) * 1000.0,
+    )
   finally:
     conn.close()
 
@@ -224,6 +252,7 @@ def promote_generate(
     emit_action(action_envelope(
       command="promote generate", ok=True,
       stats={
+        "run_id": run_id,
         "candidates_generated": len(candidates),
         "candidates_stored": stored,
         "window_days": pcfg.window_days,
@@ -236,7 +265,7 @@ def promote_generate(
       duration_ms=duration_ms,
     ))
     return
-  click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored.")
+  click.echo(f"\nGenerated {len(candidates)} candidates, {stored} new stored (run {run_id}).")
 
 
 @promote_group.command("from-facts")
@@ -252,6 +281,7 @@ def promote_from_facts(config_path: str, days: int | None, as_json: bool) -> Non
   from yaams.promote.candidates import store_candidates
   from yaams.promote.dedup import DedupChecker
   from yaams.promote.facts import generate_fact_candidates
+  from yaams.promote.runs import finish_run, start_run
 
   t0 = time.monotonic()
   try:
@@ -293,7 +323,14 @@ def promote_from_facts(config_path: str, days: int | None, as_json: bool) -> Non
   conn = open_db(db_path)
   try:
     init_schema(conn, embedding_dim=_embedding_dim(cfg))
-    stored = store_candidates(conn, candidates)
+    run_id = start_run(conn, backend="from-facts", prompt_version="none")
+    stored = store_candidates(conn, candidates, run_id=run_id)
+    finish_run(
+      conn, run_id,
+      item_ids=sorted({i for c in candidates for i in c.source_item_ids}),
+      candidate_count=len(candidates),
+      duration_ms=(time.monotonic() - t0) * 1000.0,
+    )
   finally:
     conn.close()
 
@@ -301,7 +338,11 @@ def promote_from_facts(config_path: str, days: int | None, as_json: bool) -> Non
   if as_json:
     emit_action(action_envelope(
       command="promote from-facts", ok=True,
-      stats={"facts_seen": len(candidates), "candidates_stored": stored},
+      stats={
+        "run_id": run_id,
+        "facts_seen": len(candidates),
+        "candidates_stored": stored,
+      },
       duration_ms=duration_ms,
     ))
     return
@@ -608,3 +649,39 @@ def promote_commit(
 
   finally:
     conn.close()
+
+
+@promote_group.command("export")
+@config_option
+@click.option("--run-id", required=True, help="Promotion run to export.")
+@click.option("--jsonl", is_flag=True, help="One candidate object per line instead of one bundle.")
+def promote_export(config_path: str, run_id: str, jsonl: bool) -> None:
+  """Export a run's candidates as a contract-v1 bundle for cognitive-ledger."""
+  import json as _json
+
+  from yaams.promote.runs import export_bundle
+
+  try:
+    cfg = load_config(config_path)
+    conn = open_db(get_db_path(cfg), readonly=True)
+  except Exception as exc:
+    emit_data_error(data_error(
+      command="promote export", code="db_open_failed", message=str(exc),
+      hint="Run: yaams init-db",
+    ))
+    sys.exit(EXIT_USER_ERROR)
+  try:
+    bundle = export_bundle(conn, run_id)
+  except ValueError as exc:
+    emit_data_error(data_error(
+      command="promote export", code="unknown_run", message=str(exc),
+      hint="List runs: sqlite3 <db> 'SELECT run_id, created_at FROM promotion_runs'",
+    ))
+    sys.exit(EXIT_USER_ERROR)
+  finally:
+    conn.close()
+  if jsonl:
+    for candidate in bundle["candidates"]:
+      click.echo(_json.dumps(candidate, ensure_ascii=False))
+    return
+  click.echo(_json.dumps(bundle, ensure_ascii=False, indent=2))

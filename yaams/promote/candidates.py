@@ -284,7 +284,11 @@ def generate_candidates(
 def store_candidates(
   conn: sqlite3.Connection,
   candidates: list[PromotionCandidate],
+  run_id: str | None = None,
 ) -> int:
+  # INSERT OR IGNORE keeps first-owner semantics: a candidate re-drafted in a
+  # later run keeps the run_id of the run that first produced it.
+  from yaams.promote.runs import CANDIDATE_SCHEMA_VERSION
   stored = 0
   for c in candidates:
     try:
@@ -296,8 +300,10 @@ def store_candidates(
            merge_with, dedup_similarity,
            conflict_classification, conflict_confidence, conflict_reason,
            conflict_model, conflict_checked_at, conflict_target_statement_hash,
-           conflict_prompt_version, admission_score, admission_factors)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           conflict_prompt_version, admission_score, admission_factors,
+           run_id, candidate_schema_version, proposed_action, target_path,
+           target_statement_hash, stage, gate_status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
           c.id,
@@ -323,6 +329,13 @@ def store_candidates(
           c.conflict_prompt_version,
           c.admission_score,
           json.dumps(c.admission_factors) if c.admission_factors is not None else None,
+          run_id,
+          CANDIDATE_SCHEMA_VERSION,
+          "MERGE" if c.merge_with else "ADD",
+          c.merge_with,
+          c.conflict_target_statement_hash,
+          "drafted",
+          "pending",
         ),
       )
       # INSERT OR IGNORE: rowcount is 1 on a real insert, 0 when the id already

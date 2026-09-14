@@ -44,6 +44,7 @@ from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
 from yaams.ingest.m365_mail import M365MailAdapter
+from yaams.ingest.agent_memory import AgentMemoryAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.outlook_app import OutlookCalendarAdapter, OutlookMailAdapter
 from yaams.ingest.signal import SignalAdapter
@@ -71,7 +72,7 @@ from yaams.watermark import get_watermark, update_watermark
   default="all",
   show_default=True,
   help=(
-    "all, imessage, signal, email, notes, folders, tier2_ledger, github, "
+    "all, imessage, signal, email, notes, folders, tier2_ledger, agent_memory, github, "
     "chats, chats_facts, outlook_calendar, outlook_mail, "
     "teams or teams_<profile>, teams-channels or teams_channels_<profile>, "
     "calendar or calendar_<profile>, mail or mail_<profile>, "
@@ -664,6 +665,18 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     if skip_dirs:
       kwargs["skip_dirs"] = set(skip_dirs)
     return FolderAdapter(**kwargs)
+  if source == "agent_memory":
+    claude = cfg.get("claude_projects")
+    codex = cfg.get("codex_memories")
+    if not claude and not codex:
+      raise ValueError(
+        "agent_memory source requires ingest.agent_memory.claude_projects "
+        "and/or ingest.agent_memory.codex_memories in config.yaml"
+      )
+    return AgentMemoryAdapter(
+      claude_projects=Path(claude) if claude else None,
+      codex_memories=Path(codex) if codex else None,
+    )
   if source == "tier2_ledger":
     notes_path = cfg.get("notes_path")
     if not notes_path:
@@ -988,7 +1001,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
 
   if source == "all":
     return [
-      "imessage", "signal", "email", "notes", "folders", "tier2_ledger",
+      "imessage", "signal", "email", "notes", "folders", "tier2_ledger", "agent_memory",
       "github", "chats", "chats_facts", "outlook_calendar", "outlook_mail",
       *_piggy_sources("teams", "teams_"),
       *_piggy_sources("teams_channels", "teams_channels_"),
@@ -1082,6 +1095,13 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
   if source == "tier2_ledger":
     path = source_cfg.get("notes_path")
     return [f"ledger: {Path(path).expanduser()}" if path else "ledger: n/a"]
+  if source == "agent_memory":
+    lines = []
+    for label, key in (("claude", "claude_projects"), ("codex", "codex_memories")):
+      path = source_cfg.get(key)
+      if path:
+        lines.append(f"{label}: {Path(path).expanduser()}")
+    return lines or ["agent memory: n/a"]
   if source == "github":
     return [f"github: {source_cfg.get('username', 'unknown')} (events)"]
   if source == "outlook_calendar":

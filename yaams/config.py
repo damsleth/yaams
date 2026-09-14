@@ -107,6 +107,7 @@ _NUMERIC_KNOBS: tuple[tuple[str, type | tuple[type, ...], bool], ...] = (
   ("ingest.teams_channels.max_retries", int, False),
   ("ingest.calendar.chunk_days", int, True),
   ("retrieve.rerank.k", int, True),
+  ("retrieve.recency_decay.tau_days", (int, float), True),
 )
 
 

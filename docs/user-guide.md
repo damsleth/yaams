@@ -333,6 +333,12 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   cross-language concept groups under `retrieve.synonyms`, for example
   `[vakt, shift]` or `[øvelse, exercise]`, to make FTS treat each term in a
   group as equivalent.
+- **`retrieve.recency_decay`** (off by default) ages raw results down:
+  `score *= max(floor, exp(-age_days / tau_days))`. Curated `tier2_ledger` rows
+  never decay and timestamp-sorted queries are untouched. Leave it off unless
+  your questions are about what happened *recently* - it measurably hurts the
+  eval gold set, where the right answer is usually old. Start at
+  `tau_days: 60, floor: 0.2`; a floor near 0.9 changes nothing.
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

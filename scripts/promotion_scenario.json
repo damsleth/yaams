@@ -1,6 +1,6 @@
 {
   "created_at": "2026-08-30T18:28:26Z",
-  "fixture": "/Users/damsleth/brain/promotion_fixture.db",
+  "fixture": "/Users/damsleth/brain/feed/eval/promotion_fixture.db",
   "source_db": "/Users/damsleth/brain/feed/data.db",
   "fixture_sha256": "d4081e19dc8fcce02964035f48d3965ec19d209a77e30cd8196c6a672566c840",
   "yaams_commit": "b3aba1c6e06022292bf376cbedb959c0e0cd495e",

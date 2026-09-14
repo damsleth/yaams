@@ -35,7 +35,7 @@ Options:
     --tag NAME         Label this run in results.tsv (default: "adhoc").
     --json             Emit the summary as JSON on stdout.
     --db PATH          Override the DB (else $YAAMS_AUTORESEARCH_DB, else
-                       ~/brain/autoresearch_fixture.db if it exists, else
+                       ~/brain/feed/eval/autoresearch_fixture.db if it exists, else
                        /tmp/yaams_autoresearch.db, else the live config DB).
     --no-write         Don't append to results.tsv / update prev-run state.
 
@@ -43,14 +43,14 @@ Re-snapshot procedure (run after a reboot wipes /tmp, or to refresh the fixture)
 
     # 1. Copy the live DB to the stable location (one-time or after schema changes):
     cp "$(python3 -c 'from yaams.config import get_db_path, load_config; print(get_db_path(load_config()))')" \
-        ~/brain/autoresearch_fixture.db
+        ~/brain/feed/eval/autoresearch_fixture.db
 
     # 2. Verify the copy has feedback rows:
-    sqlite3 ~/brain/autoresearch_fixture.db \
+    sqlite3 ~/brain/feed/eval/autoresearch_fixture.db \
         "SELECT kind, count(*) FROM query_feedback GROUP BY kind;"
 
     # 3. Optionally set the env var to skip auto-discovery:
-    export YAAMS_AUTORESEARCH_DB=~/brain/autoresearch_fixture.db
+    export YAAMS_AUTORESEARCH_DB=~/brain/feed/eval/autoresearch_fixture.db
 """
 
 from __future__ import annotations
@@ -256,7 +256,7 @@ def main() -> int:
     retrieve_cfg = cfg.get("retrieve")
     raw_synonyms = retrieve_cfg.get("synonyms") if isinstance(retrieve_cfg, dict) else None
     synonym_groups = normalize_synonym_groups(raw_synonyms)
-    _stable_fixture = Path.home() / "brain" / "autoresearch_fixture.db"
+    _stable_fixture = Path.home() / "brain" / "feed" / "eval" / "autoresearch_fixture.db"
     _tmp_fixture = Path("/tmp/yaams_autoresearch.db")
     db_path = (
         args.db

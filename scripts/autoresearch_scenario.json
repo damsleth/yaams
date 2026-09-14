@@ -1,5 +1,5 @@
 {
-  "fixture": "/Users/damsleth/brain/autoresearch_fixture.db",
+  "fixture": "/Users/damsleth/brain/feed/eval/autoresearch_fixture.db",
   "source_db": "/Users/damsleth/brain/feed/data.db",
   "gold_hash": "a98fb4df04e665fb01086021a3685ce7a2f92b0b",
   "gold_queries": 79,

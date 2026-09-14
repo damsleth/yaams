@@ -35,7 +35,7 @@ sys.path.insert(0, str(_REPO))
 
 from yaams.db import open_db  # noqa: E402
 
-FIXTURE = Path.home() / "brain" / "promotion_fixture.db"
+FIXTURE = Path.home() / "brain" / "feed" / "eval" / "promotion_fixture.db"
 MANIFEST = _REPO / "scripts" / "promotion_splits.json"
 
 ALGORITHM = "sha1(group_key) % 10: 0-7 train, 8 dev, 9 holdout; group_key = source:thread_id, else item:id"

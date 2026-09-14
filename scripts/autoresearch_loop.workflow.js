@@ -301,7 +301,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < DRY_LIMIT; round++) {
     phase('Critic')
     await agent(
       `${PROGRAM}\nCompleteness critic. Re-read scripts/autoresearch_results.tsv and the diagnostic ` +
-        `signals: replay the correction-labeled gold queries against ~/brain/autoresearch_fixture.db and ` +
+        `signals: replay the correction-labeled gold queries against ~/brain/feed/eval/autoresearch_fixture.db and ` +
         `look for ranking failure modes NOT yet in the ledger Backlog. Check every candidate against ` +
         `docs/experiments/wiki/patterns.md and skip anything a pattern marks dead. ${CROSS_WIKI} Append 2-4 concrete, ` +
         `in-scope (ranking-only, yaams/retrieve/* excl. parse.py) untried ideas to the Backlog section of ` +

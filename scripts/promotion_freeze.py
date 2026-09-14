@@ -15,7 +15,7 @@ Usage:
     .venv/bin/python scripts/promotion_freeze.py --report     # print baseline report from manifest
     .venv/bin/python scripts/promotion_freeze.py --worksheet  # export unlabeled abbreviation worksheet
 
-The fixture and the worksheet contain private data and live under ~/brain,
+The fixture and the worksheet contain private data and live under ~/brain/feed/eval,
 outside git. The manifest contains only counts, hashes and identifiers.
 """
 from __future__ import annotations
@@ -41,9 +41,9 @@ from yaams.config import get_db_path, load_config  # noqa: E402
 from yaams.db import open_db  # noqa: E402
 from yaams.schema import SCHEMA_VERSION  # noqa: E402
 
-FIXTURE = Path.home() / "brain" / "promotion_fixture.db"
+FIXTURE = Path.home() / "brain" / "feed" / "eval" / "promotion_fixture.db"
 MANIFEST = _REPO / "scripts" / "promotion_scenario.json"
-WORKSHEET = Path.home() / "brain" / "promotion_abbrev_worksheet.csv"
+WORKSHEET = Path.home() / "brain" / "feed" / "eval" / "promotion_abbrev_worksheet.csv"
 LEDGER_REPO = Path.home() / "code" / "cognitive-ledger"
 
 _SECRET_KEY = re.compile(r"token|secret|password|passphrase|credential|api_key", re.I)
@@ -169,7 +169,7 @@ def _manifest_stats(conn: sqlite3.Connection, cfg: dict) -> dict:
 def freeze() -> int:
   cfg = load_config()
   live = get_db_path(cfg)
-  FIXTURE.parent.mkdir(exist_ok=True)
+  FIXTURE.parent.mkdir(parents=True, exist_ok=True)
   src = sqlite3.connect(f"file:{live}?mode=ro", uri=True)
   dst = sqlite3.connect(FIXTURE)
   try:

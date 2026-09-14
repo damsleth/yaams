@@ -4,6 +4,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from dataclasses import replace
 
 from yaams.consolidate import build_consolidations
 from yaams.ingest.base import Item, hash_id
@@ -847,3 +848,35 @@ def test_session_straddling_the_window_edge_is_still_found():
     assert any(r.kind == "consolidation" for r in results), (
       f"session straddling midnight vanished from the day-{day} window"
     )
+
+
+def test_recency_decay_widens_fetch_so_fresh_items_enter_the_pool():
+  # A frequent term with hundreds of hits: FTS rank ignores time, so with a
+  # small per_index_k the freshest item never enters the pool and decay has
+  # nothing to promote. With decay on, the pool widens and it does.
+  conn = _open_db()
+  now = datetime.now(UTC)
+  old = now - timedelta(days=400)
+  items = [
+    _make_item(
+      thread_id=f"t-{i}",
+      content=f"gustav said thing number {i}",
+      ts=old + timedelta(minutes=i),
+      msg_id=f"m-{i}",
+    )
+    for i in range(50)
+  ]
+  fresh = _make_item(
+    thread_id="t-fresh", content="gustav said a fresh thing", ts=now - timedelta(days=1), msg_id="m-fresh"
+  )
+  items.append(fresh)
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  plain = HybridQueryConfig(top_k=10, per_index_k=15, include_consolidations=False)
+  plain_ids = [r.id for r in query(conn, "gustav", config=plain)]
+  decayed = replace(plain, recency_decay_tau_days=60, recency_decay_floor=0.2)
+  decayed_ids = [r.id for r in query(conn, "gustav", config=decayed)]
+  # widened pool (15*4 >= 51) admits the fresh item; decay then puts it first
+  assert decayed_ids and decayed_ids[0] == fresh.id
+  # and without the widening it would not even have been a candidate
+  assert fresh.id not in plain_ids

@@ -34,6 +34,11 @@ ENTITY_FILTER_FETCH_MULTIPLIER = 4
 # [since, until], so without a wider fetch a windowed query returns few or no
 # vector hits and silently degrades to FTS-only.
 DATE_FILTER_FETCH_MULTIPLIER = 4
+# Recency decay can only reorder what the per-index cut already admitted; FTS
+# and vector rank ignore time, so for a frequent term (a person's name with
+# hundreds of hits) the fresh items never enter the pool. Widen it when decay
+# is on so decay has something recent to promote.
+RECENCY_DECAY_FETCH_MULTIPLIER = 4
 # Per-field bm25 weights (FTS5 bm25() takes one weight per column, in
 # table-declaration order; UNINDEXED columns get 0).
 FTS_ITEM_WEIGHTS = (0.0, 1.0, 2.0, 1.0)  # item_id, content, subject, sender
@@ -199,6 +204,8 @@ def query(
     fetch_k = max(fetch_k, cfg.per_index_k * ENTITY_FILTER_FETCH_MULTIPLIER)
   if cfg.since is not None or cfg.until is not None:
     fetch_k = max(fetch_k, cfg.per_index_k * DATE_FILTER_FETCH_MULTIPLIER)
+  if cfg.recency_decay_tau_days > 0 and cfg.sort == "relevance":
+    fetch_k = max(fetch_k, cfg.per_index_k * RECENCY_DECAY_FETCH_MULTIPLIER)
   fetch_cfg = replace(cfg, per_index_k=fetch_k) if fetch_k != cfg.per_index_k else cfg
 
   item_allow: set[str] | None = None

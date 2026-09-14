@@ -21,6 +21,11 @@ surface; pin to a specific version if you need stability.
   `tau_days: 60, floor: 0.2`, `yaams query gustav` goes from 0 to 4 items from
   the last 60 days in its top 10. A floor near 0.9 caps demotion at 10% and
   reorders nothing.
+- Recency decay widens the per-index candidate pool (`RECENCY_DECAY_FETCH_MULTIPLIER`,
+  4x, relevance sort only). FTS and vector rank ignore time, so for a frequent
+  term the fresh items never made the cut and decay had nothing to promote.
+  `yaams query gustav` top 10 goes from 4 to 8 items from the last 60 days;
+  gold-set dev split unchanged (decay is off there).
 
 - `yaams query --repo NAME` (repeatable, `.` for the repo of the current
   directory) filters on `raw_metadata.repo`. This is what makes the

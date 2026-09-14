@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from dataclasses import replace
 
 from yaams.consolidate import build_consolidations
 from yaams.ingest.base import Item, hash_id

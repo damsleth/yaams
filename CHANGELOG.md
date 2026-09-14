@@ -10,6 +10,16 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`agent_memory` task-group ids are no longer positional.** Codex's
+  `MEMORY.md` groups were keyed `codex/MEMORY.md#{index}`, but codex *prepends*
+  new task groups, so one insertion shifted every group below it and re-ingested
+  the whole file as new items — invisibly, because the ids differed. They are
+  now keyed on the group's own title plus a digest of its body, so an unchanged
+  group hashes to the id it already has and is skipped, and an edited one
+  becomes a new item, which is the append-only behaviour the raw store wants.
+
 ### Added
 
 - Opt-in recency decay: `retrieve.recency_decay: {tau_days, floor}` multiplies

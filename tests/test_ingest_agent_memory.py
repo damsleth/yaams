@@ -163,3 +163,28 @@ def test_timestamps_are_utc_aware(tmp_path):
   assert item.timestamp.tzinfo is not None
   assert item.timestamp.utcoffset().total_seconds() == 0
   assert item.timestamp.hour == 12, "14:11+02:00 is 12:11 UTC"
+
+
+def test_task_group_ids_survive_an_insertion_at_the_top(tmp_path):
+  """Codex prepends new task groups. An index-keyed id would shift every group
+  below the insertion and re-ingest the whole file as new items -- invisibly,
+  because the ids differ."""
+  codex = tmp_path / "codex"
+  codex.mkdir()
+  older = (
+    "# Task Group: alpha\napplies_to: cwd=/tmp\n\n"
+    "A body long enough to clear the minimum-content floor for ingestion.\n"
+    "# Task Group: beta\napplies_to: cwd=/tmp\n\n"
+    "Another body long enough to clear the minimum-content floor here.\n"
+  )
+  (codex / "MEMORY.md").write_text(older)
+  before = {i.source_id for i in AgentMemoryAdapter(codex_memories=codex).extract(EPOCH)}
+
+  (codex / "MEMORY.md").write_text(
+    "# Task Group: brand new\napplies_to: cwd=/tmp\n\n"
+    "A freshly prepended group, also long enough to clear the floor.\n" + older
+  )
+  after = {i.source_id for i in AgentMemoryAdapter(codex_memories=codex).extract(EPOCH)}
+
+  assert before < after, "the two existing groups must keep their ids"
+  assert len(after - before) == 1, "only the new group is new"

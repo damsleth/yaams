@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Iterator
 
@@ -161,13 +162,13 @@ class AgentMemoryAdapter:
       if mtime < cutoff:
         continue
       raw = md.read_text(encoding="utf-8", errors="replace")
-      for idx, (title, chunk) in enumerate(split_task_groups(raw)):
+      for title, chunk in split_task_groups(raw):
         body = collapse_blank_lines(chunk)
         if len(body) < MIN_CONTENT_CHARS:
           self.skipped_empty += 1
           continue
         cwd = first_cwd(chunk)
-        source_id = f"codex/{name}#{idx:03d}"
+        source_id = f"codex/{name}#{task_group_key(title, body)}"
         yield Item(
           id=hash_id("agent_memory", source_id),
           source="agent_memory",
@@ -219,6 +220,20 @@ def first_cwd(text: str) -> Path | None:
   """Codex records the working directory inline, as `cwd=<path>`."""
   m = _CWD_RE.search(text)
   return Path(m.group(1)) if m else None
+
+
+def task_group_key(title: str, body: str) -> str:
+  """Identity for one task group, independent of its position in the file.
+
+  Codex prepends new task groups, so an index-based id shifts every group below
+  the insertion and re-ingests the whole file as new items -- invisibly, since
+  the ids differ. Keying on the group's own title plus a digest of its body
+  makes an unchanged group hash to the id it already has (so re-ingest skips
+  it) and an edited one a genuinely new item, which is the append-only
+  behaviour the raw store wants.
+  """
+  slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "untitled"
+  return f"{slug}-{sha256(body.encode('utf-8')).hexdigest()[:8]}"
 
 
 def rollout_header(text: str) -> dict[str, str]:

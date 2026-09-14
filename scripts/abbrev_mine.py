@@ -6,14 +6,14 @@ Two read-only stages, no ledger writes, no entity mutation:
   mine   Scan non-holdout fixture items for explicit abbreviation patterns
          (`Lang form (KORT)`, `KORT (lang form)`, `KORT = lang`, «står for»,
          «forkortes», «kalles», "stands for", aka) and write normalized
-         candidate relations to ~/brain/promotion_abbrev_mined.jsonl.
+         candidate relations to ~/brain/feed/eval/promotion_abbrev_mined.jsonl.
          Holdout items are never read: their evidence is reserved for the
          final eval (promotion_splits.py defines the splits).
 
   label  Join the unlabeled worksheet against mined evidence plus cheap
          shape heuristics (phone/email -> identifier, initials -> initialism,
          contraction -> abbreviation, person fallback -> nickname) and write
-         a pre-labeled gold-set draft to ~/brain/promotion_abbrev_gold.csv.
+         a pre-labeled gold-set draft to ~/brain/feed/eval/promotion_abbrev_gold.csv.
          Every heuristic label carries label_source + needs_review so the
          human pass reviews instead of starting from nothing.
 
@@ -45,10 +45,10 @@ from promotion_splits import split_of  # noqa: E402
 
 from yaams.db import open_db  # noqa: E402
 
-FIXTURE = Path.home() / "brain" / "promotion_fixture.db"
-WORKSHEET = Path.home() / "brain" / "promotion_abbrev_worksheet.csv"
-MINED = Path.home() / "brain" / "promotion_abbrev_mined.jsonl"
-GOLD = Path.home() / "brain" / "promotion_abbrev_gold.csv"
+FIXTURE = Path.home() / "brain" / "feed" / "eval" / "promotion_fixture.db"
+WORKSHEET = Path.home() / "brain" / "feed" / "eval" / "promotion_abbrev_worksheet.csv"
+MINED = Path.home() / "brain" / "feed" / "eval" / "promotion_abbrev_mined.jsonl"
+GOLD = Path.home() / "brain" / "feed" / "eval" / "promotion_abbrev_gold.csv"
 GOLD_MANIFEST = _REPO / "scripts" / "abbrev_gold_manifest.json"
 
 RELATION_TYPES = (

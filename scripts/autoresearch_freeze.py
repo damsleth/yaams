@@ -29,7 +29,7 @@ from yaams.db import open_db  # noqa: E402
 # Canonical frozen fixture lives OUTSIDE the repo so git worktrees (used by the
 # parallel driver) all resolve the same absolute path with no env var — and it's
 # already the harness's first-choice default DB.
-FIXTURE = Path.home() / "brain" / "autoresearch_fixture.db"
+FIXTURE = Path.home() / "brain" / "feed" / "eval" / "autoresearch_fixture.db"
 MANIFEST = _REPO / "scripts" / "autoresearch_scenario.json"
 
 
@@ -69,7 +69,7 @@ def main() -> int:
               f"manifest={manifest['gold_hash'][:12]} gold={n} corr={nc}")
         return 0 if ok else 2
 
-    FIXTURE.parent.mkdir(exist_ok=True)
+    FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     live = str(get_db_path(cfg))
     shutil.copy2(live, FIXTURE)
     with open_db(str(FIXTURE), readonly=True) as conn:

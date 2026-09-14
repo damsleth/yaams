@@ -26,7 +26,7 @@ or, by provenance:
 
 Usage: .venv/bin/python scripts/llm_judge_unjudged.py [--apply] [--limit N]
        .venv/bin/python scripts/llm_judge_unjudged.py --rejudge-misses [--apply]
-       .venv/bin/python scripts/llm_judge_unjudged.py --rejudge-misses --db ~/brain/autoresearch_fixture.db  # safe dry preview
+       .venv/bin/python scripts/llm_judge_unjudged.py --rejudge-misses --db ~/brain/feed/eval/autoresearch_fixture.db  # safe dry preview
 """
 from __future__ import annotations
 

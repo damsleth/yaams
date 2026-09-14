@@ -12,6 +12,18 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- `yaams query --repo NAME` (repeatable, `.` for the repo of the current
+  directory) filters on `raw_metadata.repo`. This is what makes the
+  `agent_memory` source usable: repo-scoped knowledge is only true somewhere,
+  and before this a query for "how do I run the test suite in this repo"
+  returned another project's git conventions.
+
+  `.` resolves via `git rev-parse --git-common-dir`, so it names the repo
+  rather than a worktree directory. Only sources that record a repo can match
+  (`agent_memory`, `github`), so the flag narrows the corpus to those as a side
+  effect. Consolidations have no `raw_metadata` and are dropped when the filter
+  is set, rather than surfacing as unattributed summaries.
+
 - `agent_memory` ingest source — the durable memory coding agents keep about
   your repos, which until now was the one part of the agent workflow yaams
   could not see. Claude Code writes one fact per file under

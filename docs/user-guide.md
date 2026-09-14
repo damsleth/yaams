@@ -277,6 +277,23 @@ yaams query --lang en "english content only"
   Language is detected at ingest time; run `yaams backfill-lang` once to
   populate existing items.
 
+#### Narrowing to one repository
+
+```bash
+yaams query --repo .            "how do I run the tests here"   # repo of $PWD
+yaams query --repo yaams --repo owa-tools "auth token cache"
+```
+
+`--repo` matches `raw_metadata.repo`, which only some sources record —
+`agent_memory` and `github` today — so it narrows the corpus to those as a side
+effect. `.` resolves through `git rev-parse --git-common-dir`, so it names the
+repo and not a worktree.
+
+Repo-scoped facts are only true somewhere: "bare `pytest` exits 127" is a fact
+about one repo, and recalling it against another is worse than recalling
+nothing. Consolidations carry no `raw_metadata`, so a repo filter drops them
+rather than returning unattributed summaries.
+
 ### Sorting
 
 ```bash

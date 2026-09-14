@@ -53,6 +53,11 @@ class HybridQueryConfig:
   include_consolidations: bool = True
   prefer_consolidations: bool = True
   source_filter: list[str] | None = None
+  # Repository names, matched against raw_metadata.repo. Only some sources
+  # attribute a repo (agent_memory, github); an item without one never
+  # matches. Consolidations carry no raw_metadata at all, so a repo filter
+  # drops them rather than silently returning unattributed summaries.
+  repo_filter: list[str] | None = None
   since: datetime | None = None
   until: datetime | None = None
   sender_filter: list[str] | None = None
@@ -222,7 +227,7 @@ def query(
       fts_items = _fts_search_items(conn, text, fetch_cfg)
       if embedding is not None:
         vec_items = _vec_search_items(conn, embedding, fetch_cfg)
-  if cfg.include_consolidations:
+  if cfg.include_consolidations and not cfg.repo_filter:
     fts_cons = _fts_search_consolidations(conn, text, fetch_cfg)
     if embedding is not None:
       vec_cons = _vec_search_consolidations(conn, embedding, fetch_cfg)
@@ -483,6 +488,8 @@ def _fts_search_items(
     JOIN items ON items.id = {fts_table}.item_id
     WHERE {fts_table} MATCH ?
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
+      AND (? = '' OR json_extract(items.raw_metadata, '$.repo')
+                     IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
@@ -527,7 +534,8 @@ def _fts_search_consolidations(
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg) + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
+    _filter_params(match, cfg, repo=False)
+    + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
   ).fetchall()
   return [
     ("consolidation", row["id"], rank, float(row["score"]))
@@ -550,6 +558,8 @@ def _vec_search_items(
     WHERE {vec_table}.embedding MATCH ?
       AND k = ?
       AND (? = '' OR items.source IN (SELECT value FROM json_each(?)))
+      AND (? = '' OR json_extract(items.raw_metadata, '$.repo')
+                     IN (SELECT value FROM json_each(?)))
       AND (? IS NULL OR items.timestamp >= ?)
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
@@ -592,7 +602,9 @@ def _vec_search_consolidations(
             WHERE i.id = j.value AND i.lang = ?))
     ORDER BY distance
     """,
-    (blob, cfg.per_index_k) + _vec_filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter),
+    (blob, cfg.per_index_k)
+    + _vec_filter_params(cfg, repo=False)
+    + (cfg.lang_filter, cfg.lang_filter),
   ).fetchall()
   return [
     ("consolidation", row["id"], rank, float(row["distance"]))
@@ -641,34 +653,36 @@ def _fts_query(text: str, synonyms: dict[str, list[str]] | None = None) -> str:
   return " OR ".join(f'"{t}"*' if len(t) >= 5 else f'"{t}"' for t in tokens)
 
 
-def _filter_params(match: str, cfg: HybridQueryConfig):
-  source_json = json.dumps(cfg.source_filter or [])
-  source_flag = "" if not cfg.source_filter else "filter"
-  since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
-  until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
+def _repo_params(cfg: HybridQueryConfig) -> tuple[str, str]:
+  """Flag + JSON array for the repo predicate, in the same shape as the source
+  one: an empty flag means "no filter", so the predicate short-circuits."""
   return (
-    match,
-    source_flag,
-    source_json,
-    since_iso,
-    since_iso,
-    until_iso,
-    until_iso,
+    "" if not cfg.repo_filter else "filter",
+    json.dumps(cfg.repo_filter or []),
   )
 
 
-def _vec_filter_params(cfg: HybridQueryConfig):
+def _filter_params(match: str, cfg: HybridQueryConfig, repo: bool = True):
   source_json = json.dumps(cfg.source_filter or [])
   source_flag = "" if not cfg.source_filter else "filter"
   since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
   until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
   return (
-    source_flag,
-    source_json,
-    since_iso,
-    since_iso,
-    until_iso,
-    until_iso,
+    (match, source_flag, source_json)
+    + (_repo_params(cfg) if repo else ())
+    + (since_iso, since_iso, until_iso, until_iso)
+  )
+
+
+def _vec_filter_params(cfg: HybridQueryConfig, repo: bool = True):
+  source_json = json.dumps(cfg.source_filter or [])
+  source_flag = "" if not cfg.source_filter else "filter"
+  since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
+  until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
+  return (
+    (source_flag, source_json)
+    + (_repo_params(cfg) if repo else ())
+    + (since_iso, since_iso, until_iso, until_iso)
   )
 
 
@@ -823,6 +837,8 @@ def _browse_window(
       """
       SELECT id FROM items
       WHERE (? = '' OR source IN (SELECT value FROM json_each(?)))
+        AND (? = '' OR json_extract(raw_metadata, '$.repo')
+                       IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR timestamp >= ?)
         AND (? IS NULL OR timestamp <= ?)
         AND (? IS NULL OR lang = ?)
@@ -837,7 +853,7 @@ def _browse_window(
       r = _hydrate_item(conn, row["id"], empty, cfg)
       if r is not None:
         results.append(r)
-  if cfg.include_consolidations:
+  if cfg.include_consolidations and not cfg.repo_filter:
     rows = conn.execute(
       """
       SELECT id FROM consolidations
@@ -848,7 +864,7 @@ def _browse_window(
       ORDER BY start_timestamp DESC
       LIMIT ?
       """,
-      _window_params(cfg) + (cap,),
+      _window_params(cfg, repo=False) + (cap,),
     ).fetchall()
     for row in rows:
       r = _hydrate_consolidation(conn, row["id"], empty, cfg)
@@ -857,12 +873,16 @@ def _browse_window(
   return results
 
 
-def _window_params(cfg: HybridQueryConfig):
+def _window_params(cfg: HybridQueryConfig, repo: bool = True):
   source_json = json.dumps(cfg.source_filter or [])
   source_flag = "" if not cfg.source_filter else "filter"
   since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
   until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
-  return (source_flag, source_json, since_iso, since_iso, until_iso, until_iso)
+  return (
+    (source_flag, source_json)
+    + (_repo_params(cfg) if repo else ())
+    + (since_iso, since_iso, until_iso, until_iso)
+  )
 
 
 def _hydrate_item(

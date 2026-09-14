@@ -12,6 +12,16 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Opt-in recency decay: `retrieve.recency_decay: {tau_days, floor}` multiplies
+  a raw Tier 1 result's relevance score by `max(floor, exp(-age_days/tau_days))`.
+  `tier2_ledger` rows are exempt and timestamp-sorted queries are untouched.
+  Default is off, and deliberately so - blanket decay (`recency-f0.9`) and a
+  raw-tier-scoped retry both lost on the eval gold set, whose answers are mostly
+  legitimately old. It exists for corpora where freshness matters: with
+  `tau_days: 60, floor: 0.2`, `yaams query gustav` goes from 0 to 4 items from
+  the last 60 days in its top 10. A floor near 0.9 caps demotion at 10% and
+  reorders nothing.
+
 - `yaams query --repo NAME` (repeatable, `.` for the repo of the current
   directory) filters on `raw_metadata.repo`. This is what makes the
   `agent_memory` source usable: repo-scoped knowledge is only true somewhere,

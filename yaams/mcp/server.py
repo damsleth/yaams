@@ -111,6 +111,7 @@ def _log_mcp_query(
 
 def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source: str) -> list:
   """Shared retrieval path: embed -> hybrid query -> attach trust verdicts."""
+  from yaams.cli.query import apply_recency_decay_config
   from yaams.enrich import Embedder
 
   db_path = get_db_path(cfg)
@@ -120,6 +121,7 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   qcfg = HybridQueryConfig(
     top_k=top_k, source_filter=source_filter, feedback_boost=_feedback_boost(cfg)
   )
+  apply_recency_decay_config(qcfg, cfg)
   conn = open_db(db_path, readonly=True)
   try:
     results = run_query(conn, query_text, embedding=embedding, config=qcfg)

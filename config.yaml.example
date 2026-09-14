@@ -203,3 +203,14 @@ retrieve:
   # until query logs accumulate. Enable ONLY after a week+ of logged traffic and
   # a passing frozen-fixture eval — see .plans/retrieval-flywheel.md.
   feedback_boost: false
+  # Recency decay (OPT-IN, off unless tau_days is set). Multiplies a raw Tier 1
+  # item's relevance score by max(floor, exp(-age_days / tau_days)); tier2 rows
+  # and consolidations are exempt and only relevance-sorted queries are touched.
+  # tau_days 90 ~= a 62-day half-life; floor caps how far anything can be
+  # demoted, so a floor near 0.9 is usually too weak to reorder anything.
+  # WARNING: this LOSES on the eval gold set — it was killed twice
+  # (.plans/recency-decay-v2.md), because most gold answers are legitimately
+  # old. Turn it on only if your own queries are freshness-sensitive.
+  # recency_decay:
+  #   tau_days: 60
+  #   floor: 0.2

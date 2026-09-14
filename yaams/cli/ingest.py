@@ -36,6 +36,7 @@ from yaams.conventions import (
 from yaams.db import open_db
 from yaams.enrich.entities import detect_lang
 from yaams.ingest import Adapter, Item
+from yaams.ingest.agent_memory import AgentMemoryAdapter
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.chats import ChatsAdapter
 from yaams.ingest.email_mbox import EmailAdapter
@@ -44,7 +45,6 @@ from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
 from yaams.ingest.ledger_notes import LedgerNotesAdapter
 from yaams.ingest.m365_mail import M365MailAdapter
-from yaams.ingest.agent_memory import AgentMemoryAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.outlook_app import OutlookCalendarAdapter, OutlookMailAdapter
 from yaams.ingest.signal import SignalAdapter

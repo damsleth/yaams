@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+from pathlib import Path
 
 import click
 
@@ -106,10 +108,44 @@ def _resolve_source_filter(
   return None
 
 
+def _resolve_repo_filter(repo_filter: tuple[str, ...]) -> list[str]:
+  """Expand `.` to the repo containing the current directory.
+
+  Uses --git-common-dir, not --show-toplevel: inside a worktree the latter
+  names the worktree directory, which would miss every item attributed to the
+  repo itself.
+  """
+  out: list[str] = []
+  for name in repo_filter:
+    if name != ".":
+      out.append(name)
+      continue
+    try:
+      common = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        capture_output=True, text=True, timeout=5, check=True,
+      ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+      raise click.ClickException("--repo . used outside a git repository")
+    out.append(Path(common).resolve().parent.name)
+  return out
+
+
 @cli.command("query")
 @click.argument("text", nargs=-1, required=True)
 @config_option
 @click.option("--top-k", default=10, show_default=True, type=int)
+@click.option(
+  "--repo",
+  "repo_filter",
+  multiple=True,
+  help=(
+    "Filter to items attributed to a repository; repeat for multiple. `.` "
+    "means the repo containing the current directory. Only sources that "
+    "record a repo can match (agent_memory, github), so this narrows the "
+    "corpus to those, and drops consolidations, which carry no attribution."
+  ),
+)
 @click.option(
   "--source",
   "source_filter",
@@ -240,6 +276,7 @@ def query_cmd(
   config_path: str,
   top_k: int,
   source_filter: tuple[str, ...],
+  repo_filter: tuple[str, ...],
   tier: str | None,
   since: str | None,
   until: str | None,
@@ -276,6 +313,7 @@ def query_cmd(
   # envelope on stdout under --json, instead of a traceback. Plan 06.
   with JsonFailureGuard("query", as_json=(output_format == "json")):
     resolved_sources = _resolve_source_filter(source_filter, tier)
+    resolved_repos = _resolve_repo_filter(repo_filter)
     # `--tier raw` means "exclude tier2_ledger". We translate by mutating
     # the resolved list later if route_parsed didn't set it.
     tier_raw_exclude = (tier == "raw" and not source_filter)
@@ -322,6 +360,7 @@ def query_cmd(
       base_cfg = HybridQueryConfig(
         top_k=top_k,
         source_filter=list(resolved_sources) if resolved_sources else None,
+        repo_filter=list(resolved_repos) if resolved_repos else None,
         since=parse_iso_datetime(since) if since else None,
         until=parse_iso_datetime(until) if until else None,
         sort=sort_map[sort] if sort else "relevance",

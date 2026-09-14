@@ -21,6 +21,7 @@ def _make_item(
   msg_id: str = "1",
   recipients: list[str] | None = None,
   timestamp_inferred: bool = False,
+  raw_metadata: dict | None = None,
 ) -> Item:
   return Item(
     id=hash_id(source, f"{thread_id}:{msg_id}"),
@@ -33,6 +34,7 @@ def _make_item(
     subject="",
     thread_id=thread_id,
     timestamp_inferred=timestamp_inferred,
+    raw_metadata=raw_metadata or {},
   )
 
 
@@ -115,6 +117,29 @@ def test_query_filters_by_source():
   results = query(conn, "kim", config=cfg)
   assert all(r.source == "teams_work" for r in results)
   assert len(results) >= 1
+
+
+def test_query_filters_by_repo():
+  conn = _open_db()
+  items = [
+    _make_item(source="agent_memory", content="kim runs pytest in yaams",
+               msg_id="1", raw_metadata={"repo": "yaams"}),
+    _make_item(source="agent_memory", content="kim runs pytest in owatools",
+               msg_id="2", raw_metadata={"repo": "owa-tools"}),
+    # attributed to nothing: a repo filter must not sweep it in
+    _make_item(source="imessage", content="kim runs pytest somewhere", msg_id="3"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+
+  results = query(conn, "pytest", config=HybridQueryConfig(repo_filter=["yaams"]))
+  assert len(results) == 1
+  assert "yaams" in results[0].content
+
+  both = query(conn, "pytest", config=HybridQueryConfig(repo_filter=["yaams", "owa-tools"]))
+  assert len(both) == 2
+
+  # no filter: the unattributed item is reachable again
+  assert len(query(conn, "pytest", config=HybridQueryConfig())) == 3
 
 
 def test_query_excludes_consolidated_items_by_default():

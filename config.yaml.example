@@ -36,6 +36,16 @@ ingest:
     # Defaults to .obsidian, .git, .smartchats, .smart-env, .claude.
     # skip_dirs: [.obsidian, .git, archive]
 
+  # Durable memory written by coding agents about their repos. Claude Code
+  # stores one fact per file under a cwd-encoded project key; Codex stores
+  # per-session rollout summaries plus a task-grouped MEMORY.md. Both are
+  # attributed back to a repo name, exposed as raw_metadata.repo, so a query
+  # can be narrowed to one repository.
+  agent_memory:
+    enabled: false
+    claude_projects: ~/.claude/projects
+    codex_memories: ~/.codex/memories
+
   # Generic recursive folder ingestion. Reads .txt and .md natively;
   # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
   # Files of unsupported types (or types with the dep missing) are skipped.

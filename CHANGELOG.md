@@ -12,6 +12,31 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- `agent_memory` ingest source — the durable memory coding agents keep about
+  your repos, which until now was the one part of the agent workflow yaams
+  could not see. Claude Code writes one fact per file under
+  `~/.claude/projects/<cwd-key>/memory/`; Codex writes per-session rollout
+  summaries plus a task-grouped `MEMORY.md` under `~/.codex/memories/`. Both
+  land as `agent_memory` items.
+
+  Every item carries `raw_metadata.repo`. That is the point of the adapter:
+  these facts are only true somewhere ("bare `pytest` exits 127 **here**"), and
+  a repo-scoped fact recalled against the wrong repo is worse than no recall.
+  Codex records its own `cwd`, so attribution is a parse; Claude Code encodes
+  it in the project directory name with `/` replaced by `-`, which is lossy
+  (`-Users-me-code-cognitive-ledger` could be `cognitive/ledger` or
+  `cognitive-ledger`), so it is decoded by walking the filesystem and taking
+  the longest segment that exists. Nested repos resolve to the innermost one,
+  and a cwd outside any repo falls back to an encoded path rather than being
+  dropped — except `$HOME` itself, which is never a key.
+
+  Codex's 145 KB `MEMORY.md` is split per `# Task Group:` heading rather than
+  ingested whole: one blob matches every query and cites evidence that is
+  mostly about something else, and each group carries its own `applies_to:
+  cwd=` so splitting makes attribution per-item. `raw_memories.md` is skipped
+  as a thread-ordered duplicate of the rollout summaries, and a Claude project's
+  own `MEMORY.md` is skipped as an index over its siblings.
+
 - `yaams entities rename OLD NEW` and `yaams entities unalias NAME ALIAS...`
   close the two gaps that made a routine dictionary cleanup impossible without
   hand-editing the JSON store: there was no way to change a canonical name,

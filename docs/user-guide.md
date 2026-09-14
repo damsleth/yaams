@@ -193,6 +193,7 @@ derived fields refresh. A `--full` run never moves a watermark backwards.
 | `folders` | generic recursive file walker (`.txt`, `.md`, `.pdf`, `.docx`) |
 | `tier2_ledger` | curated atomic notes from cognitive-ledger |
 | `chats` | agent chats — Claude Code session summaries written by the `SessionEnd` hook (one markdown file per session) |
+| `agent_memory` | durable memory the coding agents keep about your repos — Claude Code's one-fact-per-file store and Codex's rollout summaries and task groups; every item carries `raw_metadata.repo` |
 | `chats_facts` | opt-in tier — atomic facts from chat summaries' `## Insights / Facts` bullets, held in isolated indexes and searched only via `--source chats_facts` (see §11) |
 | `github` | issues and PRs across your repos |
 | `calendar` / `calendar_<profile>` | Outlook calendar via `owa-cal` |

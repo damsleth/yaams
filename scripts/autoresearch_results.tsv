@@ -75,3 +75,4 @@ baseline-post-recency2	hybrid	dev	0.6076	0.6567	0.4931	155.6	0	ok
 lane-anchor	hybrid	dev	0.5933	0.6418	0.4991	164.4	1	fail:regression
 recency-lane-60d	hybrid	dev	0.3373	0.3731	0.3295	201.7	19	fail:regression
 lane-anchor-restore	hybrid	dev	0.599	0.6418	0.4991	164.1	1	fail:regression
+lane-anchor-qts	hybrid	dev	0.599	0.6418	0.4991	163.1	0	ok

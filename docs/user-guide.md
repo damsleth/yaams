@@ -347,7 +347,9 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   Skipped when you pass `--since` or sort by timestamp. Like decay it hurts the
   eval gold set, so it stays opt-in; on real short queries it beat decay on
   "something from the last 60 days in the top-10" with less reshuffling.
-  Start at `days: 60`, and do not run it together with `recency_decay`.
+  Start at `days: 60, weight: 0.5` (weight scales the lane's contribution;
+  1.0 lets a lone recent hit tie an established top result), and do not run
+  it together with `recency_decay`.
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

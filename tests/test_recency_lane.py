@@ -151,3 +151,26 @@ def test_decay_measures_age_from_recency_now_when_pinned():
     recency_decay_tau_days=60, recency_decay_floor=0.2, recency_now=ts + timedelta(days=365)
   )
   assert _apply_recency_decay(1.0, "imessage", ts, later) == 0.2
+
+
+def test_lane_weight_scales_only_the_lanes_contribution():
+  from yaams.retrieve.hybrid import _fuse
+
+  general = [("item", "a", 0, 0.0), ("item", "b", 1, 0.0)]
+  lane = [("item", "b", 0, 0.0)]
+  cfg = HybridQueryConfig()
+  full = _fuse([general, lane], cfg=cfg, weights=[1.0, 1.0])
+  half = _fuse([general, lane], cfg=cfg, weights=[1.0, 0.5])
+  # 'a' is only in the general lane: untouched by the weight
+  assert full[("item", "a")].rrf_score == half[("item", "a")].rrf_score
+  # 'b' gets a lane contribution scaled by the weight
+  base = 1.0 / (cfg.rrf_k + 2)
+  assert abs((full[("item", "b")].rrf_score - base) - 2 * (half[("item", "b")].rrf_score - base)) < 1e-12
+
+
+def test_lane_weight_is_parsed_from_config():
+  from yaams.cli.query import apply_recency_lane_config
+
+  qcfg = HybridQueryConfig()
+  apply_recency_lane_config(qcfg, {"retrieve": {"recency_lane": {"days": 60, "weight": 0.5}}})
+  assert (qcfg.recency_lane_days, qcfg.recency_lane_weight) == (60.0, 0.5)

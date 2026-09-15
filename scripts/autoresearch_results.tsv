@@ -72,3 +72,6 @@ diacritics-2	hybrid	dev	0.6074	0.6567	0.4931	199.5	0	ok
 baseline-recency2-anchor	hybrid	dev	0.6076	0.6567	0.4931	157.5	0	ok
 recency2-raw-t90-f0.9	hybrid	dev	0.5357	0.597	0.3926	156.8	4	fail:regression
 baseline-post-recency2	hybrid	dev	0.6076	0.6567	0.4931	155.6	0	ok
+lane-anchor	hybrid	dev	0.5933	0.6418	0.4991	164.4	1	fail:regression
+recency-lane-60d	hybrid	dev	0.3373	0.3731	0.3295	201.7	19	fail:regression
+lane-anchor-restore	hybrid	dev	0.599	0.6418	0.4991	164.1	1	fail:regression

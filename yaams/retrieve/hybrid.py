@@ -147,6 +147,14 @@ class HybridQueryConfig:
   # Skipped when the caller already scoped time (`since`) or is not sorting by
   # relevance. 0 disables (default); opt in via `retrieve.recency_lane.days`.
   recency_lane_days: float = 0.0
+  # The reference point every time-aware mechanism (decay, lane) measures age
+  # from. None = the corpus's newest item. The eval harness sets it to each
+  # replayed query's own timestamp: a gold query asked on Apr 30 must be scored
+  # as of Apr 30, or every recency mechanism is judged against a `now` the
+  # query never had -- which is what killed decay twice (its gold docs were a
+  # median 27 days old when asked, and 60-140 days old by the time replay
+  # measured them). Live queries leave it None and the two notions coincide.
+  recency_now: datetime | None = None
 
 
 @dataclass
@@ -278,7 +286,7 @@ def query(
 
   lanes: list[list[tuple[str, str, int, float]]] = [fts_items, fts_cons, vec_items, vec_cons]
   if cfg.recency_lane_days > 0 and cfg.sort == "relevance" and cfg.since is None:
-    horizon = _corpus_now(conn) - timedelta(days=cfg.recency_lane_days)
+    horizon = _reference_now(conn, cfg) - timedelta(days=cfg.recency_lane_days)
     lane_cfg = replace(fetch_cfg, since=horizon)
     r_fts_items: list[tuple[str, str, int, float]] = []
     r_fts_cons: list[tuple[str, str, int, float]] = []
@@ -1036,6 +1044,13 @@ def _parse_iso(value: str) -> datetime:
   return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _reference_now(conn: sqlite3.Connection, cfg: HybridQueryConfig) -> datetime:
+  """`cfg.recency_now` when the caller pinned the clock, else the corpus edge."""
+  if cfg.recency_now is not None:
+    return ensure_utc(cfg.recency_now)
+  return _corpus_now(conn)
+
+
 def _corpus_now(conn: sqlite3.Connection) -> datetime:
   """The newest item timestamp, as the reference point for "recent".
 
@@ -1054,12 +1069,15 @@ def _corpus_now(conn: sqlite3.Connection) -> datetime:
 def _apply_recency_decay(
   score: float, source: str, ts: datetime | None, cfg: HybridQueryConfig
 ) -> float:
-  """Decay raw Tier 1 relevance by age. No-op unless the knob is opted into."""
+  """Decay raw Tier 1 relevance by age. No-op unless the knob is opted into.
+
+  Age is measured from `cfg.recency_now` when set (replay pins it to the
+  query's own time), else wall clock -- the live case, where they coincide.
+  """
   if cfg.recency_decay_tau_days <= 0 or cfg.sort != "relevance" or source == cfg.tier2_source:
     return score
-  return score * _recency_factor(
-    ts, datetime.now(timezone.utc), cfg.recency_decay_tau_days, cfg.recency_decay_floor
-  )
+  now = ensure_utc(cfg.recency_now) if cfg.recency_now is not None else datetime.now(timezone.utc)
+  return score * _recency_factor(ts, now, cfg.recency_decay_tau_days, cfg.recency_decay_floor)
 
 
 def _recency_factor(ts: datetime | None, now: datetime, tau_days: float, floor: float) -> float:

@@ -138,7 +138,7 @@ def _load_gold(conn) -> tuple[list[dict], int, int]:
     rows = conn.execute(
         """
         SELECT f.query_id, f.kind, f.result_id,
-               q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query
+               q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.ts
         FROM query_feedback f
         JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
           ON last.mid = f.id
@@ -183,6 +183,11 @@ def _replay_one(
         since=parse_iso_datetime(row["since"]) if row["since"] else None,
         until=parse_iso_datetime(row["until"]) if row["until"] else None,
         synonym_groups=synonym_groups,
+        # Score time-aware mechanisms as of when the query was asked, not as of
+        # replay. Gold docs are a median 27 days old at query time; measured
+        # from the corpus edge or wall clock they are months old, and every
+        # recency experiment before this was judged on that wrong axis.
+        recency_now=parse_iso_datetime(row["ts"]) if row["ts"] else None,
     )
     if parsed is not None:
         qcfg = route(parsed, base, self_identities=self_ids)

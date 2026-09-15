@@ -79,6 +79,21 @@ def apply_recency_decay_config(qcfg, cfg: dict) -> None:
   qcfg.recency_decay_floor = float(raw.get("floor", qcfg.recency_decay_floor))
 
 
+def apply_recency_lane_config(qcfg, cfg: dict) -> None:
+  """Opt-in `retrieve.recency_lane: {days}` from config.
+
+  Default-off like decay, but a different mechanism: a second candidate fetch
+  over the trailing window, fused by RRF. It adds recent matches to the pool
+  rather than demoting old ones, which is why it can help the common-keyword
+  case decay never reached (recent hits that were never candidates at all).
+  """
+  retrieve = cfg.get("retrieve")
+  raw = retrieve.get("recency_lane") if isinstance(retrieve, dict) else None
+  if not isinstance(raw, dict) or not raw.get("days"):
+    return
+  qcfg.recency_lane_days = float(raw["days"])
+
+
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
   """Parse --meta KEY=VALUE flags into a dict. Pairs without '=' or with an
   empty key are skipped (silently tolerant; the resolver AND-s what remains)."""
@@ -406,6 +421,7 @@ def query_cmd(
       if (cfg.get("retrieve") or {}).get("feedback_boost"):
         qcfg.feedback_boost = True
       apply_recency_decay_config(qcfg, cfg)
+      apply_recency_lane_config(qcfg, cfg)
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

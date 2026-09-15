@@ -108,6 +108,7 @@ _NUMERIC_KNOBS: tuple[tuple[str, type | tuple[type, ...], bool], ...] = (
   ("ingest.calendar.chunk_days", int, True),
   ("retrieve.rerank.k", int, True),
   ("retrieve.recency_decay.tau_days", (int, float), True),
+  ("retrieve.recency_lane.days", (int, float), True),
 )
 
 

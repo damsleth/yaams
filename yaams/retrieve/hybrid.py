@@ -15,7 +15,7 @@ import math
 import sqlite3
 from array import array
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Sequence, cast
 
 from yaams.retrieve.synonyms import expand_fts_tokens, load_synonym_groups
@@ -135,6 +135,18 @@ class HybridQueryConfig:
   # (`retrieve.recency_decay` in config) for freshness-sensitive corpora only.
   recency_decay_tau_days: float = 0.0
   recency_decay_floor: float = 0.9
+  # Recency LANE: a second candidate fetch restricted to the trailing N days,
+  # fused by RRF alongside the general lanes. Unlike decay it never demotes:
+  # old items keep their general-lane rank, recent matches are guaranteed a
+  # seat in the pool and get a second RRF contribution if they also rank
+  # generally. This targets the failure decay could not touch -- a common
+  # keyword ("vakt", a colleague's name) where recent matches never enter the
+  # bm25 top-fetch at all because years of the same word outrank them.
+  # `now` is the corpus max timestamp, not wall clock, so a frozen eval fixture
+  # exercises the lane on its own last N days instead of an empty window.
+  # Skipped when the caller already scoped time (`since`) or is not sorting by
+  # relevance. 0 disables (default); opt in via `retrieve.recency_lane.days`.
+  recency_lane_days: float = 0.0
 
 
 @dataclass
@@ -264,10 +276,42 @@ def query(
     fts_cons = [t for t in fts_cons if t[1] in part_cons_allow]
     vec_cons = [t for t in vec_cons if t[1] in part_cons_allow]
 
-  fused = _fuse(
-    [fts_items, fts_cons, vec_items, vec_cons],
-    cfg=cfg,
-  )
+  lanes: list[list[tuple[str, str, int, float]]] = [fts_items, fts_cons, vec_items, vec_cons]
+  if cfg.recency_lane_days > 0 and cfg.sort == "relevance" and cfg.since is None:
+    horizon = _corpus_now(conn) - timedelta(days=cfg.recency_lane_days)
+    lane_cfg = replace(fetch_cfg, since=horizon)
+    r_fts_items: list[tuple[str, str, int, float]] = []
+    r_fts_cons: list[tuple[str, str, int, float]] = []
+    r_vec_items: list[tuple[str, str, int, float]] = []
+    r_vec_cons: list[tuple[str, str, int, float]] = []
+    if cfg.include_items:
+      if fact_tier:
+        r_fts_items = _fts_search_items(conn, text, lane_cfg, fts_table=FACTS_FTS_TABLE)
+        if embedding is not None and _table_exists(conn, FACTS_VEC_TABLE):
+          r_vec_items = _vec_search_items(conn, embedding, lane_cfg, vec_table=FACTS_VEC_TABLE)
+      else:
+        r_fts_items = _fts_search_items(conn, text, lane_cfg)
+        if embedding is not None:
+          r_vec_items = _vec_search_items(conn, embedding, lane_cfg)
+    if cfg.include_consolidations and not cfg.repo_filter:
+      r_fts_cons = _fts_search_consolidations(conn, text, lane_cfg)
+      if embedding is not None:
+        r_vec_cons = _vec_search_consolidations(conn, embedding, lane_cfg)
+    if item_allow is not None:
+      r_fts_items = [t for t in r_fts_items if t[1] in item_allow]
+      r_vec_items = [t for t in r_vec_items if t[1] in item_allow]
+    if cons_allow is not None:
+      r_fts_cons = [t for t in r_fts_cons if t[1] in cons_allow]
+      r_vec_cons = [t for t in r_vec_cons if t[1] in cons_allow]
+    if part_item_allow is not None:
+      r_fts_items = [t for t in r_fts_items if t[1] in part_item_allow]
+      r_vec_items = [t for t in r_vec_items if t[1] in part_item_allow]
+    if part_cons_allow is not None:
+      r_fts_cons = [t for t in r_fts_cons if t[1] in part_cons_allow]
+      r_vec_cons = [t for t in r_vec_cons if t[1] in part_cons_allow]
+    lanes += [r_fts_items, r_fts_cons, r_vec_items, r_vec_cons]
+
+  fused = _fuse(lanes, cfg=cfg)
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
   if (
@@ -990,6 +1034,21 @@ def _hydrate_consolidation(
 
 def _parse_iso(value: str) -> datetime:
   return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _corpus_now(conn: sqlite3.Connection) -> datetime:
+  """The newest item timestamp, as the reference point for "recent".
+
+  Wall-clock `now` is wrong for a frozen corpus: the eval fixture's last item is
+  months old, so a trailing window measured from today would be empty and the
+  recency lane would silently never run under eval. Measured from the corpus
+  edge it means "recent relative to what this store holds", which is also the
+  right notion for a live db (where the two coincide).
+  """
+  row = conn.execute("SELECT MAX(timestamp) FROM items").fetchone()
+  if not row or not row[0]:
+    return datetime.now(timezone.utc)
+  return ensure_utc(_parse_iso(row[0]))
 
 
 def _apply_recency_decay(

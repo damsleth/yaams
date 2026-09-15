@@ -225,5 +225,8 @@ retrieve:
   # owner's own short queries it beat decay on "something from the last 60 days
   # in the top-10" (76/79 vs 68/79) with less reshuffling; prefer it over decay
   # if you want either.
+  # weight scales the lane's RRF contribution; 0.5 halves how far a lone
+  # recent hit can climb while still guaranteeing it a seat in the pool.
   # recency_lane:
   #   days: 60
+  #   weight: 0.5

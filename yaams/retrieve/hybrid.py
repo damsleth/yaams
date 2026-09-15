@@ -147,6 +147,12 @@ class HybridQueryConfig:
   # Skipped when the caller already scoped time (`since`) or is not sorting by
   # relevance. 0 disables (default); opt in via `retrieve.recency_lane.days`.
   recency_lane_days: float = 0.0
+  # Scale on the lane's RRF contribution. 1.0 makes the lane's own ordering as
+  # authoritative as the general lanes', so whatever bm25 ranks first *among
+  # recent items* ties a general rank-1 -- and that is rarely the right answer.
+  # Below 1.0 recent matches still enter the pool (the property that matters)
+  # without a lone recent hit overtaking an established rank-1.
+  recency_lane_weight: float = 1.0
   # The reference point every time-aware mechanism (decay, lane) measures age
   # from. None = the corpus's newest item. The eval harness sets it to each
   # replayed query's own timestamp: a gold query asked on Apr 30 must be scored
@@ -285,6 +291,7 @@ def query(
     vec_cons = [t for t in vec_cons if t[1] in part_cons_allow]
 
   lanes: list[list[tuple[str, str, int, float]]] = [fts_items, fts_cons, vec_items, vec_cons]
+  weights: list[float] = [1.0, 1.0, 1.0, 1.0]
   if cfg.recency_lane_days > 0 and cfg.sort == "relevance" and cfg.since is None:
     horizon = _reference_now(conn, cfg) - timedelta(days=cfg.recency_lane_days)
     lane_cfg = replace(fetch_cfg, since=horizon)
@@ -318,8 +325,9 @@ def query(
       r_fts_cons = [t for t in r_fts_cons if t[1] in part_cons_allow]
       r_vec_cons = [t for t in r_vec_cons if t[1] in part_cons_allow]
     lanes += [r_fts_items, r_fts_cons, r_vec_items, r_vec_cons]
+    weights += [cfg.recency_lane_weight] * 4
 
-  fused = _fuse(lanes, cfg=cfg)
+  fused = _fuse(lanes, cfg=cfg, weights=weights)
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
   if (
@@ -776,13 +784,15 @@ _RANK_AGREEMENT_DELTA = 0.05
 def _fuse(
   ranked_lists: Sequence[list[tuple[str, str, int, float]]],
   cfg: HybridQueryConfig,
+  weights: Sequence[float] | None = None,
 ) -> dict[tuple[str, str], ScoreComponents]:
   fused: dict[tuple[str, str], ScoreComponents] = {}
-  for ranking in ranked_lists:
+  for idx, ranking in enumerate(ranked_lists):
+    weight = weights[idx] if weights is not None and idx < len(weights) else 1.0
     for kind, identifier, rank, raw_score in ranking:
       key = (kind, identifier)
       comp = fused.setdefault(key, ScoreComponents())
-      contribution = 1.0 / (cfg.rrf_k + rank + 1)
+      contribution = weight / (cfg.rrf_k + rank + 1)
       if kind == "consolidation" and cfg.prefer_consolidations:
         contribution *= cfg.consolidation_boost
       comp.rrf_score += contribution

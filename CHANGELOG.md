@@ -30,10 +30,23 @@ surface; pin to a specific version if you need stability.
   default-off with decay's warning. On 79 of the owner's own short queries it
   beats decay on "≥1 item from the last 60 days in the top-10" — 76/79 vs
   68/79, against 48/79 with neither — while disturbing the existing top-10 less
-  (46% vs 39% survival). Weight 1.0 over-rotates (6.9 of 10 recent); a
-  pre-registered follow-up scales the lane's RRF contribution.
+  (46% vs 39% survival). `weight` scales the lane's RRF contribution; 1.0
+  over-rotates (6.9 of 10 recent) and 0.5 cuts gold-set regressions from 11
+  to 7 on the corrected time axis. Start at `days: 60, weight: 0.5`.
 
 ### Fixed
+
+- **Time-aware retrieval is scored as of the query's own time in eval.** Every
+  recency experiment measured age from replay time — wall clock for decay, the
+  corpus edge for the lane — against gold queries asked in Apr–Jun. On the
+  fixture, gold documents are a median **27 days** old when their query was
+  asked, and 28 of 67 dev golds sit inside a 60-day window at query time but
+  outside it by the corpus edge. So recency mechanisms were demoting the correct
+  answers and promoting items that postdated the query. `HybridQueryConfig.
+  recency_now` pins the clock; the harness sets it to `query.ts`. This corrects
+  the recorded explanation for both decay kills ("the gold evidence is old" —
+  it isn't); re-scored correctly, decay still fails (18 regressions), the lane
+  falls from 19 to 11.
 
 - **`agent_memory` task-group ids are no longer positional.** Codex's
   `MEMORY.md` groups were keyed `codex/MEMORY.md#{index}`, but codex *prepends*

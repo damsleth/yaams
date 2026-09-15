@@ -92,6 +92,8 @@ def apply_recency_lane_config(qcfg, cfg: dict) -> None:
   if not isinstance(raw, dict) or not raw.get("days"):
     return
   qcfg.recency_lane_days = float(raw["days"])
+  if raw.get("weight") is not None:
+    qcfg.recency_lane_weight = float(raw["weight"])
 
 
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:

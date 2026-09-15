@@ -10,6 +10,29 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+
+- `retrieve.recency_lane: {days}` — an opt-in, default-off alternative to
+  recency decay. A second candidate fetch restricted to the trailing window
+  (measured from the corpus's newest item, not wall clock, so a frozen eval
+  fixture exercises it), fused by RRF alongside the general lanes for items and
+  consolidations. It never demotes: old results keep their general-lane rank,
+  recent matches are guaranteed a seat in the pool. That is the case decay
+  could not reach — with decay off, 9 of 10 conversational keywords returned
+  nothing from the last 60 days, and for `Tarjei` decay on/off were identical
+  because recent items never entered the bm25 top-fetch at all.
+
+  Skipped when the caller sets `since` or sorts by timestamp. Applied in the
+  CLI and MCP server next to the decay knob.
+
+  Measured (`.plans/recency-lane.md`): on the frozen gold set it loses badly
+  (19 regressions, recall@10 0.91 → 0.70), worse than decay, so it ships
+  default-off with decay's warning. On 79 of the owner's own short queries it
+  beats decay on "≥1 item from the last 60 days in the top-10" — 76/79 vs
+  68/79, against 48/79 with neither — while disturbing the existing top-10 less
+  (46% vs 39% survival). Weight 1.0 over-rotates (6.9 of 10 recent); a
+  pre-registered follow-up scales the lane's RRF contribution.
+
 ### Fixed
 
 - **`agent_memory` task-group ids are no longer positional.** Codex's

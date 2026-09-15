@@ -214,3 +214,16 @@ retrieve:
   # recency_decay:
   #   tau_days: 60
   #   floor: 0.2
+  # Recency LANE (OPT-IN, off unless days is set). A second candidate fetch
+  # restricted to the trailing N days, fused by RRF next to the general lanes.
+  # Unlike decay it never demotes an old result -- it guarantees recent matches
+  # a seat in the pool, which is the case decay could not reach: a common
+  # keyword (a name, "vakt") whose recent hits never enter the bm25 top-fetch
+  # because years of the same word outrank them. Skipped when you pass --since
+  # or sort by timestamp. WARNING: like decay this LOSES on the eval gold set
+  # (.plans/recency-lane.md), where the right answer is usually old. On the
+  # owner's own short queries it beat decay on "something from the last 60 days
+  # in the top-10" (76/79 vs 68/79) with less reshuffling; prefer it over decay
+  # if you want either.
+  # recency_lane:
+  #   days: 60

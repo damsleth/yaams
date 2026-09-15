@@ -339,6 +339,15 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   your questions are about what happened *recently* - it measurably hurts the
   eval gold set, where the right answer is usually old. Start at
   `tau_days: 60, floor: 0.2`; a floor near 0.9 changes nothing.
+- **`retrieve.recency_lane`** (off by default) is the alternative to decay:
+  a second candidate fetch over the trailing `days`, fused by RRF alongside
+  the normal lanes. It never demotes an old result — it guarantees recent
+  matches a seat in the pool, which fixes the common-keyword case decay cannot
+  reach (a name or `vakt` where recent hits never enter the bm25 top-fetch).
+  Skipped when you pass `--since` or sort by timestamp. Like decay it hurts the
+  eval gold set, so it stays opt-in; on real short queries it beat decay on
+  "something from the last 60 days in the top-10" with less reshuffling.
+  Start at `days: 60`, and do not run it together with `recency_decay`.
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

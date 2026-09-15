@@ -122,3 +122,32 @@ def test_config_knob_is_opt_in_and_parsed():
 
   apply_recency_lane_config(qcfg, {"retrieve": {"recency_lane": {"days": 60}}})
   assert qcfg.recency_lane_days == 60.0
+
+
+def test_recency_now_pins_the_lane_window_to_the_callers_clock():
+  conn = _open_db()
+  recent = _seed(conn)
+  # Replay a query "asked" a year before the newest item: nothing in the store
+  # is recent relative to that clock, so the lane must not admit the new doc.
+  cfg = HybridQueryConfig(
+    top_k=10, per_index_k=20, recency_lane_days=60,
+    recency_now=NEWEST - timedelta(days=365),
+  )
+  assert recent not in [r.id for r in query(conn, "vakt", config=cfg)]
+  # and pinned to the corpus edge it behaves exactly like the default
+  cfg2 = HybridQueryConfig(top_k=10, per_index_k=20, recency_lane_days=60, recency_now=NEWEST)
+  assert recent in [r.id for r in query(conn, "vakt", config=cfg2)]
+
+
+def test_decay_measures_age_from_recency_now_when_pinned():
+  from yaams.retrieve.hybrid import _apply_recency_decay
+
+  ts = NEWEST
+  # pinned to the item's own time: age 0, factor 1.0, score untouched
+  pinned = HybridQueryConfig(recency_decay_tau_days=60, recency_decay_floor=0.2, recency_now=ts)
+  assert _apply_recency_decay(1.0, "imessage", ts, pinned) == 1.0
+  # pinned a year later: floored
+  later = HybridQueryConfig(
+    recency_decay_tau_days=60, recency_decay_floor=0.2, recency_now=ts + timedelta(days=365)
+  )
+  assert _apply_recency_decay(1.0, "imessage", ts, later) == 0.2

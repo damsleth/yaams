@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from yaams.time import ledger_ts
+
 # Version of the YAAMS⇄cogled interface contract this writer emits.
 # Pinned in cognitive-ledger/docs/yaams-cogled-interface.md. Bump only on a
 # breaking frontmatter field rename/removal; additive fields do not bump.
@@ -27,7 +29,7 @@ def _coerce_list(raw: Any) -> list[str]:
 
 
 def format_note(candidate: dict[str, Any]) -> str:
-  now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+  now = ledger_ts()
   title = candidate.get("draft_title") or "Untitled"
   statement = candidate.get("draft_statement") or ""
   body = candidate.get("draft_body") or f"## Statement\n{statement}"
@@ -149,7 +151,7 @@ def _event_time_fields(
   inferred = bool(row["inf"])
   try:
     dt = datetime.fromisoformat(row["vf"])
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), inferred
+    return ledger_ts(dt), inferred
   except Exception:
     return None, False
 

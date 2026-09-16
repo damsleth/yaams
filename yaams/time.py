@@ -29,3 +29,11 @@ def to_local(value: datetime) -> datetime:
 def format_local(value: datetime, fmt: str = "%Y-%m-%d %H:%M %Z") -> str:
   return to_local(value).strftime(fmt)
 
+
+def ledger_ts(value: datetime | None = None) -> str:
+  """The one timestamp format the cognitive-ledger inbox accepts.
+
+  `ledger sleep lint` rejects the "+00:00" offset `datetime.isoformat()` emits,
+  so every writer of ledger frontmatter must go through here. Naive datetimes
+  are read as UTC (see `ensure_utc`)."""
+  return ensure_utc(value or utc_now()).strftime("%Y-%m-%dT%H:%M:%SZ")

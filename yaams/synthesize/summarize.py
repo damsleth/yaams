@@ -15,12 +15,13 @@ failing the ingest run.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from yaams.synthesize.llm import llm_adapter_from_config
-from yaams.time import parse_iso_datetime, to_local
+from yaams.time import ledger_ts, parse_iso_datetime, to_local
 
 # ponytail: hard caps so a big run (e.g. 374 new iMessages) can't blow up the
 # prompt. Tune via summary.max_items / summary.content_chars in config.
@@ -332,28 +333,40 @@ def write_summary_to_inbox(text: str, *, when: datetime) -> str | None:
     inbox.mkdir(parents=True, exist_ok=True)
   except OSError:
     return None
-  # The ledger's `sleep lint` requires a trailing "Z"; datetime.isoformat()
-  # emits "+00:00" and lint rejects it. yaams was writing notes into the
-  # ledger inbox that the ledger's own lint refused — 2 errors per ingest run,
-  # regenerated every time the old files were hand-fixed.
-  _utc = when.astimezone(timezone.utc) if when.tzinfo else when.replace(tzinfo=timezone.utc)
-  iso = _utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-  path = inbox / f"note__ingest_summary_{when.strftime('%Y_%m_%d_%H%M%S')}.md"
-  body = (
-    f"---\n"
-    f"created: {iso}\n"
-    f"updated: {iso}\n"
-    f"tags: [ingest, summary, digest]\n"
-    f"confidence: 0.6\n"
-    f"source: assistant\n"
-    f"scope: meta\n"
-    f"lang: en\n"
-    f"---\n\n"
-    f"# Ingest summary {when.strftime('%Y-%m-%d %H:%M')}\n\n"
-    f"_Auto-generated digest of newly-ingested items. Promote durable facts, "
-    f"then reject the rest._\n\n"
-    f"{text}\n"
-  )
+  iso = ledger_ts(when)
+  # Frontmatter stays UTC (ledger_ts); the day boundary and section header are
+  # the owner's local clock, so a late-evening run files under the day it felt
+  # like — same convention as the digest prompt's `now_local`.
+  local = to_local(when)
+  # One note per day, appended to. Three runs on 2026-08-20 produced three
+  # near-identical digests that cogled's own `sleep duplicates` flagged at 0.75
+  # title-jaccard against each other — yaams polluting the sink it writes to.
+  path = inbox / f"note__ingest_summary_{local.strftime('%Y_%m_%d')}.md"
+  section = f"## {local.strftime('%H:%M')}\n\n{text}\n"
+  if path.exists():
+    try:
+      body = path.read_text(encoding="utf-8")
+    except OSError:
+      return None
+    # bump `updated`, leave `created` at the day's first run
+    body = re.sub(r"^updated: .*$", f"updated: {iso}", body, count=1, flags=re.M)
+    body = body.rstrip("\n") + "\n\n" + section
+  else:
+    body = (
+      f"---\n"
+      f"created: {iso}\n"
+      f"updated: {iso}\n"
+      f"tags: [ingest, summary, digest]\n"
+      f"confidence: 0.6\n"
+      f"source: assistant\n"
+      f"scope: meta\n"
+      f"lang: en\n"
+      f"---\n\n"
+      f"# Ingest summary {local.strftime('%Y-%m-%d')}\n\n"
+      f"_Auto-generated digest of newly-ingested items. Promote durable facts, "
+      f"then reject the rest._\n\n"
+      f"{section}"
+    )
   try:
     path.write_text(body, encoding="utf-8")
   except OSError:

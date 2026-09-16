@@ -6,7 +6,7 @@ single fitness scalar (plus diagnostics) so an optimization loop has one
 number to chase. The optimizing agent edits ``yaams/retrieve/*``; it must NOT
 edit this file or the labeled set.
 
-Design (see .plans/autoresearch_retrieval.md, Phase 1):
+Design (see .plans/done/autoresearch_retrieval.md, Phase 1):
 
 * **Gold set = hit ∪ correction feedback.** Only these labels name a known-
   correct document (``query_feedback.result_id``), so only these can be scored

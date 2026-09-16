@@ -82,20 +82,30 @@ exception:
 
 | Path | Destination | Gate |
 |---|---|---|
-| `yaams promote review` (accepted candidates) | `promote.inbox_path`, default `~/yaams/ledger-inbox/` — a **staging** dir, not the ledger's own inbox | explicit per-candidate acceptance |
-| post-ingest summary digest (`write_summary_to_inbox`) | the ledger's **real** `00_inbox/`, resolved live via `ledger paths --json` | `summary.to_inbox`, default **on** |
+| `yaams promote review` (accepted candidates) | `promote.inbox_path`; default resolves to the ledger's real `00_inbox/` via `ledger paths --field` (`_resolve_inbox_path`), falling back to `~/yaams/ledger-inbox/` only when cogled is absent | explicit per-candidate acceptance |
+| post-ingest summary digest (`write_summary_to_inbox`) | the same `00_inbox/`, resolved live via `ledger paths --json`; **one note per day**, each run appended as a `## HH:MM` section | `summary.to_inbox`, default **on** |
 
-Note the asymmetry: promotion stages outside the ledger, while the summary digest
-lands directly in it. The second is the one that can break the sink.
+Both now land in the ledger's own inbox, so both can break the sink.
 
 **If you write into `00_inbox/`, cogled's lint is your contract test.** The
 frontmatter must satisfy `ledger sleep lint` — in particular timestamps are
 `%Y-%m-%dT%H:%M:%SZ`; `datetime.isoformat()` emits `+00:00` and lint **rejects**
 it. That regressed for real: every ingest run filed a note the ledger refused,
 2 errors per run, and hand-fixing the files was useless because the writer
-regenerated them. Run `ledger sleep lint` after touching anything that writes
-there. See `docs/yaams-cogled-interface.md` in the cogled repo for the full
-seam contract.
+regenerated them.
+
+Two guards exist now, use them instead of re-deriving the format:
+
+- **`yaams.time.ledger_ts()` is the only producer of ledger frontmatter
+  timestamps.** `format_note`, the `valid_from` bridge, `conflict_checked_at`
+  and the ingest digest all route through it. Never hand-roll the strftime.
+- **`test_yaams_written_inbox_notes_pass_ledger_lint`** (`tests/test_ledger_seam.py`)
+  generates both note kinds into a throwaway `LEDGER_NOTES_DIR` and runs
+  `ledger sleep lint` over them. Skipped when `ledger` is off PATH, so also run
+  it locally after touching a writer.
+
+See `docs/yaams-cogled-interface.md` in the cogled repo for the full seam
+contract.
 
 ## Engine
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from yaams.promote.score import admission_score
 from yaams.synthesize.llm import LLMAdapter
+from yaams.time import ledger_ts
 from yaams.trust import derive_provenance
 
 if TYPE_CHECKING:
@@ -228,7 +229,7 @@ def generate_candidates(
           adapter,
           conflict_cfg,
         )
-        now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_str = ledger_ts()
         existing_stmt_hash = "sha256:" + sha256(
           existing_note["statement"].encode()
         ).hexdigest()

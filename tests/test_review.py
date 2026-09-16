@@ -760,3 +760,16 @@ def test_render_card_lines_rank1_snippet_truncated_to_480():
   joined = "\n".join(lines)
   # The joined snippet section should be truncated.
   assert "…" in joined
+
+
+def test_queue_hides_legacy_and_eval_provenance_by_default():
+  conn = _open()
+  for qid, text, prov in (("q_cli", "who is on call", "cli"),
+                          ("q_legacy", "anything", "legacy"),
+                          ("q_eval", "vakt", "eval")):
+    log_query(conn, query_id=qid, text=text, top_k=5, source_filter=None,
+              since=None, until=None, results=[], provenance=prov)
+  # probes and eval replays never enter the default queue ...
+  assert [i.query_id for i in build_review_queue(conn)] == ["q_cli"]
+  # ... but stay reachable when asked for explicitly
+  assert [i.query_id for i in build_review_queue(conn, provenance="legacy")] == ["q_legacy"]

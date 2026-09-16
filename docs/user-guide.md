@@ -339,6 +339,15 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   your questions are about what happened *recently* - it measurably hurts the
   eval gold set, where the right answer is usually old. Start at
   `tau_days: 60, floor: 0.2`; a floor near 0.9 changes nothing.
+- **`yaams refresh --annotate-junk`** marks raw items that carry no retrievable
+  content — one-word messages, tapback reactions, same-day duplicates in the
+  same thread from the same sender — by setting `items.junk_reason`
+  (`mech:short`, `mech:dup`, `mech:reaction`; `llm:junk` for rows a model
+  judged). Nothing is deleted and nothing changes at query time until
+  **`retrieve.exclude_junk: true`** is set; reverse a category with one
+  `UPDATE items SET junk_reason = NULL WHERE junk_reason = 'mech:dup'`. On the
+  live corpus the mechanical pass took retrievable items from 94,530 to
+  77,087 while removing only 0.2 MB of text — the junk is tiny by bytes.
 - **`retrieve.recency_lane`** (off by default) is the alternative to decay:
   a second candidate fetch over the trailing `days`, fused by RRF alongside
   the normal lanes. It never demotes an old result — it guarantees recent

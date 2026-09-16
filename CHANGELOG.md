@@ -12,6 +12,39 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`
+  and the `yaams.quality` module. Measured on the live corpus 2026-09-16: 32% of
+  iMessages are under 10 characters and 23% are exact-content duplicates. Two
+  of the obvious rules would have been wrong, and are guarded: an exact
+  duplicate is only junk when it is the same content in the same thread from the
+  same sender on the same day (9,199 → 1,875 on the live corpus; "ok" sent 400
+  times is 400 events, and first/last-occurrence queries depend on them), and
+  calendar repeats are recurrences (332 → 1 when keyed by timestamp), so
+  calendars are excluded from every rule. Migration `0009_junk_reason` adds the
+  column, an index on it, and a `(thread_id, timestamp)` index.
+
+  Raw items stay immutable in content: this is an annotation in the family of
+  `consolidated_into`, prefixed per reason (`mech:short`, `mech:dup`,
+  `mech:reaction`, `llm:junk`) so a category reverses with one UPDATE. The
+  live pass annotated 15,771 short rows and 1,672 same-day duplicates;
+  retrievable items 94,530 → 77,087, text 21.6 → 21.4 MB, and the file grew
+  0.9 MB for the column and indexes. Zero of the 79 gold documents are flagged.
+
+- **`retrieve.exclude_junk`** (opt-in, default off) makes retrieval skip
+  annotated items at the FTS, vector and hydrate-window sites; consolidations
+  carry no annotation and are unaffected. Gated on an annotated copy of the
+  frozen fixture: recall@10 unchanged at 0.9104, MRR 0.729 → 0.714, rank-1
+  43 → 41 — both flips are one duplicated gold ("deployment") moving from
+  rank 1 to rank 2, because removing 22% of the pool shifts competitors'
+  per-index ranks up. A fail under the gate's rank-1 rule, so it ships off.
+
+- **Review queue defaults to real traffic.** `yaams review` now hides queries
+  with provenance `legacy` or `eval` unless `--provenance` names them: on
+  2026-09-16, 51 of 55 `noise` verdicts were probes with no provenance (104
+  pre-May-28 rows, now backfilled to `legacy`) or eval replays. `yaams query`
+  stamps provenance `eval` when `YAAMS_EVAL` is set, so harness and probe
+  traffic never enters the queue as real intent again.
+
 - `retrieve.recency_lane: {days}` — an opt-in, default-off alternative to
   recency decay. A second candidate fetch restricted to the trailing window
   (measured from the corpus's newest item, not wall clock, so a frozen eval

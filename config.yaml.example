@@ -203,6 +203,12 @@ retrieve:
   # until query logs accumulate. Enable ONLY after a week+ of logged traffic and
   # a passing frozen-fixture eval — see .plans/retrieval-flywheel.md.
   feedback_boost: false
+  # Skip raw items annotated by `yaams refresh --annotate-junk` (one-word
+  # messages, tapback reactions, same-day duplicates; items.junk_reason IS NOT
+  # NULL). Annotation alone changes nothing; this flag reads it. OPT-IN: on the
+  # frozen-fixture gate it moved one duplicated gold from rank 1 to 2 with
+  # recall@10 unchanged (.plans/data-quality.md), so it ships off.
+  exclude_junk: false
   # Recency decay (OPT-IN, off unless tau_days is set). Multiplies a raw Tier 1
   # item's relevance score by max(floor, exp(-age_days / tau_days)); tier2 rows
   # and consolidations are exempt and only relevance-sorted queries are touched.

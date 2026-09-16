@@ -44,6 +44,7 @@ def _safe_maintenance(
   build_assoc: bool,
   min_cooccur: int,
   min_score: float,
+  annotate_junk: bool = False,
 ) -> dict[str, Any]:
   cfg = load_config(config_path)
   db_path = get_db_path(cfg)
@@ -60,6 +61,11 @@ def _safe_maintenance(
       dictionary_cleanup = _cleanup_entity_dictionary(cfg)
     normalized = normalize_entities(conn, dry_run=dry_run)
     vacuumed = vacuum_orphan_entities(conn, dry_run=dry_run)
+    junk: dict[str, Any] = {"ran": False}
+    if annotate_junk:
+      from yaams.quality import annotate_mechanical
+
+      junk = {"ran": True, **annotate_mechanical(conn, dry_run=dry_run)}
     assoc: dict[str, Any] = {"ran": False}
     if build_assoc:
       if dry_run:
@@ -90,6 +96,7 @@ def _safe_maintenance(
         "dry_run": dry_run,
       },
       "assoc": assoc,
+      "junk": junk,
     }
   finally:
     conn.close()
@@ -99,6 +106,15 @@ def _print_maintenance(stats: dict[str, Any]) -> None:
   norm = stats["normalize"]
   vac = stats["vacuum"]
   click.echo("Safe maintenance complete.")
+  junk = stats.get("junk") or {}
+  if junk.get("ran"):
+    counts = {k: v for k, v in junk.items() if k.startswith(("mech:", "llm:"))}
+    click.echo(
+      "  Junk annotated"
+      + (" (dry run)" if junk.get("dry_run") else "")
+      + ": "
+      + (", ".join(f"{k} {v:,}" for k, v in counts.items()) or "nothing new")
+    )
   click.echo(
     f"  Dictionary links upgraded: {stats['dictionary_links_upgraded']:,}"
   )
@@ -144,6 +160,16 @@ def _last_result_event(output: str) -> dict[str, Any] | None:
 @click.option("--strict", is_flag=True, help="Pass through to ingest.")
 @click.option("--skip-ingest", is_flag=True, help="Only run safe maintenance.")
 @click.option("--skip-assoc", is_flag=True, help="Skip learned association rebuild.")
+@click.option(
+  "--annotate-junk/--no-annotate-junk",
+  default=False,
+  show_default=True,
+  help=(
+    "Annotate non-retrievable raw items (one-word messages, tapback reactions, "
+    "same-day duplicates) with items.junk_reason. Annotation only; nothing is "
+    "deleted, and retrieval ignores it unless retrieve.exclude_junk is on."
+  ),
+)
 @click.option("--assoc-min-cooccur", default=3, show_default=True, type=int)
 @click.option("--assoc-min-score", default=0.15, show_default=True, type=float)
 @click.option("--json", "as_json", is_flag=True, help="Emit action envelope on stdout.")
@@ -158,6 +184,7 @@ def refresh(
   strict: bool,
   skip_ingest: bool,
   skip_assoc: bool,
+  annotate_junk: bool,
   assoc_min_cooccur: int,
   assoc_min_score: float,
   as_json: bool,
@@ -225,6 +252,7 @@ def refresh(
     build_assoc=not skip_assoc,
     min_cooccur=assoc_min_cooccur,
     min_score=assoc_min_score,
+    annotate_junk=annotate_junk,
   )
   duration_ms = (time.perf_counter() - start) * 1000
   if as_json:

@@ -443,6 +443,13 @@ def build_review_queue(
   if provenance:
     where.append("q.provenance = ?")
     params.append(provenance)
+  else:
+    # Probe and eval traffic is not review material: on 2026-09-16, 37 of 55
+    # `noise` verdicts were pre-provenance rows (now stamped 'legacy') and the
+    # eval harness now stamps 'eval'. Pass --provenance explicitly to see them.
+    # 'test' is deliberately *not* excluded: it is what the fixtures log with,
+    # and on the live queue its rows are already judged.
+    where.append("COALESCE(q.provenance, '') NOT IN ('legacy', 'eval')")
   if deferred_only:
     where.append(
       "EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind = 'deferred')"

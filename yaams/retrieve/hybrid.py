@@ -161,6 +161,13 @@ class HybridQueryConfig:
   # median 27 days old when asked, and 60-140 days old by the time replay
   # measured them). Live queries leave it None and the two notions coincide.
   recency_now: datetime | None = None
+  # Skip items annotated by yaams.quality (items.junk_reason IS NOT NULL):
+  # one-word iMessages, tapback reactions, same-day duplicates, and rows Sonnet
+  # judged non-retrievable. Off by default so the annotation alone changes
+  # nothing; opt in via `retrieve.exclude_junk: true` once the frozen-fixture
+  # gate has passed with it on. Consolidations carry no annotation and are
+  # unaffected.
+  exclude_junk: bool = False
 
 
 @dataclass
@@ -573,12 +580,13 @@ def _fts_search_items(
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
       AND (? = 0 OR items.timestamp_inferred = 0)
+      AND (? = 0 OR items.junk_reason IS NULL)
       AND items.consolidated_into IS NULL
     ORDER BY score
     LIMIT ?
     """,
     _filter_params(match, cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), cfg.per_index_k),
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cfg.per_index_k),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["score"]))
@@ -643,12 +651,13 @@ def _vec_search_items(
       AND (? IS NULL OR items.timestamp <= ?)
       AND (? IS NULL OR items.lang = ?)
       AND (? = 0 OR items.timestamp_inferred = 0)
+      AND (? = 0 OR items.junk_reason IS NULL)
       AND items.consolidated_into IS NULL
     ORDER BY distance
     """,
     (blob, cfg.per_index_k)
     + _vec_filter_params(cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg)),
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg)),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["distance"]))
@@ -707,6 +716,11 @@ def _apply_relevance_floor(
     return hydrated
   threshold = top * floor
   return [r for r in hydrated if r.score >= threshold]
+
+
+def _exclude_junk(cfg: HybridQueryConfig) -> int:
+  """1 when annotated items (junk_reason IS NOT NULL) must be excluded."""
+  return 1 if cfg.exclude_junk else 0
 
 
 def _exclude_inferred(cfg: HybridQueryConfig) -> int:
@@ -924,11 +938,12 @@ def _browse_window(
         AND (? IS NULL OR timestamp <= ?)
         AND (? IS NULL OR lang = ?)
         AND (? = 0 OR timestamp_inferred = 0)
+        AND (? = 0 OR junk_reason IS NULL)
         AND consolidated_into IS NULL
       ORDER BY timestamp DESC
       LIMIT ?
       """,
-      _window_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), cap),
+      _window_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cap),
     ).fetchall()
     for row in rows:
       r = _hydrate_item(conn, row["id"], empty, cfg)

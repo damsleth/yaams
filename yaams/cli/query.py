@@ -56,6 +56,10 @@ def _cli_provenance() -> str | None:
   """
   if os.environ.get("PYTEST_CURRENT_TEST"):
     return None
+  # Eval and probe traffic must not enter the review queue as real intent:
+  # 51 of 55 `noise` verdicts on 2026-09-16 were probes with no provenance.
+  if os.environ.get("YAAMS_EVAL"):
+    return "eval"
   return "cli"
 
 
@@ -94,6 +98,13 @@ def apply_recency_lane_config(qcfg, cfg: dict) -> None:
   qcfg.recency_lane_days = float(raw["days"])
   if raw.get("weight") is not None:
     qcfg.recency_lane_weight = float(raw["weight"])
+
+
+def apply_exclude_junk_config(qcfg, cfg: dict) -> None:
+  """`retrieve.exclude_junk: true` skips items annotated by yaams.quality."""
+  retrieve = cfg.get("retrieve")
+  if isinstance(retrieve, dict) and retrieve.get("exclude_junk"):
+    qcfg.exclude_junk = True
 
 
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
@@ -424,6 +435,7 @@ def query_cmd(
         qcfg.feedback_boost = True
       apply_recency_decay_config(qcfg, cfg)
       apply_recency_lane_config(qcfg, cfg)
+      apply_exclude_junk_config(qcfg, cfg)
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

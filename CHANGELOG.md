@@ -38,6 +38,24 @@ surface; pin to a specific version if you need stability.
   rank 1 to rank 2, because removing 22% of the pool shifts competitors'
   per-index ranks up. A fail under the gate's rank-1 rule, so it ships off.
 
+- **Miss re-judge is date-aware.** `scripts/llm_judge_unjudged.py` now shows the
+  judge the day each query was asked and each result's own date. Without that,
+  "do I have any meetings today?" — asked in May — was being converted to a hit
+  against a result from replay day.
+
+- **`scripts/junk_sonnet_pass.py`** judges the 10–39-char messaging band the
+  mechanical rules cannot decide, with prev/next thread context, two full
+  passes, and `llm:junk` written only where both agree (86% two-run agreement
+  on a 50-row sample). Checkpoints every batch under
+  `~/brain/feed/eval/junk-pass/` and stops on a failed CLI call — the first
+  version defaulted failures to KEEP and turned a rate-limited run into ~1,600
+  calls that wrote nothing.
+
+- **`scripts/junk_prune.py`** is the irreversible step, kept out of `refresh`
+  on purpose: deletes annotated items that are not consolidation members
+  (11,902 of 17,443 are, and are kept) together with their FTS, vector and
+  entity-link rows, then `VACUUM`. Dry run by default.
+
 - **Review queue defaults to real traffic.** `yaams review` now hides queries
   with provenance `legacy` or `eval` unless `--provenance` names them: on
   2026-09-16, 51 of 55 `noise` verdicts were probes with no provenance (104

@@ -144,7 +144,7 @@ def main() -> int:
     # MAX(id)), converting it into a scorable gold.
     rows = conn.execute(
       """
-      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape
+      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape, q.ts
       FROM queries q
       JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
         ON last.query_id = q.id
@@ -156,7 +156,7 @@ def main() -> int:
   else:
     rows = conn.execute(
       """
-      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape
+      SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape, q.ts
       FROM queries q
       WHERE NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id=q.id)
         AND q.shape IN ('factual','synthesis','event_anchored')
@@ -195,12 +195,18 @@ def main() -> int:
       counts["skip"] += 1
       continue
 
+    # Date-relative queries ("do I have any meetings today?") can only be
+    # judged against the day they were asked, so the judge sees that day and
+    # each result's own date. Without this, a same-day-at-replay result reads
+    # as a hit for a question asked months earlier.
+    asked = (r["ts"] or "")[:10]
     listing = "\n".join(
-      f"{i}. [{x.kind}] {x.subject[:60]} :: {(x.content or '')[:160]}"
+      f"{i}. [{x.kind}] {x.timestamp.date() if x.timestamp else '?'} {x.subject[:60]} :: {(x.content or '')[:160]}"
       for i, x in enumerate(res, 1)
     )
+    q_for_judge = f"{text}  (asked on {asked})" if asked else text
     try:
-      out = llm.complete(PROMPT.format(query=text, results=listing), max_tokens=120).text
+      out = llm.complete(PROMPT.format(query=q_for_judge, results=listing), max_tokens=120).text
       m = re.search(r"\{.*\}", out, re.DOTALL)
       verdict = json.loads(m.group(0)) if m else {}
       kind = verdict.get("verdict")

@@ -18,7 +18,6 @@ dependencies = [
   "sentence-transformers>=3.0",
   "spacy>=3.7",
   "sqlite-vec>=0.1.6",
-  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

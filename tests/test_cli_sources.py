@@ -12,8 +12,7 @@ from yaams.cli.sources import (
   _rewrite_enabled_flags,
   _yaml_append_email_source,
   _yaml_append_folder_path,
-  _yaml_remove_email_source,
-  _yaml_remove_folder_path,
+  _yaml_remove_path,
   _yaml_set_email_entry_enabled,
   _yaml_set_folder_entry_enabled,
   _yaml_set_profile_enabled,
@@ -75,6 +74,37 @@ def _write(tmp_path: Path, body: str = SAMPLE) -> Path:
   return p
 
 
+@pytest.mark.parametrize("source", ["mail", "calendar", "teams", "teams_channels", "drive",
+                                   "folders", "notes"])
+@pytest.mark.parametrize("blank_line", ["", "\n"])
+def test_source_block_creation_preserves_surroundings_and_is_idempotent(source, blank_line):
+  before = f"# header\ningest:\n  since: '2025-01-01'\n{blank_line}# footer\nembed:\n  dimension: 4\n"
+  lines = before.splitlines(keepends=True)
+  result = sources_mod._ensure_source_block(lines, source)
+  assert result is lines
+  assert "".join(result).startswith("# header\ningest:\n  since: '2025-01-01'\n")
+  assert "# footer\n" in result
+  assert "".join(result).endswith("embed:\n  dimension: 4\n")
+  assert f"  {source}:\n" in result
+  snapshot = list(result)
+  assert sources_mod._ensure_source_block(result, source) == snapshot
+
+
+@pytest.mark.parametrize("source", ["mail", "calendar", "teams", "teams_channels", "drive",
+                                   "folders", "notes"])
+@pytest.mark.parametrize("synthetic", [True, False])
+def test_interactive_toggle_keeps_path_setup_gate(tmp_path, monkeypatch, source, synthetic):
+  keys = iter([" ", "q"])
+  states = []
+  monkeypatch.setattr(sources_mod, "_read_key", lambda: next(keys))
+  monkeypatch.setattr(sources_mod, "_render",
+                      lambda rows, selected, *args: states.append(dict(selected)))
+  row = SourceRow("source", source, False, "", synthetic=synthetic)
+  assert sources_mod._interactive([row], tmp_path / "config.yaml") is None
+  expected = {} if synthetic and source in {"folders", "notes"} else {source: True}
+  assert states[-1] == expected
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
   sources_mod._clear_profile_cache()
@@ -113,7 +143,7 @@ def test_append_email_source(tmp_path: Path) -> None:
 
 def test_remove_email_source_by_index(tmp_path: Path) -> None:
   cfg_path = _write(tmp_path)
-  _yaml_remove_email_source(cfg_path, 0)
+  _yaml_remove_path(cfg_path, "email", "sources", 0)
   text = cfg_path.read_text()
   assert "~/Library/Mail/V10" not in text
   assert "~/Downloads/all.mbox" in text
@@ -131,7 +161,7 @@ def test_append_folder_path(tmp_path: Path) -> None:
 
 def test_remove_folder_path_by_index(tmp_path: Path) -> None:
   cfg_path = _write(tmp_path)
-  _yaml_remove_folder_path(cfg_path, 0)
+  _yaml_remove_path(cfg_path, "folders", "paths", 0)
   text = cfg_path.read_text()
   assert "- ~/Documents/notes" not in text
   assert "- ~/work/specs" in text

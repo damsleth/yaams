@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import Mock
+
+import pytest
 
 from yaams.retrieve import HybridResult, ScoreComponents
 from yaams.synthesize import (
@@ -13,6 +16,42 @@ from yaams.synthesize import (
   parse_structured_answer,
   synthesize_answer,
 )
+from yaams.synthesize.llm import ClaudeCliAdapter, CodexCliAdapter
+
+
+@pytest.mark.parametrize(("adapter", "command", "label", "encoding"), [
+  (SubprocessAdapter(["custom"], "m", timeout=7, encoding="latin-1"),
+   ["custom"], "LLM subprocess 'custom'", "latin-1"),
+  (ClaudeCliAdapter("m", timeout=7, safe_mode=True),
+   ["claude", "-p", "--input-format", "text", "--safe-mode", "--model", "m"],
+   "claude CLI", None),
+  (CodexCliAdapter("m", timeout=7),
+   ["codex", "--model", "m", "exec", "-"], "codex CLI", None),
+  (ClaudeCliAdapter(timeout=7),
+   ["claude", "-p", "--input-format", "text"], "claude CLI", None),
+  (CodexCliAdapter(timeout=7), ["codex", "exec", "-"], "codex CLI", None),
+])
+def test_subprocess_backends_preserve_transport_contract(
+  monkeypatch, adapter, command, label, encoding,
+):
+  import subprocess
+
+  run = Mock(return_value=subprocess.CompletedProcess(command, 0, " answer \n", ""))
+  monkeypatch.setattr("yaams.synthesize.llm.subprocess.run", run)
+  response = adapter.complete("prompt")
+  assert (response.text, response.backend, response.model) == (
+    "answer", adapter.backend_name, adapter.model_name,
+  )
+  run.assert_called_once_with(
+    command, input="prompt", capture_output=True, text=True, timeout=7, encoding=encoding,
+  )
+  run.return_value = subprocess.CompletedProcess(command, 2, "", " failed \n")
+  with pytest.raises(RuntimeError) as exc:
+    adapter.complete("prompt")
+  assert str(exc.value) == f"{label} exited 2: failed"
+  run.side_effect = subprocess.TimeoutExpired(command, 7)
+  with pytest.raises(subprocess.TimeoutExpired):
+    adapter.complete("prompt")
 
 
 def _make_result(rid: str, content: str, kind: str = "item") -> HybridResult:

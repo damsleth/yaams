@@ -72,6 +72,12 @@ The entity dictionary lives in `entities.json` next to the DB
   `'ner'` links to `'dictionary'` for newly curated names. Both run in
   every `refresh`.
 
+`entities import-people` and `entities import-contacts` share the same
+persistence path: save a changed dictionary, seed the current dictionary into
+the DB, backfill entity sources, then apply requested tags. An unchanged
+dictionary skips the file write but still seeds and tags; `--dry-run` skips
+the entire persistence step.
+
 ## The durable merge contract
 
 A merge is **two-phase, in this order**:

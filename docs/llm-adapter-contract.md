@@ -2,6 +2,14 @@
 
 This is Phase B forward documentation. Phase A does not call an LLM.
 
+## Current subprocess implementation
+
+`SubprocessAdapter`, `ClaudeCliAdapter`, and `CodexCliAdapter` share the
+execution helper in `yaams/synthesize/llm.py`: prompt on stdin, stripped
+stdout in `LLMResponse`, and a timeout. Backend-specific command flags,
+encoding, response metadata, and error messages stay with each adapter.
+Nonzero exits raise `RuntimeError`; subprocess timeouts propagate to callers.
+
 ## Goals
 
 LLM use must be pluggable, local-first, timeout-aware, and measurable. Parsing, synthesis, judging, and analysis should share a narrow adapter contract while allowing different local backends.
@@ -39,4 +47,3 @@ Default to an already running local backend. Do not hard-code a single provider.
 - Synthesis failures should not fabricate answers.
 - Timeouts should be recorded as structured failures.
 - All calls that feed a signal loop must record backend, model, latency, and token metadata when available.
-

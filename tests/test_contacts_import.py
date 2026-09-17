@@ -7,9 +7,57 @@ which also pins the column names the private schema has to keep providing.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
+import pytest
+from click.testing import CliRunner
+
+from yaams.cli import cli
+from yaams.config import load_config
 from yaams.contacts_import import contacts_to_entries, fetch_contacts, normalize_phone
+from yaams.db import open_db
+from yaams.store import get_entity_tags, resolve_entity_id
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_import_contacts_persistence_and_tags(tmp_path, monkeypatch, dry_run):
+  cfg = tmp_path / "config.yaml"
+  db_path = tmp_path / "data.db"
+  cfg.write_text(json.dumps({
+    "db_path": str(db_path), "embed": {"model": "dummy", "dimension": 4},
+    "entities": {"dictionary": [{"canonical": "Existing", "type": "org"}]},
+  }))
+  original = cfg.read_bytes()
+  monkeypatch.setattr("yaams.cli.entities.fetch_contacts", lambda: ([{
+    "name": "Alice Example", "emails": ["alice@example.test"],
+    "phones": [], "is_person": True,
+  }], []))
+  args = ["entities", "import-contacts", "--config", str(cfg), "--tag", "team", "--json"]
+  if dry_run:
+    args.append("--dry-run")
+  result = CliRunner().invoke(cli, args)
+  assert result.exit_code == 0, result.output
+  assert json.loads(result.output)["stats"]["added"] == 1
+  assert cfg.read_bytes() == original
+  if dry_run:
+    assert not db_path.exists()
+    assert not (tmp_path / "entities.json").exists()
+    return
+  dictionary = load_config(cfg)["entities"]["dictionary"]
+  assert {e["canonical"] for e in dictionary} == {"Existing", "Alice Example"}
+  conn = open_db(db_path, readonly=True)
+  try:
+    eid = resolve_entity_id(conn, "Alice Example")
+    assert eid is not None
+    assert get_entity_tags(conn, eid) == ["team"]
+  finally:
+    conn.close()
+  monkeypatch.setattr("yaams.cli.entities._save_entities",
+                      lambda *args: pytest.fail("unchanged import rewrote dictionary"))
+  repeated = CliRunner().invoke(cli, args)
+  assert repeated.exit_code == 0, repeated.output
+  assert json.loads(repeated.output)["stats"]["tags_added"] == 0
 
 
 def test_normalize_phone_accepts_e164_and_national():

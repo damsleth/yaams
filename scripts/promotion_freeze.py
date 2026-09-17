@@ -59,11 +59,8 @@ def _strip_secrets(obj):
 
 
 def _sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
   with path.open("rb") as f:
-    for chunk in iter(lambda: f.read(1 << 20), b""):
-      h.update(chunk)
-  return h.hexdigest()
+    return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def _git_head(repo: Path) -> str:

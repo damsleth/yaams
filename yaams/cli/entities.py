@@ -144,6 +144,33 @@ def _add_or_update_dictionary_entry(
   return out, True
 
 
+def _persist_entity_import(
+  config_path: str | None,
+  cfg: dict,
+  entries: list[dict],
+  tags: tuple[str, ...],
+  *,
+  dictionary: list[dict] | None,
+) -> int:
+  if dictionary is not None:
+    _save_entities(config_path, {"dictionary": dictionary})
+  conn = open_db(get_db_path(cfg))
+  applied_tags = 0
+  try:
+    init_schema(conn, embedding_dim=_embedding_dim(cfg))
+    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
+    seed_entities(conn, fresh)
+    backfill_entity_sources(conn, fresh)
+    if tags:
+      for entry in entries:
+        eid = resolve_entity_id(conn, entry["canonical"])
+        if eid is not None:
+          applied_tags += add_entity_tags(conn, eid, tags)
+  finally:
+    conn.close()
+  return applied_tags
+
+
 @cli.group("entities")
 def entities_group() -> None:
   """Manage the entity dictionary used for promotion candidate clustering."""
@@ -348,25 +375,9 @@ def entities_import_people(
       click.echo(f"  warning: {w}", err=True)
     return
 
-  if changed:
-    entities_cfg["dictionary"] = merged
-    _save_entities(config_path, entities_cfg)
-
-  db_path = get_db_path(cfg)
-  conn = open_db(db_path)
-  applied_tags = 0
-  try:
-    init_schema(conn, embedding_dim=_embedding_dim(cfg))
-    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
-    seed_entities(conn, fresh)
-    backfill_entity_sources(conn, fresh)
-    if tags:
-      for entry in entries:
-        eid = resolve_entity_id(conn, entry["canonical"])
-        if eid is not None:
-          applied_tags += add_entity_tags(conn, eid, tags)
-  finally:
-    conn.close()
+  applied_tags = _persist_entity_import(
+    config_path, cfg, entries, tags, dictionary=merged if changed else None,
+  )
 
   duration_ms = (time.monotonic() - t0) * 1000.0
   if as_json:
@@ -455,25 +466,9 @@ def entities_import_contacts(
       click.echo(f"  warning: {w}", err=True)
     return
 
-  if changed:
-    entities_cfg["dictionary"] = merged
-    _save_entities(config_path, entities_cfg)
-
-  db_path = get_db_path(cfg)
-  conn = open_db(db_path)
-  applied_tags = 0
-  try:
-    init_schema(conn, embedding_dim=_embedding_dim(cfg))
-    fresh = load_config(config_path).get("entities", {}).get("dictionary", [])
-    seed_entities(conn, fresh)
-    backfill_entity_sources(conn, fresh)
-    if tags:
-      for entry in entries:
-        eid = resolve_entity_id(conn, entry["canonical"])
-        if eid is not None:
-          applied_tags += add_entity_tags(conn, eid, tags)
-  finally:
-    conn.close()
+  applied_tags = _persist_entity_import(
+    config_path, cfg, entries, tags, dictionary=merged if changed else None,
+  )
 
   duration_ms = (time.monotonic() - t0) * 1000.0
   if as_json:

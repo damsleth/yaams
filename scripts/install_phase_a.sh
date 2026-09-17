@@ -40,15 +40,6 @@ run() {
   "$@"
 }
 
-python_version_check() {
-  "$1" - <<'PY'
-import sys
-
-if sys.version_info < (3, 11):
-  raise SystemExit("Python 3.11 or newer is required")
-PY
-}
-
 python_version() {
   "$1" - <<'PY'
 import sys
@@ -208,7 +199,6 @@ fi
 log "Checking Python"
 PYTHON_BIN="$(select_python)"
 run command -v "$PYTHON_BIN"
-python_version_check "$PYTHON_BIN"
 printf 'Using Python %s\n' "$(python_version "$PYTHON_BIN")"
 ensure_venv "$PYTHON_BIN"
 

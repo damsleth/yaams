@@ -585,7 +585,7 @@ def _fts_search_items(
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg)
+    (match,) + _filter_params(cfg)
     + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cfg.per_index_k),
   ).fetchall()
   return [
@@ -621,7 +621,7 @@ def _fts_search_consolidations(
     ORDER BY score
     LIMIT ?
     """,
-    _filter_params(match, cfg, repo=False)
+    (match,) + _filter_params(cfg, repo=False)
     + (cfg.lang_filter, cfg.lang_filter, cfg.per_index_k),
   ).fetchall()
   return [
@@ -656,7 +656,7 @@ def _vec_search_items(
     ORDER BY distance
     """,
     (blob, cfg.per_index_k)
-    + _vec_filter_params(cfg)
+    + _filter_params(cfg)
     + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg)),
   ).fetchall()
   return [
@@ -691,7 +691,7 @@ def _vec_search_consolidations(
     ORDER BY distance
     """,
     (blob, cfg.per_index_k)
-    + _vec_filter_params(cfg, repo=False)
+    + _filter_params(cfg, repo=False)
     + (cfg.lang_filter, cfg.lang_filter),
   ).fetchall()
   return [
@@ -755,19 +755,7 @@ def _repo_params(cfg: HybridQueryConfig) -> tuple[str, str]:
   )
 
 
-def _filter_params(match: str, cfg: HybridQueryConfig, repo: bool = True):
-  source_json = json.dumps(cfg.source_filter or [])
-  source_flag = "" if not cfg.source_filter else "filter"
-  since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
-  until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
-  return (
-    (match, source_flag, source_json)
-    + (_repo_params(cfg) if repo else ())
-    + (since_iso, since_iso, until_iso, until_iso)
-  )
-
-
-def _vec_filter_params(cfg: HybridQueryConfig, repo: bool = True):
+def _filter_params(cfg: HybridQueryConfig, repo: bool = True) -> tuple[str | None, ...]:
   source_json = json.dumps(cfg.source_filter or [])
   source_flag = "" if not cfg.source_filter else "filter"
   since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
@@ -943,7 +931,7 @@ def _browse_window(
       ORDER BY timestamp DESC
       LIMIT ?
       """,
-      _window_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cap),
+      _filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cap),
     ).fetchall()
     for row in rows:
       r = _hydrate_item(conn, row["id"], empty, cfg)
@@ -960,25 +948,13 @@ def _browse_window(
       ORDER BY start_timestamp DESC
       LIMIT ?
       """,
-      _window_params(cfg, repo=False) + (cap,),
+      _filter_params(cfg, repo=False) + (cap,),
     ).fetchall()
     for row in rows:
       r = _hydrate_consolidation(conn, row["id"], empty, cfg)
       if r is not None:
         results.append(r)
   return results
-
-
-def _window_params(cfg: HybridQueryConfig, repo: bool = True):
-  source_json = json.dumps(cfg.source_filter or [])
-  source_flag = "" if not cfg.source_filter else "filter"
-  since_iso = ensure_utc(cfg.since).isoformat() if cfg.since else None
-  until_iso = ensure_utc(cfg.until).isoformat() if cfg.until else None
-  return (
-    (source_flag, source_json)
-    + (_repo_params(cfg) if repo else ())
-    + (since_iso, since_iso, until_iso, until_iso)
-  )
 
 
 def _hydrate_item(

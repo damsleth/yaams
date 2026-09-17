@@ -1,12 +1,22 @@
 """Unit tests for scripts/promotion_freeze.py pure helpers."""
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from promotion_freeze import _is_short_single_token, _strip_secrets  # noqa: E402
+from promotion_freeze import _is_short_single_token, _sha256_file, _strip_secrets  # noqa: E402
+
+
+@pytest.mark.parametrize("content", [b"", b"fixture", b"\x00\xff" * (1 << 20)])
+def test_file_hash_matches_sha256(tmp_path, content):
+  path = tmp_path / "fixture.db"
+  path.write_bytes(content)
+  assert _sha256_file(path) == hashlib.sha256(content).hexdigest()
 
 
 def test_strip_secrets_drops_secret_keys_recursively():

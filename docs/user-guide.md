@@ -508,6 +508,11 @@ creating a duplicate; nothing is removed. Re-run it any time, it's idempotent.
 Follow with `yaams enrich retag` to relabel already-ingested items with the
 freshly imported entities.
 
+`yaams entities import-contacts` reads the macOS address book and uses the
+same dictionary persistence, database seeding, and `--tag` handling.
+Both import commands support `--dry-run` without writing the dictionary or
+database. Repeated imports can apply tags even when the dictionary is unchanged.
+
 ### Merge duplicates
 
 The same real-world entity often shows up under several surface forms.

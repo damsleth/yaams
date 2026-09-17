@@ -77,12 +77,8 @@ def _type_supports(ptype: str, source_name: str) -> bool:
 def _supports(prof: dict, source_name: str) -> bool:
   return _type_supports(_profile_type(prof), source_name)
 
-# M365 source blocks the TUI can lazy-create on first toggle. These are the
-# sources whose availability is implied by an owa-piggy profile existing:
-# rather than make the user edit YAML before they can see the checkbox,
-# the TUI synthesizes a "not configured" row and writes a default block
-# when the user toggles the parent or a profile child.
-_M365_BLOCK_TEMPLATES: dict[str, list[str]] = {
+# Keep templates as lines so inserting a block preserves surrounding YAML comments.
+_SOURCE_BLOCK_TEMPLATES: dict[str, list[str]] = {
   "mail": [
     "\n",
     "  mail:\n",
@@ -125,6 +121,13 @@ _M365_BLOCK_TEMPLATES: dict[str, list[str]] = {
     "    enabled: false\n",
     "    profiles: []\n",
     "    local_dir: ~/brain/docs\n",
+  ],
+  "folders": ["\n", "  folders:\n", "    enabled: false\n", "    paths: []\n"],
+  "notes": [
+    "\n",
+    "  notes:\n",
+    "    enabled: false\n",
+    "    vault_path: ~/Documents/Obsidian\n",
   ],
 }
 
@@ -604,9 +607,7 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
       row = rows[cursor]
       if key == " ":
         if isinstance(row, SourceRow):
-          allowed_synthetic = (
-            row.name in _M365_BLOCK_TEMPLATES or row.name == "notes"
-          )
+          allowed_synthetic = row.name in PROFILE_AWARE | {"notes"}
           if row.synthetic and not allowed_synthetic:
             message = "Add a path first (`a`)."
             continue
@@ -702,11 +703,11 @@ def _add_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None
 def _remove_path(row: Row, config_path: Path) -> tuple[list[Row] | None, str | None]:
   if isinstance(row, SubPathRow) and row.subkind == "path":
     if row.parent == "email":
-      _yaml_remove_email_source(config_path, row.index)
+      _yaml_remove_path(config_path, "email", "sources", row.index)
       cfg = load_config(config_path)
       return _build_rows(cfg), f"Removed email source #{row.index}."
     if row.parent == "folders":
-      _yaml_remove_folder_path(config_path, row.index)
+      _yaml_remove_path(config_path, "folders", "paths", row.index)
       cfg = load_config(config_path)
       return _build_rows(cfg), f"Removed folder #{row.index}."
   return None, "Move cursor onto a path entry to remove it."
@@ -732,16 +733,8 @@ def _rewrite_enabled_flags(config_path: Path, target_state: dict[str, bool]) -> 
       lines, top_level_key=source, parent_indent=2,
       search_from=ingest_start, search_to=ingest_end,
     )
-    if (block_start is None or block_end is None) and source in _M365_BLOCK_TEMPLATES:
-      out_lines = _ensure_m365_block(out_lines, source)
-      lines = list(out_lines)
-      ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
-      block_start, block_end = _find_block_span(
-        lines, top_level_key=source, parent_indent=2,
-        search_from=ingest_start, search_to=ingest_end,
-      )
-    if (block_start is None or block_end is None) and source == "notes":
-      out_lines = _ensure_notes_block(out_lines)
+    if (block_start is None or block_end is None) and source in PROFILE_AWARE | {"notes"}:
+      out_lines = _ensure_source_block(out_lines, source)
       lines = list(out_lines)
       ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
       block_start, block_end = _find_block_span(
@@ -771,7 +764,7 @@ def _rewrite_enabled_flags(config_path: Path, target_state: dict[str, bool]) -> 
 
 def _yaml_append_folder_path(config_path: Path, value: str) -> None:
   lines = config_path.read_text().splitlines(keepends=True)
-  lines = _ensure_folders_block(lines)
+  lines = _ensure_source_block(lines, "folders")
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   assert ingest_start is not None
   folders_start, folders_end = _find_block_span(
@@ -799,9 +792,9 @@ def _yaml_append_folder_path(config_path: Path, value: str) -> None:
   config_path.write_text("".join(lines))
 
 
-def _yaml_remove_folder_path(config_path: Path, index: int) -> None:
+def _yaml_remove_path(config_path: Path, source: str, key: str, index: int) -> None:
   lines = config_path.read_text().splitlines(keepends=True)
-  spans = _folders_entry_spans(lines)
+  spans = _path_entry_spans(lines, source, key)
   if spans is None or not (0 <= index < len(spans)):
     return
   start, end = spans[index]
@@ -820,7 +813,7 @@ def _yaml_set_folder_entry_enabled(config_path: Path, index: int, enabled: bool)
   collapses the dict back to a bare string if it has no other keys.
   """
   lines = config_path.read_text().splitlines(keepends=True)
-  spans = _folders_entry_spans(lines)
+  spans = _path_entry_spans(lines, "folders", "paths")
   if spans is None or not (0 <= index < len(spans)):
     return
   start, end = spans[index]
@@ -869,30 +862,27 @@ def _yaml_set_folder_entry_enabled(config_path: Path, index: int, enabled: bool)
   config_path.write_text("".join(lines))
 
 
-def _folders_entry_spans(lines: list[str]) -> list[tuple[int, int]] | None:
+def _path_entry_spans(
+  lines: list[str], source: str, key: str,
+) -> list[tuple[int, int]] | None:
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
     return None
-  folders_start, folders_end = _find_block_span(
-    lines, top_level_key="folders", parent_indent=2,
+  block_start, block_end = _find_block_span(
+    lines, top_level_key=source, parent_indent=2,
     search_from=ingest_start, search_to=ingest_end,
   )
-  if folders_start is None or folders_end is None:
+  if block_start is None or block_end is None:
     return None
-  paths_idx = _find_key_line(lines, folders_start, folders_end, "paths")
+  paths_idx = _find_key_line(lines, block_start, block_end, key)
   if paths_idx is None:
     return []
-  return _list_entry_spans(lines, paths_idx, folders_end)
+  return _list_entry_spans(lines, paths_idx, block_end)
 
 
-def _ensure_m365_block(lines: list[str], source: str) -> list[str]:
-  """Insert a default ingest.<source>: block if it's missing.
-
-  Used when the user toggles a synthetic m365 row or one of its profile
-  children — we lazy-create the block so they don't have to hand-edit
-  YAML before the TUI can manage it.
-  """
-  if source not in _M365_BLOCK_TEMPLATES:
+def _ensure_source_block(lines: list[str], source: str) -> list[str]:
+  """Insert a default ingest.<source>: block if it's missing."""
+  if source not in _SOURCE_BLOCK_TEMPLATES:
     return lines
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   if ingest_start is None:
@@ -903,7 +893,7 @@ def _ensure_m365_block(lines: list[str], source: str) -> list[str]:
   )
   if block_start is not None:
     return lines
-  template = list(_M365_BLOCK_TEMPLATES[source])
+  template = list(_SOURCE_BLOCK_TEMPLATES[source])
   insert_at = ingest_end if ingest_end is not None else len(lines)
   if insert_at > 0 and lines[insert_at - 1].strip() == "":
     template = template[1:]
@@ -911,50 +901,9 @@ def _ensure_m365_block(lines: list[str], source: str) -> list[str]:
   return lines
 
 
-def _ensure_folders_block(lines: list[str]) -> list[str]:
-  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
-  if ingest_start is None:
-    raise click.ClickException("No `ingest:` block in config.")
-  folders_start, _ = _find_block_span(
-    lines, top_level_key="folders", parent_indent=2,
-    search_from=ingest_start, search_to=ingest_end,
-  )
-  if folders_start is not None:
-    return lines
-  block_lines = ["\n", "  folders:\n", "    enabled: false\n", "    paths: []\n"]
-  insert_at = ingest_end if ingest_end is not None else len(lines)
-  if insert_at > 0 and lines[insert_at - 1].strip() == "":
-    block_lines = block_lines[1:]
-  lines[insert_at:insert_at] = block_lines
-  return lines
-
-
-def _ensure_notes_block(lines: list[str]) -> list[str]:
-  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
-  if ingest_start is None:
-    raise click.ClickException("No `ingest:` block in config.")
-  notes_start, _ = _find_block_span(
-    lines, top_level_key="notes", parent_indent=2,
-    search_from=ingest_start, search_to=ingest_end,
-  )
-  if notes_start is not None:
-    return lines
-  block_lines = [
-    "\n",
-    "  notes:\n",
-    "    enabled: false\n",
-    "    vault_path: ~/Documents/Obsidian\n",
-  ]
-  insert_at = ingest_end if ingest_end is not None else len(lines)
-  if insert_at > 0 and lines[insert_at - 1].strip() == "":
-    block_lines = block_lines[1:]
-  lines[insert_at:insert_at] = block_lines
-  return lines
-
-
 def _yaml_set_notes_vault_path(config_path: Path, value: str) -> None:
   lines = config_path.read_text().splitlines(keepends=True)
-  lines = _ensure_notes_block(lines)
+  lines = _ensure_source_block(lines, "notes")
   ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
   assert ingest_start is not None
   notes_start, notes_end = _find_block_span(
@@ -999,19 +948,9 @@ def _yaml_append_email_source(config_path: Path, src_type: str, path: str) -> No
   config_path.write_text("".join(lines))
 
 
-def _yaml_remove_email_source(config_path: Path, index: int) -> None:
-  lines = config_path.read_text().splitlines(keepends=True)
-  spans = _email_entry_spans(lines)
-  if spans is None or not (0 <= index < len(spans)):
-    return
-  start, end = spans[index]
-  del lines[start:end]
-  config_path.write_text("".join(lines))
-
-
 def _yaml_set_email_entry_enabled(config_path: Path, index: int, enabled: bool) -> None:
   lines = config_path.read_text().splitlines(keepends=True)
-  spans = _email_entry_spans(lines)
+  spans = _path_entry_spans(lines, "email", "sources")
   if spans is None or not (0 <= index < len(spans)):
     return
   start, end = spans[index]
@@ -1036,22 +975,6 @@ def _yaml_set_email_entry_enabled(config_path: Path, index: int, enabled: bool) 
   config_path.write_text("".join(lines))
 
 
-def _email_entry_spans(lines: list[str]) -> list[tuple[int, int]] | None:
-  ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
-  if ingest_start is None:
-    return None
-  email_start, email_end = _find_block_span(
-    lines, top_level_key="email", parent_indent=2,
-    search_from=ingest_start, search_to=ingest_end,
-  )
-  if email_start is None or email_end is None:
-    return None
-  sources_idx = _find_key_line(lines, email_start, email_end, "sources")
-  if sources_idx is None:
-    return []
-  return _list_entry_spans(lines, sources_idx, email_end)
-
-
 def _yaml_set_profile_enabled(
   config_path: Path, source: str, profile: str, enabled: bool,
 ) -> None:
@@ -1066,8 +989,8 @@ def _yaml_set_profile_enabled(
     lines, top_level_key=source, parent_indent=2,
     search_from=ingest_start, search_to=ingest_end,
   )
-  if (block_start is None or block_end is None) and source in _M365_BLOCK_TEMPLATES:
-    lines = _ensure_m365_block(lines, source)
+  if block_start is None or block_end is None:
+    lines = _ensure_source_block(lines, source)
     ingest_start, ingest_end = _find_block_span(lines, top_level_key="ingest")
     block_start, block_end = _find_block_span(
       lines, top_level_key=source, parent_indent=2,

@@ -61,3 +61,25 @@ def test_undated_note_falls_back_to_mtime_and_is_inferred():
   )
   assert ts == _MTIME
   assert inferred is True
+
+
+def test_underscore_notes_are_ingested_by_default(tmp_path):
+  """The vault uses a leading "_" for per-folder hub notes (_did, _swon, _une).
+
+  Skipping them hid ~32 of the densest notes from recall. Opt in explicitly if
+  you want the old behaviour.
+  """
+  from datetime import datetime, timezone
+
+  from yaams.ingest.obsidian import ObsidianAdapter
+
+  body = "mye kontekst her, og nok tegn til aa passere MIN_CONTENT_CHARS. " * 8
+  (tmp_path / "_une.md").write_text(f"# UNE hub\n\n{body}\n")
+  (tmp_path / "vanlig.md").write_text(f"# Vanlig\n\n{body}\n")
+  epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+  seen = {i.source_id for i in ObsidianAdapter(vault_path=tmp_path).extract(epoch)}
+  assert any("_une" in s for s in seen), seen
+
+  opted_out = ObsidianAdapter(vault_path=tmp_path, skip_filename_prefixes=("_",))
+  assert not any("_une" in i.source_id for i in opted_out.extract(epoch))

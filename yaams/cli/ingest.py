@@ -639,9 +639,14 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
         "(set via `yaams sources` → press `a` on the notes row)"
       )
     skip_dirs = set(cfg.get("skip_dirs") or _DEFAULT_SKIP_DIRS)
+    kwargs: dict[str, object] = {}
+    prefixes = cfg.get("skip_filename_prefixes")
+    if prefixes is not None:
+      kwargs["skip_filename_prefixes"] = tuple(prefixes)
     return ObsidianAdapter(
       vault_path=Path(vault_path),
       skip_dirs=skip_dirs,
+      **kwargs,
     )
   if source == "folders":
     raw_paths = cfg.get("paths") or []

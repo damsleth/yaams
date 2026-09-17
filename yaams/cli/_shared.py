@@ -3,12 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 import click
 
 from yaams.enrich import Embedder, EntityTagger
-from yaams.ingest import Item
 from yaams.schema import DEFAULT_EMBEDDING_DIM
 
 # Where HF model weights live by default. We keep them out of `~/.cache`
@@ -65,15 +63,6 @@ def _self_identities(cfg: dict) -> list[str]:
   return out
 
 
-def _progress(iterable: Iterable[Item], desc: str, unit: str = "it") -> Iterable[Item]:
-  try:
-    from tqdm import tqdm
-
-    return tqdm(iterable, desc=desc, unit=unit)
-  except ImportError:
-    return iterable
-
-
 def _date(value: str | None) -> str:
   if not value:
     return "n/a"
@@ -92,13 +81,6 @@ def _format_duration(ms: float) -> str:
     return f"{seconds:.1f}s"
   minutes, seconds = divmod(seconds, 60)
   return f"{int(minutes)}m{seconds:04.1f}s"
-
-
-def _format_throughput(seen: int, ms: float) -> str:
-  if ms <= 0 or seen <= 0:
-    return ""
-  rate = seen / (ms / 1000)
-  return f", {rate:,.1f} items/s"
 
 
 @dataclass

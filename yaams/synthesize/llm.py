@@ -104,6 +104,31 @@ class OllamaAdapter:
     )
 
 
+def _complete_subprocess(
+  command: list[str],
+  prompt: str,
+  *,
+  timeout: float,
+  backend: str,
+  model: str | None,
+  error_label: str,
+  encoding: str | None = None,
+) -> LLMResponse:
+  result = subprocess.run(
+    command,
+    input=prompt,
+    capture_output=True,
+    text=True,
+    timeout=timeout,
+    encoding=encoding,
+  )
+  if result.returncode != 0:
+    raise RuntimeError(
+      f"{error_label} exited {result.returncode}: {result.stderr.strip()}"
+    )
+  return LLMResponse(text=result.stdout.strip(), backend=backend, model=model)
+
+
 class SubprocessAdapter:
   backend_name = "subprocess"
 
@@ -128,23 +153,14 @@ class SubprocessAdapter:
     max_tokens: int = 1024,
     temperature: float = 0.0,
   ) -> LLMResponse:
-    result = subprocess.run(
+    return _complete_subprocess(
       self.command,
-      input=prompt,
-      capture_output=True,
-      text=True,
+      prompt,
       timeout=self.timeout,
       encoding=self.encoding,
-    )
-    if result.returncode != 0:
-      raise RuntimeError(
-        f"LLM subprocess {self.command[0]!r} exited {result.returncode}: "
-        f"{result.stderr.strip()}"
-      )
-    return LLMResponse(
-      text=result.stdout.strip(),
       backend=self.backend_name,
       model=self.model_name,
+      error_label=f"LLM subprocess {self.command[0]!r}",
     )
 
 
@@ -179,21 +195,13 @@ class ClaudeCliAdapter:
       cmd.append("--safe-mode")
     if self.model_name:
       cmd += ["--model", self.model_name]
-    result = subprocess.run(
+    return _complete_subprocess(
       cmd,
-      input=prompt,
-      capture_output=True,
-      text=True,
+      prompt,
       timeout=self.timeout,
-    )
-    if result.returncode != 0:
-      raise RuntimeError(
-        f"claude CLI exited {result.returncode}: {result.stderr.strip()}"
-      )
-    return LLMResponse(
-      text=result.stdout.strip(),
       backend=self.backend_name,
       model=self.model_name,
+      error_label="claude CLI",
     )
 
 
@@ -220,21 +228,13 @@ class CodexCliAdapter:
     cmd = ["codex", "exec", "-"]
     if self.model_name:
       cmd = ["codex", "--model", self.model_name, "exec", "-"]
-    result = subprocess.run(
+    return _complete_subprocess(
       cmd,
-      input=prompt,
-      capture_output=True,
-      text=True,
+      prompt,
       timeout=self.timeout,
-    )
-    if result.returncode != 0:
-      raise RuntimeError(
-        f"codex CLI exited {result.returncode}: {result.stderr.strip()}"
-      )
-    return LLMResponse(
-      text=result.stdout.strip(),
       backend=self.backend_name,
       model=self.model_name,
+      error_label="codex CLI",
     )
 
 

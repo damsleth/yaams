@@ -9,8 +9,26 @@ import pytest
 from yaams.consolidate import build_consolidations
 from yaams.ingest.base import Item, hash_id
 from yaams.retrieve import HybridQueryConfig, query
+from yaams.retrieve.hybrid import _filter_params
 from yaams.schema import init_schema
 from yaams.store import store_consolidations, store_items
+
+
+@pytest.mark.parametrize("repo", [True, False])
+@pytest.mark.parametrize("filtered", [True, False])
+def test_shared_filter_parameters_preserve_sql_order(repo, filtered):
+  cfg = HybridQueryConfig(
+    source_filter=["email"] if filtered else None,
+    repo_filter=["owner/repo"] if filtered else None,
+    since=datetime.fromisoformat("2026-04-01T14:00:00+02:00") if filtered else None,
+    until=datetime(2026, 4, 2) if filtered else None,
+  )
+  source_params = ("filter", '["email"]') if filtered else ("", "[]")
+  repo_params = ("filter", '["owner/repo"]') if filtered else ("", "[]")
+  dates = ("2026-04-01T12:00:00+00:00",) * 2 + ("2026-04-02T00:00:00+00:00",) * 2
+  assert _filter_params(cfg, repo=repo) == (
+    source_params + (repo_params if repo else ()) + (dates if filtered else (None,) * 4)
+  )
 
 
 def _make_item(

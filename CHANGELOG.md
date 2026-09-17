@@ -10,6 +10,19 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Changed
+
+- Share YAML source-block editing, entity-import persistence, subprocess LLM
+  completion handling, and retrieval filter parameters. Existing CLI commands,
+  output, and retrieval behavior stay unchanged.
+- Use `hashlib.file_digest` for promotion fixture hashes and validate the
+  installer's Python version once during interpreter selection.
+
+### Removed
+
+- Unused CLI progress and throughput helpers and the direct `tqdm` requirement.
+  Embedding dependencies may still install `tqdm` transitively.
+
 ### Added
 
 - **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`

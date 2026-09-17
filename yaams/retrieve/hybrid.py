@@ -164,9 +164,11 @@ class HybridQueryConfig:
   # Skip items annotated by yaams.quality (items.junk_reason IS NOT NULL):
   # one-word iMessages, tapback reactions, same-day duplicates, and rows Sonnet
   # judged non-retrievable. Off by default so the annotation alone changes
-  # nothing; opt in via `retrieve.exclude_junk: true` once the frozen-fixture
-  # gate has passed with it on. Consolidations carry no annotation and are
-  # unaffected.
+  # nothing; opt in via `retrieve.exclude_junk: true`. That gate passed on the
+  # owner's corpus 2026-09-17 (rank-1 and recall@10 unchanged, 0 regressions),
+  # but only after 37 of 56 raw-item gold labels were found to be junk -- two
+  # junk gold rows had inverted the verdict. Re-measure per corpus.
+  # Consolidations carry no annotation and are unaffected.
   exclude_junk: bool = False
 
 

@@ -1,4 +1,4 @@
-"""Sonnet pass over the post-mechanical short rows: annotate llm:junk.
+"""LLM pass over the post-mechanical short rows: annotate llm:junk.
 
 Usage (project venv):
   .venv/bin/python scripts/junk_sonnet_pass.py --agreement 50   # two-run agreement on a sample
@@ -20,12 +20,27 @@ Modes:
   --apply         judge everything twice, write llm:junk ONLY where both runs
                   say JUNK; disagreements are left NULL (i.e. kept)
 
+Judge-agnostic: the rubric lives in `junk_verdict_prompt.md` ($YAAMS_JUNK_PROMPT)
+and the judge is any command that reads it on stdin and writes "<n>: JUNK|KEEP"
+lines on stdout -- `--judge` / $YAAMS_JUDGE_CMD. Use it to spend a different
+provider's quota, or to pin effort explicitly (it is otherwise inherited from
+whatever shell launched the run, silently):
+
+  --judge "claude -p --model sonnet --effort low"
+  --judge2 "copilot -p --model claude-sonnet-4.5"   # run 2 on another licence
+
+Two different judges agreeing is stronger evidence than one agreeing with
+itself -- but the plan's 93% agreement was measured Sonnet-vs-Sonnet, so
+re-measure with --agreement before spending a full pass on a new pairing.
+Each run records its judge in <ckpt>.meta, so a mixed run is visible after.
+
 Never deletes. Reverse with: UPDATE items SET junk_reason=NULL WHERE junk_reason='llm:junk'
 """
 import argparse
 import json
 import os
 import random
+import shlex
 import subprocess
 import sys
 import time
@@ -45,16 +60,15 @@ WHERE junk_reason IS NULL
 ORDER BY thread_id, timestamp
 """
 
-PROMPT = """You label short chat messages for a personal search index. For each numbered message decide:
+PROMPT_PATH = os.environ.get(
+  "YAAMS_JUNK_PROMPT", os.path.join(os.path.dirname(__file__), "junk_verdict_prompt.md"))
+PROMPT = open(PROMPT_PATH).read().rstrip() + "\n\n"
 
-  JUNK  - carries no retrievable content on its own: pure acknowledgement ("ok takk", "yes let's do that"), greeting/sign-off, emoji-only, "on my way", a forwarded system notice, a bare reaction. Someone searching their history would never want this row as a result.
-  KEEP  - names or implies something findable: a person, place, time, decision, task, object, event, feeling about a specific thing, a question with content, a URL/code/number.
+# The judge is any command that reads the prompt on stdin and writes
+# "<n>: JUNK|KEEP" lines on stdout -- claude, a Copilot CLI, an ollama wrapper.
+# Effort is NOT inherited by accident: pass it in the command if you want it.
+DEFAULT_JUDGE = "claude -p --model sonnet"
 
-Context lines (prev/next) are for understanding only; judge the TARGET line. When unsure, KEEP.
-
-Output exactly one line per message: "<n>: JUNK" or "<n>: KEEP". Nothing else.
-
-"""
 
 
 def load_scope(conn):
@@ -91,7 +105,7 @@ class RateLimited(Exception):
 BACKOFF = (60, 120, 300, 900, 1800, 1800, 1800)
 
 
-def judge_text(text, n):
+def judge_text(text, n, cmd=None):
   """Worker: CLI only. Returns a verdict list, or None on failure.
 
   A failed call is a *failure*, never a batch of KEEP: the first version
@@ -99,7 +113,7 @@ def judge_text(text, n):
   "keep" votes that vetoed every real JUNK verdict at the agreement gate.
   """
   for attempt, backoff in enumerate(BACKOFF):
-    r = subprocess.run(["claude", "-p", "--model", "sonnet"], input=text,
+    r = subprocess.run(shlex.split(cmd or DEFAULT_JUDGE), input=text,
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0 or not r.stdout.strip():
       why = (r.stderr or r.stdout).strip()[-300:] or f"rc={r.returncode}, empty stdout"
@@ -139,15 +153,19 @@ def load_ckpt(run_id):
   return out
 
 
-def run_pass(conn, rows, workers=6, run_id=1):
+def run_pass(conn, rows, workers=6, run_id=1, judge=None):
   """Judge every batch not already in this run's checkpoint. Stops at the first
   failed batch (rate limit) and reports progress; rerun to resume."""
   done = load_ckpt(run_id)
   todo = [b for b in chunked(rows, BATCH) if not all(r["id"] in done for r in b)]
-  print(f"run {run_id}: {len(done)} rows checkpointed, {len(todo)} batches to go", file=sys.stderr, flush=True)
+  print(f"run {run_id}: {len(done)} rows checkpointed, {len(todo)} batches to go "
+        f"[judge: {judge or DEFAULT_JUDGE}]", file=sys.stderr, flush=True)
+  # which judge produced which run, so a mixed run is visible afterwards
+  with open(ckpt_path(run_id) + ".meta", "a") as mf:
+    mf.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{judge or DEFAULT_JUDGE}\t{len(todo)} batches\n")
   texts = [PROMPT + render(conn, b) for b in todo]
   with open(ckpt_path(run_id), "a") as ck, ThreadPoolExecutor(max_workers=workers) as ex:
-    for i, (b, v) in enumerate(zip(todo, ex.map(lambda tb: judge_text(tb[0], len(tb[1])), zip(texts, todo)))):
+    for i, (b, v) in enumerate(zip(todo, ex.map(lambda tb: judge_text(tb[0], len(tb[1]), judge), zip(texts, todo)))):
       if v is None:
         raise RateLimited(f"run {run_id}: batch {i+1}/{len(todo)} failed after retries; "
                           f"{len(load_ckpt(run_id))} rows checkpointed so far -- rerun to resume")
@@ -164,6 +182,10 @@ def main():
   ap.add_argument("--apply", action="store_true")
   ap.add_argument("--limit", type=int, default=0)
   ap.add_argument("--workers", type=int, default=6)
+  ap.add_argument("--judge", default=os.environ.get("YAAMS_JUDGE_CMD"),
+                  help=f"command reading the prompt on stdin (default: {DEFAULT_JUDGE!r})")
+  ap.add_argument("--judge2", help="different judge for run 2; cross-model agreement is "
+                                   "stronger evidence than a model agreeing with itself")
   a = ap.parse_args()
 
   cfg = yaml.safe_load(open(os.path.expanduser("~/.config/yaams/config.yaml")))
@@ -177,8 +199,8 @@ def main():
   if a.agreement:
     random.seed(7)
     sample = random.sample(rows, min(a.agreement, len(rows)))
-    v1 = run_pass(conn, sample, a.workers, run_id=91)
-    v2 = run_pass(conn, sample, a.workers, run_id=92)
+    v1 = run_pass(conn, sample, a.workers, run_id=91, judge=a.judge)
+    v2 = run_pass(conn, sample, a.workers, run_id=92, judge=a.judge2 or a.judge)
     pairs = [(r, v1[r["id"]], v2[r["id"]]) for r in sample]
     agree = sum(1 for _, x, y in pairs if x == y)
     both = sum(1 for _, x, y in pairs if x == y == "JUNK")
@@ -186,9 +208,9 @@ def main():
     return
 
   try:
-    v1 = run_pass(conn, rows, a.workers, run_id=1)
+    v1 = run_pass(conn, rows, a.workers, run_id=1, judge=a.judge)
     if a.apply:
-      v2 = run_pass(conn, rows, a.workers, run_id=2)
+      v2 = run_pass(conn, rows, a.workers, run_id=2, judge=a.judge2 or a.judge)
   except RateLimited as e:
     print(f"STOPPED: {e}")
     return

@@ -55,7 +55,11 @@ DEFAULT_SKIP_DIRS = {".obsidian", ".git", ".smartchats", ".smart-env", ".claude"
 class ObsidianAdapter:
   vault_path: Path
   skip_dirs: set[str] = field(default_factory=lambda: set(DEFAULT_SKIP_DIRS))
-  skip_filename_prefixes: tuple[str, ...] = ("_",)
+  # No filename-prefix skipping by default. The vault uses a leading "_" for
+  # per-folder hub notes (_did, _swon, _une, _fdep, …) so they sort to the top
+  # in Obsidian; skipping them hid ~32 of the densest notes from recall. Callers
+  # that do want it can still pass a tuple.
+  skip_filename_prefixes: tuple[str, ...] = ()
   skipped_empty: int = field(default=0, init=False)
 
   def extract(self, since: datetime) -> Iterator[Item]:

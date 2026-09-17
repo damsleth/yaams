@@ -20,7 +20,7 @@ def test_failed_batch_stops_run_and_keeps_earlier_verdicts(tmp_path, monkeypatch
   lock, calls = threading.Lock(), itertools.count()
   started = []
 
-  def fake_judge(text, n):
+  def fake_judge(text, n, cmd=None):
     with lock:
       i = next(calls)
       started.append(i)
@@ -36,5 +36,5 @@ def test_failed_batch_stops_run_and_keeps_earlier_verdicts(tmp_path, monkeypatch
   assert len(started) < 20, "a failure must cancel the queue, not burn all 40 calls"
 
   # resume: the checkpointed rows are not re-judged
-  monkeypatch.setattr(jp, "judge_text", lambda text, n: ["JUNK"] * n)
+  monkeypatch.setattr(jp, "judge_text", lambda text, n, cmd=None: ["JUNK"] * n)
   assert len(jp.run_pass(None, _rows(40), workers=6, run_id=77)) == 40

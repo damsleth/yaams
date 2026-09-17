@@ -85,6 +85,12 @@ class RateLimited(Exception):
   pass
 
 
+# ponytail: a subscription rate-limit window is hours, not seconds. The first
+# version gave up after 3 tries / 15s, so one limit ended the run. ~2h of
+# patience outlasts a window; past that, fail-stop with the checkpoint intact.
+BACKOFF = (60, 120, 300, 900, 1800, 1800, 1800)
+
+
 def judge_text(text, n):
   """Worker: CLI only. Returns a verdict list, or None on failure.
 
@@ -92,11 +98,14 @@ def judge_text(text, n):
   defaulted to KEEP and turned an hour of rate-limited calls into 24k silent
   "keep" votes that vetoed every real JUNK verdict at the agreement gate.
   """
-  for attempt in range(3):
+  for attempt, backoff in enumerate(BACKOFF):
     r = subprocess.run(["claude", "-p", "--model", "sonnet"], input=text,
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0 or not r.stdout.strip():
-      time.sleep(5 * (attempt + 1))
+      why = (r.stderr or r.stdout).strip()[-300:] or f"rc={r.returncode}, empty stdout"
+      print(f"    call failed (attempt {attempt + 1}/{len(BACKOFF)}), sleeping {backoff}s: {why}",
+            file=sys.stderr, flush=True)
+      time.sleep(backoff)
       continue
     verdict = {}
     for line in r.stdout.splitlines():
@@ -107,7 +116,9 @@ def judge_text(text, n):
           verdict[int(k)] = v.strip().upper()
     if len(verdict) >= n * 0.9:
       return [verdict.get(i, "KEEP") for i in range(1, n + 1)]
-    time.sleep(2)
+    print(f"    unparseable reply ({len(verdict)}/{n} verdicts), sleeping {backoff}s",
+          file=sys.stderr, flush=True)
+    time.sleep(backoff)
   return None
 
 

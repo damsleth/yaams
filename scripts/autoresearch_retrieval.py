@@ -172,6 +172,7 @@ def _replay_one(
     reranker_model: str = "BAAI/bge-reranker-v2-m3",
     reranker_device: str | None = "cpu",
     feedback_boost: bool = False,
+    exclude_junk: bool = False,
 ) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
@@ -188,6 +189,7 @@ def _replay_one(
         # from the corpus edge or wall clock they are months old, and every
         # recency experiment before this was judged on that wrong axis.
         recency_now=parse_iso_datetime(row["ts"]) if row["ts"] else None,
+        exclude_junk=exclude_junk,
     )
     if parsed is not None:
         qcfg = route(parsed, base, self_identities=self_ids)
@@ -245,6 +247,9 @@ def main() -> int:
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="dev",
                     help="Score only this bucket (loop should use 'dev').")
+    ap.add_argument("--exclude-junk", action="store_true",
+                    help="skip items annotated by yaams.quality (retrieve.exclude_junk); "
+                         "run against a junk-annotated COPY of the fixture, never the fixture")
     ap.add_argument("--rerank-k", type=int, default=None,
                     help="Enable cross-encoder rerank with this candidate-pool size "
                          "(item 06 sweep). Requires the reranker model to be available.")
@@ -298,6 +303,7 @@ def main() -> int:
                 conn, embedder, self_ids, row, synonym_groups,
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
                 reranker_device=rerank_device, feedback_boost=args.feedback_boost,
+                exclude_junk=args.exclude_junk,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)

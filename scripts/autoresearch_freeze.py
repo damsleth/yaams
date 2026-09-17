@@ -54,6 +54,9 @@ def _gold_hash(conn) -> tuple[str, int, int]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="verify fixture matches manifest, don't re-freeze")
+    ap.add_argument("--promote", metavar="DB",
+                    help="promote an already-prepared db (e.g. a curated/annotated copy) to the "
+                         "fixture instead of re-snapshotting live; same deliberate era change")
     args = ap.parse_args()
     cfg = load_config()
 
@@ -70,7 +73,7 @@ def main() -> int:
         return 0 if ok else 2
 
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    live = str(get_db_path(cfg))
+    live = args.promote or str(get_db_path(cfg))
     shutil.copy2(live, FIXTURE)
     with open_db(str(FIXTURE), readonly=True) as conn:
         h, n, nc = _gold_hash(conn)
@@ -83,7 +86,7 @@ def main() -> int:
         "corrections": nc,
         "total_queries": n_queries,
     }, indent=2) + "\n")
-    print(f"froze {live}\n  -> {FIXTURE}")
+    print(f"{'promoted' if args.promote else 'froze'} {live}\n  -> {FIXTURE}")
     print(f"  gold={n} corrections={nc} total_queries={n_queries} hash={h[:12]}")
     print(f"  manifest -> {MANIFEST.relative_to(_REPO)}")
     return 0

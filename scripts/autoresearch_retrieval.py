@@ -235,6 +235,11 @@ def _mode_label(args) -> str:
         base = f"{base}+rerank{args.rerank_k}"
     if getattr(args, "feedback_boost", False):
         base = f"{base}+fb"
+    if getattr(args, "exclude_junk", False):
+        # Junk-excluded runs anchor separately: a smaller pool shifts every
+        # per-index rank, so comparing across the setting reports regressions
+        # that are really just a different corpus.
+        base = f"{base}+nojunk"
     return base
 
 

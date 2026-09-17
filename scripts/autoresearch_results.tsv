@@ -82,3 +82,5 @@ junk-3cat-off-cleangold	hybrid	dev	0.5892	0.6364	0.479	158.3	0	ok
 junk-3cat-on-cleangold	hybrid	dev	0.5318	0.6061	0.4377	195.8	2	fail:regression
 junk-curated-off	hybrid	dev	0.4963	0.5789	0.4129	260.2	18	fail:regression
 junk-curated-on	hybrid	dev	0.5283	0.5789	0.4102	231.2	0	ok
+era2-anchor-nojunk	hybrid+nojunk	dev	0.5283	0.5789	0.4102	343.5	0	ok
+era2-anchor-plain	hybrid	dev	0.5291	0.5789	0.4129	286.5	0	ok

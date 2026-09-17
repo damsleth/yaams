@@ -267,6 +267,16 @@ retrieve:
     device: cpu                      # cross-encoder crashes on Apple mps; cpu is
                                      # stable and fast enough for a small pool (set cuda on a GPU box)
 
+  # Skip rows annotated by yaams.quality (items.junk_reason IS NOT NULL):
+  # short messaging rows, tapback reactions, same-day duplicates, and rows an
+  # LLM judged non-retrievable. Off by default -- the annotation alone changes
+  # nothing, and the right setting depends on your corpus. On the owner's
+  # corpus the frozen-fixture gate passed 2026-09-17 with all three categories
+  # on: rank-1 22 both ways, recall@10 0.9211 both ways, 0 regressions. Measure
+  # before flipping it; an earlier run failed only because two gold labels were
+  # themselves junk. Consolidations carry no annotation and are unaffected.
+  exclude_junk: false
+
   # Cross-lingual and domain synonym groups for FTS query expansion.
   # Each entry is a list of interchangeable terms; any term in a group expands
   # to the full set at query time.  Entity aliases from the entity dictionary

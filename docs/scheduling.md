@@ -1,5 +1,12 @@
 # Scheduling YAAMS refresh
 
+> **On KMBP this runs from cron, not launchd** (all personal jobs were
+> consolidated into one crontab on 2026-09-21 so they live in one place and
+> stay visible to `brain jobs` and CronBoard). See `crontab -l`; the launchd
+> plist below is kept for other machines and for the record. Note that cron
+> skips a run outright if the Mac is asleep at the fire time, where launchd
+> would have run it on wake.
+
 YAAMS is refreshed nightly via a launchd agent. The agent invokes a single
 `yaams refresh` command, which runs ingest for every enabled source and then
 safe maintenance (`entities normalize`, `entities vacuum`, association
@@ -60,7 +67,9 @@ The fix is to grant FDA to the binary that launchd actually executes (the
 
 3. While you're there, also grant FDA to `/bin/zsh` and `/bin/bash` if you
    want to be able to run other launchd-spawned shell scripts that touch
-   protected paths.
+   protected paths. Under cron the same grants apply (TCC follows the
+   resolved binary); add `/usr/sbin/cron` too if a run still fails with
+   `Operation not permitted`.
 
 4. Reload the agent (see above) and confirm it works:
 

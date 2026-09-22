@@ -133,6 +133,8 @@ Same shape as the cognitive ledger's signal loop, extended:
 - LLM-driven proposals: review failure clusters, propose config changes (entity dictionary additions, retrieval weight adjustments, missing source ingestion).
 - A/B harness: any proposed change goes through the same eval framework as the ledger Phase 1/2 work.
 
+The logged signals are what the retrieval harness replays: judged queries become the frozen gold set, and every change to `yaams/retrieve/*` is scored against it. The procedure (fixture, anchor, keep rule, recording) is in [retrieval-tuning.md](retrieval-tuning.md); the experiment timeline and consolidated patterns are under [experiments/](experiments/README.md).
+
 ### Promotion pipeline
 
 Periodic (weekly?) job:

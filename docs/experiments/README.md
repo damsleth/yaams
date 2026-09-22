@@ -11,6 +11,11 @@ noise for a trend.
 > lifted into its own repo later (like ux-loop). It assumes nothing about yaams
 > except the two upstream TSV ledgers used for the one-time seed.
 
+This page documents the record. How to *produce* one honest experiment (the
+frozen fixture and its eras, the anchor and state file, the keep rule, the run
+recipe, what to log by hand after a `--no-write` run) is the operator runbook
+at [../retrieval-tuning.md](../retrieval-tuning.md).
+
 ## Files
 
 | File | Role |

@@ -14,7 +14,7 @@ from yaams.cli._shared import (
   _self_identities,
   config_option,
 )
-from yaams.config import get_db_path, load_config
+from yaams.config import get_db_path, load_config, source_context_for
 from yaams.db import open_db
 from yaams.enrich import Embedder
 from yaams.render import (
@@ -483,6 +483,7 @@ def query_cmd(
     finally:
       conn_ro.close()
     retrieval_ms = (_time.perf_counter() - retrieve_start) * 1000
+    source_notes = source_context_for(cfg, (r.source for r in results))
 
     answer_result = None
     synthesis_ms = None
@@ -493,6 +494,7 @@ def query_cmd(
         answer_result = synthesize_answer(
           query_text, results, adapter,
           shape=parsed.shape if parsed is not None else None,
+          source_notes=source_notes,
         )
       except Exception as exc:
         click.echo(f"warning: synthesis backend failed: {exc}", err=True)
@@ -543,6 +545,8 @@ def query_cmd(
       }
       if parsed is not None:
         payload["parsed"] = _json.loads(parsed.to_json())
+      if source_notes:
+        payload["context"] = source_notes
       if answer_result:
         payload["answer"] = answer_result.answer
         payload["answer_body"] = answer_result.answer_body
@@ -580,6 +584,7 @@ def query_cmd(
     click.echo()
     for i, r in enumerate(results, 1):
       _render_result(i, r)
+    _render_source_notes(source_notes)
 
     if not no_log and _should_prompt(feedback_prompt, output_format):
       _prompt_feedback(
@@ -731,6 +736,15 @@ def _result_to_dict(r) -> dict:
 
 _BODY_WIDTH = 92
 _BODY_INDENT = "     "
+
+
+def _render_source_notes(notes: dict[str, str]) -> None:
+  if not notes:
+    return
+  click.echo(click.style("Source notes:", dim=True))
+  for source, text in notes.items():
+    click.echo(click.style(f"  {source}: {text}", dim=True))
+  click.echo()
 
 
 def _render_result(rank: int, r) -> None:

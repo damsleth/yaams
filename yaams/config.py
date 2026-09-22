@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 def expand_path(value: str | Path) -> Path:
@@ -129,7 +129,7 @@ def _validate_config(data: dict[str, Any], config_path: Path) -> None:
   tracebacks well after load: a top-level section that isn't a mapping,
   and a numeric knob set to a non-numeric (or non-positive) value.
   """
-  for section in ("ingest", "embed", "synth", "entities", "retrieve"):
+  for section in ("ingest", "embed", "synth", "entities", "retrieve", "sources_context"):
     value = data.get(section)
     if value is not None and not isinstance(value, dict):
       raise ValueError(
@@ -172,6 +172,27 @@ def _apply_aliases(data: dict[str, Any]) -> None:
     # Both forms present - canonical wins. Drop the alias quietly to
     # avoid two parallel sub-trees being kept around.
     ingest.pop("ledger")
+
+
+def source_context_for(config: dict[str, Any], sources: Iterable[str]) -> dict[str, str]:
+  """Owner-written one-liners from `sources_context` for the distinct sources given.
+
+  An exact `item.source` key wins; otherwise trailing `_segment`s are stripped
+  until a key matches, so `teams` covers every `teams_<profile>`. Sources with
+  no note are left out.
+  """
+  raw = config.get("sources_context")
+  notes = {str(k): str(v).strip() for k, v in raw.items()} if isinstance(raw, dict) else {}
+  out: dict[str, str] = {}
+  for source in sources:
+    if not source or source in out:
+      continue
+    key = source
+    while key and key not in notes:
+      key = key.rpartition("_")[0]
+    if key and notes[key]:
+      out[source] = notes[key]
+  return out
 
 
 def get_db_path(config: dict[str, Any]) -> Path:

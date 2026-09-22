@@ -107,6 +107,17 @@ ingest:
   #     - work
   #   skip_free: true
 
+  # Azure DevOps work items + wiki via owa-ado (profiles of type `ado` only).
+  # ado:
+  #   enabled: false
+  #   profiles:
+  #     - nc-ado
+  #   content_types: [workitems, wiki]
+  #   wiki_dir: ~/brain/ado-wiki
+  #   top: 500
+  #   projects:
+  #     nc-ado: NOCOS
+
 embed:
   model: BAAI/bge-m3
   batch_size: 32

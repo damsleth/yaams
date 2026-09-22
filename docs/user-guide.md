@@ -199,11 +199,40 @@ derived fields refresh. A `--full` run never moves a watermark backwards.
 | `calendar` / `calendar_<profile>` | Outlook calendar via `owa-cal` |
 | `mail` / `mail_<profile>` | Microsoft 365 mail via `owa-mail` |
 | `teams` / `teams_<profile>` | Microsoft Teams via Graph |
+| `drive` / `drive_<profile>` | Google Drive or OneDrive documents via `owa-piggy` |
+| `ado` / `ado_<profile>` | Azure DevOps work items + wiki pages via `owa-ado` |
 
 Microsoft 365 sources are **profile-keyed**: configure a profile once with
 `owa-piggy setup --profile <name>` and reference it under `profiles:`. Each
 profile becomes its own source id (e.g. `mail_work`, `calendar_work`), so you
-can ingest and query per identity.
+can ingest and query per identity. The `sources` TUI only offers a source to
+profiles whose owa-piggy `type` can feed it: `m365` profiles get mail,
+calendar, teams and drive; `google` profiles get drive; `ado` profiles get
+`ado` and nothing else.
+
+#### Azure DevOps (`ado`)
+
+`ado_<profile>` shells out to `owa-ado` (org and project come from owa-ado's
+own per-profile config; yaams passes only `--profile`). Two content types,
+both on by default via `content_types: [workitems, wiki]`:
+
+- **Work items** are pulled incrementally with a WIQL query on
+  `System.ChangedDate` and fetched one by one with `wi <id> --full`. HTML
+  fields (description, acceptance criteria, repro steps) are stripped to
+  text. The item's `source_id` is `<id>:<rev>`, so an edited work item lands
+  as a new item and the earlier revision stays in the raw store. Comments are
+  not ingested (owa-ado has no comment read verb); `raw_metadata.comment_count`
+  records how many exist.
+- **Wiki pages** are mirrored with `owa-ado wiki --download` into
+  `<wiki_dir>/<profile>` and indexed from the markdown on disk. Wiki pages
+  carry no reliable server-side date, so the file mtime is used with
+  `timestamp_inferred=true` (recency sorting ignores such items), and the
+  body hash rides in `source_id` (`<path>:<sha8>`) so an edited page is a new
+  item.
+
+Set `projects: {<profile>: <name>}` when the wiki or backlog lives in a
+different project than the one pinned in owa-ado's config. Pull requests,
+pipelines and runs are deliberately not ingested.
 
 ### Incremental and idempotent
 

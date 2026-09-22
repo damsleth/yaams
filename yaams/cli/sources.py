@@ -3,7 +3,7 @@
 Reads the active config.yaml, lists every `ingest.<source>` block that has an
 `enabled:` key, lets the user toggle them with arrow keys + space, apply with
 enter. For path-list sources (folders, email) and profile-aware sources
-(calendar, teams, mail, drive) the TUI also shows individual sub-entries that
+(calendar, teams, mail, drive, ado) the TUI also shows individual sub-entries that
 can be toggled and (for path sources) added/removed inline.
 
 Calendar/teams discover their available profiles by shelling out to
@@ -46,7 +46,7 @@ ARROW = "▸"
 BULLET = "·"
 
 
-PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail", "drive"}
+PROFILE_AWARE = {"teams", "teams_channels", "calendar", "mail", "drive", "ado"}
 PATH_LIST_SOURCES = {"email", "folders"}
 SINGLE_PATH_SOURCES = {"notes"}
 
@@ -54,12 +54,12 @@ SINGLE_PATH_SOURCES = {"notes"}
 # exist today: owa-cal/owa-mail are Graph-only, so a google profile is drive
 # only (drive picks its provider by token shape at ingest time, so a single
 # `drive` row lists both m365 and google profiles); an ADO profile feeds
-# nothing until the ado source lands. owa-piggy owns the `type`; yaams owns
-# this mapping. Widen a row only when its ingest path exists.
+# only `ado` (owa-ado work items + wiki). owa-piggy owns the `type`; yaams
+# owns this mapping. Widen a row only when its ingest path exists.
 SOURCES_BY_PROFILE_TYPE: dict[str, set[str]] = {
   "m365": {"mail", "calendar", "teams", "teams_channels", "drive"},
   "google": {"drive"},
-  "ado": set(),
+  "ado": {"ado"},
 }
 # Older owa-piggy has no `type` field; treat an unknown/absent type as m365 so
 # behaviour is unchanged until the broker ships classification.
@@ -121,6 +121,14 @@ _SOURCE_BLOCK_TEMPLATES: dict[str, list[str]] = {
     "    enabled: false\n",
     "    profiles: []\n",
     "    local_dir: ~/brain/docs\n",
+  ],
+  "ado": [
+    "\n",
+    "  ado:\n",
+    "    enabled: false\n",
+    "    profiles: []\n",
+    "    content_types: [workitems, wiki]\n",
+    "    wiki_dir: ~/brain/ado-wiki\n",
   ],
   "folders": ["\n", "  folders:\n", "    enabled: false\n", "    paths: []\n"],
   "notes": [
@@ -320,6 +328,7 @@ _PROFILE_SOURCES = {
   "teams": (lambda: discover_teams_profiles(), _tag_m365_profile),
   "teams_channels": (lambda: discover_teams_profiles(), _tag_m365_profile),
   "drive": (lambda: discover_teams_profiles(), _tag_m365_profile),
+  "ado": (lambda: discover_teams_profiles(), _tag_m365_profile),
 }
 
 
@@ -423,7 +432,7 @@ def _append_synthetic_m365_rows(rows: list[Row]) -> None:
   piggy = [p for p in discover_teams_profiles() if p.get("enabled", True)]
   if not piggy:
     return
-  for source_name in ("mail", "calendar", "teams", "teams_channels", "drive"):
+  for source_name in ("mail", "calendar", "teams", "teams_channels", "drive", "ado"):
     if source_name in configured:
       continue
     eligible = [p for p in piggy if _supports(p, source_name)]
@@ -489,6 +498,10 @@ def _summary_for(key: str, block: dict) -> str:
   if key == "drive":
     configured = block.get("profiles") or []
     return f"{len(configured)} profile(s) active"
+  if key == "ado":
+    configured = block.get("profiles") or []
+    kinds = ", ".join(block.get("content_types") or ["workitems", "wiki"])
+    return f"{len(configured)} profile(s) active, {kinds}"
   if key == "outlook_calendar":
     return "Outlook.app (local, AppleScript)"
   if key == "outlook_mail":

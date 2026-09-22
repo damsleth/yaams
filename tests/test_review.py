@@ -780,3 +780,10 @@ def test_verdict_b_rank_marks_bad_result():
   assert verdict_signal(item, "b2") == {"query_id": "q_x", "kind": "bad_result", "result_id": "r2"}
   assert verdict_signal(item, "b7") is None
   assert verdict_signal(item, "b") is None
+
+
+def test_bad_result_alone_keeps_query_unjudged():
+  conn = _open()
+  _log(conn, "q_a", result_ids=["r1", "r2"])
+  log_feedback(conn, query_id="q_a", kind="bad_result", result_id="r2")
+  assert [i.query_id for i in build_review_queue(conn)] == ["q_a"]

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 17964,
+    "type": "Task",
+    "title": "Configure support role list & lookup",
+    "state": "Active",
+    "assignedTo": "Placeholder Person",
+    "iteration": "EXAMPLE\\Sprint 1",
+    "area": "EXAMPLE",
+    "tags": null,
+    "changed": "2026-09-22T06:21:22.637Z",
+    "url": "https://dev.azure.com/Example-Org/_apis/wit/workItems/17964"
+  },
+  {
+    "id": 15661,
+    "type": "Task",
+    "title": "Older item changed earlier the same day",
+    "state": "New",
+    "assignedTo": "Placeholder Person",
+    "iteration": "EXAMPLE\\Sprint 1",
+    "area": "EXAMPLE",
+    "tags": null,
+    "changed": "2026-09-22T01:00:00Z",
+    "url": "https://dev.azure.com/Example-Org/_apis/wit/workItems/15661"
+  }
+]

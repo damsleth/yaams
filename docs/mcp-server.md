@@ -72,6 +72,16 @@ the `backend` / `model` used, the underlying `results`, and the same `context`
 block as `yaams_query`. The notes are also prepended to the synthesis prompt as
 "Source notes" so the model reads each source with the owner's framing.
 
+`mcp.answer_token_budget` (default `0`, off) caps the evidence synthesis sees
+and the returned `results` at roughly N tokens (`len(text) // 4` per result,
+in fused-rank order). Rank 1 always survives, truncated with a `[truncated]`
+marker if it alone is over budget, and the payload gains
+`omitted: {count, from_rank, reason: "budget"}` so a trimmed context never
+reads as full coverage. The query log still records every retrieved result.
+Measured 2026-09-22 on the era-2 fixture at `limit=5`: top-5 contexts run
+p50 1461 / p90 2320 tokens, and a 2000 budget kept a gold doc in context for
+20 of 38 gold queries vs 21 unbudgeted. That is why the default stays off.
+
 ### `yaams_feedback(query_id, rank, verdict, note="")`
 
 Write-gated. `verdict` is one of `hit | relevant | miss | correction | thin`.

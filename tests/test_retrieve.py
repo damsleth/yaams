@@ -898,3 +898,22 @@ def test_recency_decay_widens_fetch_so_fresh_items_enter_the_pool():
   assert decayed_ids and decayed_ids[0] == fresh.id
   # and without the widening it would not even have been a candidate
   assert fresh.id not in plain_ids
+
+
+def test_components_and_boosts_explain_the_fused_order():
+  from yaams.cli.query import _result_to_dict
+
+  conn = _open_db()
+  raw = _make_item(source="email", thread_id="t-raw", content="gamma explain token", msg_id="raw-e")
+  ledger = _make_item(
+    source="tier2_ledger", thread_id="t-led", content="gamma explain token", msg_id="led-e"
+  )
+  store_items(conn, [raw, ledger], [b"\x00" * 16] * 2, [[]] * 2)
+
+  results = query(conn, "gamma explain", config=HybridQueryConfig(tier2_boost=2.0, include_consolidations=False))
+  dicts = [_result_to_dict(r) for r in results]
+  assert all(d["components"]["fts_rank"] is not None for d in dicts)
+  assert [d["score"] for d in dicts] == sorted((d["score"] for d in dicts), reverse=True)
+  by_source = {d["source"]: d for d in dicts}
+  assert by_source["tier2_ledger"]["components"]["boosts"]["tier2_boost"] == 2.0
+  assert by_source["email"]["components"]["boosts"] == {}

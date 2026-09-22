@@ -584,6 +584,8 @@ def query_cmd(
     click.echo()
     for i, r in enumerate(results, 1):
       _render_result(i, r)
+      if explain:
+        click.echo(click.style(_explain_line(r), dim=True))
     _render_source_notes(source_notes)
 
     if not no_log and _should_prompt(feedback_prompt, output_format):
@@ -727,11 +729,35 @@ def _result_to_dict(r) -> dict:
     "subject": r.subject,
     "thread_id": r.thread_id,
     "score": round(r.score, 4),
+    "components": _components_to_dict(r),
     "item_count": r.item_count,
     "participants": r.participants,
     "content_preview": (r.content or "")[:400],
     "trust": trust_to_dict(getattr(r, "trust", None)),
   }
+
+
+def _components_to_dict(r) -> dict | None:
+  comp = getattr(r, "components", None)
+  if comp is None:
+    return None
+  rnd = lambda v: None if v is None else round(v, 6)  # noqa: E731
+  return {
+    "fts_rank": comp.fts_rank,
+    "fts_score": rnd(comp.fts_score),
+    "vector_rank": comp.vector_rank,
+    "vector_distance": rnd(comp.vector_distance),
+    "rrf_score": rnd(comp.rrf_score),
+    "credits": {k: rnd(v) for k, v in comp.credits.items()},
+    "boosts": {k: rnd(v) for k, v in getattr(r, "boosts", {}).items()},
+  }
+
+
+def _explain_line(r) -> str:
+  c = _components_to_dict(r) or {}
+  parts = [f"{k}={c.get(k)}" for k in ("fts_rank", "vector_rank", "rrf_score")]
+  parts += [f"{k}={v}" for k, v in {**c.get("credits", {}), **c.get("boosts", {})}.items()]
+  return "     explain: " + " ".join(parts)
 
 
 _BODY_WIDTH = 92

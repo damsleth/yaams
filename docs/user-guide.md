@@ -406,6 +406,22 @@ yaams query --high-quality "..."# synthesis-grade depth (higher top_k)
 `--explain` is your window into what the parser understood — use it whenever
 results surprise you (see [Troubleshooting](#14-troubleshooting)).
 
+`--explain` also prints one `explain:` line under each result, and every JSON
+result (CLI `--json` and the MCP payload) carries the same data as a
+`components` block:
+
+- `fts_rank` / `vector_rank`: 0-based rank in the best FTS / vector lane, or
+  `null` when that lane missed the doc. `fts_score` is the raw BM25 value
+  (lower is better), `vector_distance` the sqlite-vec distance.
+- `rrf_score`: the fused reciprocal-rank score, including `credits`
+  (`rank_agreement` multiplier, `thread_coherence` additive credit). Scores
+  are RRF-scale (roughly 0.01-0.2), not probabilities, and are only
+  comparable within one query.
+- `boosts`: post-fusion adjustments that fired, by name: `tier2_coverage`
+  (additive), `tier2_boost`, `recency`, `entity_boost`, `feedback_boost`,
+  `assoc` (multipliers), `rerank` (cross-encoder score that replaced the RRF
+  score). An empty block means `score` is the plain RRF score.
+
 ### Source notes
 
 A source id like `teams_brkh` tells a reader (or an agent) nothing about what

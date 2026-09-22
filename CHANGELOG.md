@@ -25,6 +25,16 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- **`docs/retrieval-tuning.md`, the retrieval-tuning runbook.** One page that
+  walks an operator or agent through a single honest experiment: the frozen
+  fixture and manifest and why eras are not comparable, the regression anchor
+  and `scripts/.autoresearch_state.json` (including the `+nojunk` mode key and
+  when to delete the file), the keep rule with its held-out ablation, the
+  `--no-write --exclude-junk` run recipe, hand-logging a variant with the
+  harness-to-timeline field mapping, which knobs are live config versus code
+  constants, and where the dead ideas are recorded. Linked from AGENTS.md,
+  the user guide's relevance-loop section, `docs/experiments/README.md` and
+  `docs/architecture.md`.
 - **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`
   and the `yaams.quality` module. Measured on the live corpus 2026-09-16: 32% of
   iMessages are under 10 characters and 23% are exact-content duplicates. Two

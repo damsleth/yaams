@@ -203,11 +203,11 @@ def result_boost_counts(
     result the human marked as the *right* answer that was mis-ranked (see
     ``cli/query.py``), so it is positive for that doc, not negative.
 
-  There is deliberately no per-doc negative here: ``miss``/``noise`` are
-  query-level (no ``result_id``), and treating a correction as a demotion is the
-  exact inversion this replaced. The capped boost in ``retrieve.hybrid.query``
-  is the only runaway guard. An explicit per-doc negative is a P3 item
-  (.plans/retrieval-flywheel.md).
+  The per-doc negative is an explicit ``bad_result`` review verdict (a human
+  saying "this doc is wrong for this query"); each one subtracts one, floored
+  at 0 so a doc never drops below its un-boosted score. ``miss``/``noise`` stay
+  query-level (no ``result_id``), and a correction is never a demotion. The
+  capped boost in ``retrieve.hybrid.query`` is the runaway guard.
 
   ``exclude_query_id`` drops one query's own signals (leave-one-out): an eval
   replay must not boost a doc using the very query it is scored on, and a live
@@ -230,6 +230,12 @@ def result_boost_counts(
   ):
     for rid, n in conn.execute(sql, ids + ex_param).fetchall():
       counts[rid] = counts.get(rid, 0) + int(n)
+  for rid, n in conn.execute(
+    f"SELECT result_id, COUNT(*) FROM query_feedback "
+    f"WHERE kind = 'bad_result' AND result_id IN ({placeholders}){ex_clause} GROUP BY result_id",
+    ids + ex_param,
+  ).fetchall():
+    counts[rid] = max(0, counts.get(rid, 0) - int(n))
   return counts
 
 

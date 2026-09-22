@@ -773,3 +773,10 @@ def test_queue_hides_legacy_and_eval_provenance_by_default():
   assert [i.query_id for i in build_review_queue(conn)] == ["q_cli"]
   # ... but stay reachable when asked for explicitly
   assert [i.query_id for i in build_review_queue(conn, provenance="legacy")] == ["q_legacy"]
+
+
+def test_verdict_b_rank_marks_bad_result():
+  item = _item_with_results([1, 2])
+  assert verdict_signal(item, "b2") == {"query_id": "q_x", "kind": "bad_result", "result_id": "r2"}
+  assert verdict_signal(item, "b7") is None
+  assert verdict_signal(item, "b") is None

@@ -110,6 +110,17 @@ def _log_mcp_query(
     conn.close()
 
 
+def _log_auto_miss(cfg: dict, query_id: str) -> None:
+  """Agent-side negative: an answer that cited none of its evidence is a miss."""
+  from yaams.signals import log_feedback
+
+  conn = open_db(get_db_path(cfg))
+  try:
+    log_feedback(conn, query_id=query_id, kind="miss", payload={"auto": "no_citations"})
+  finally:
+    conn.close()
+
+
 def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source: str) -> list:
   """Shared retrieval path: embed -> hybrid query -> attach trust verdicts."""
   from yaams.cli.query import (
@@ -162,6 +173,7 @@ def _apply_token_budget(results: list, budget: int) -> tuple[list, dict | None]:
     return results, None
   kept: list = []
   used = 0
+  truncated = False
   for r in results:
     cost = len((r.subject or "") + (r.content or "")) // 4
     if kept and used + cost > budget:
@@ -169,11 +181,16 @@ def _apply_token_budget(results: list, budget: int) -> tuple[list, dict | None]:
     if not kept and cost > budget:
       r = replace(r, content=(r.content or "")[: max(0, budget * 4 - len(r.subject or ""))] + " [truncated]")
       cost = budget
+      truncated = True
     kept.append(r)
     used += cost
-  if len(kept) == len(results):
+  if len(kept) == len(results) and not truncated:
     return kept, None
-  return kept, {"count": len(results) - len(kept), "from_rank": len(kept) + 1, "reason": "budget"}
+  omitted = {"count": len(results) - len(kept), "from_rank": len(kept) + 1, "reason": "budget"}
+  if truncated:
+    # content_preview is capped at 400 chars, so the marker alone can be invisible.
+    omitted["truncated_rank_1"] = True
+  return kept, omitted
 
 
 def create_server(*, config_path: str | None = None, allow_write: bool = False):
@@ -237,6 +254,8 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       gaps=answer.gaps, latency_ms=retrieval_ms + synthesis_ms,
       retrieval_ms=retrieval_ms, synthesis_ms=synthesis_ms,
     )
+    if not answer.cited_result_ids and (cfg.get("mcp") or {}).get("auto_miss"):
+      _log_auto_miss(cfg, query_id)
     payload = {
       "query_id": query_id,
       "answer": answer.answer_body or answer.answer,

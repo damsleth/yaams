@@ -850,6 +850,13 @@ yaams version               # version (--json for machine output)
 yaams setup                 # install runtime assets (spaCy NER models)
 ```
 
+`yaams stats --usage [--top N] [--stale-months M]` reads the query log
+(excluding `eval` / `test` / `legacy` provenance and queries whose latest
+verdict is `noise`) and prints the most-cited results plus the Tier 2 notes no
+query has surfaced in M months. The second list is an archive-review prompt
+for the ledger; yaams never moves notes itself. Surfaced counts reflect past
+ranking, so they are never fed back into scoring.
+
 Re-tag stored items after changing your entity dictionary or NER model:
 
 ```bash

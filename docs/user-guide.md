@@ -376,6 +376,26 @@ yaams query --high-quality "..."# synthesis-grade depth (higher top_k)
 `--explain` is your window into what the parser understood — use it whenever
 results surprise you (see [Troubleshooting](#14-troubleshooting)).
 
+### Source notes
+
+A source id like `teams_brkh` tells a reader (or an agent) nothing about what
+that source is. Write one line per source under a top-level `sources_context`
+block and it is returned alongside the hits: once, dimmed, under the results
+in text mode, and as a `context: {source: text}` object in `--json` (absent
+when no returned source has a note). Keys match `item.source` exactly; a bare
+family key (`teams`) covers every `teams_<profile>` without an exact entry.
+
+```yaml
+sources_context:
+  teams_brkh: "BRKH volunteer fire brigade Teams; vakt = shift roster"
+  teams: "Microsoft Teams chats, one source per profile"
+```
+
+`yaams sources` edits the same block: press `c` on a source or profile row.
+With `--answer` the notes are prepended to the synthesis prompt as "Source
+notes" so the LLM reads the sources with the owner's framing (they are
+background, not citable facts).
+
 ### Trust verdicts
 
 Each result carries a **display-only trust verdict** — a `high` / `medium` /
@@ -879,8 +899,10 @@ yaams mcp --allow-write      # also expose the write-gated yaams_feedback tool
 ```
 
 Every response is scrubbed of `<private>…</private>` content before it leaves
-the process. For the full tool reference and client configuration, see
-[mcp-server.md](mcp-server.md).
+the process. Both read tools return a `context` block with the owner's
+[source notes](#source-notes) for the sources present in the hits, and
+`yaams_answer` feeds the same notes to synthesis. For the full tool reference
+and client configuration, see [mcp-server.md](mcp-server.md).
 
 ---
 

@@ -58,13 +58,19 @@ Add `"--allow-write"` to the `args` array to enable `yaams_feedback`.
   the isolated chat-facts tier (empty unless that opt-in source is ingested).
 
 Returns `{"results": [ ... ]}` where each result mirrors the
-`yaams query --format json` shape and carries a `trust` object.
+`yaams query --format json` shape and carries a `trust` object. When the
+config has a `sources_context` note for any source present in the results, a
+`context: {source: text}` object is added once (deduplicated per source; a
+bare family key like `teams` covers `teams_<profile>`). The key is omitted
+when no returned source has a note.
 
 ### `yaams_answer(question, limit=5, tier="both")`
 
 Runs the same retrieval, then synthesizes an answer. Returns the answer body,
 `confidence` / `confidence_reason`, `gaps`, `cited_ranks` / `cited_result_ids`,
-the `backend` / `model` used, and the underlying `results`.
+the `backend` / `model` used, the underlying `results`, and the same `context`
+block as `yaams_query`. The notes are also prepended to the synthesis prompt as
+"Source notes" so the model reads each source with the owner's framing.
 
 ### `yaams_feedback(query_id, rank, verdict, note="")`
 

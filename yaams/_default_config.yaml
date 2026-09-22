@@ -287,3 +287,12 @@ retrieve:
     - [øvelse, exercise]      # NO<->EN: training exercise / drill
     - [hytte, cabin]          # NO<->EN: cabin / mountain hut
     - [isbad, isbading, "ice bath", "ice bathing"]  # NO<->EN: cold-water immersion habit
+
+# Owner-written one-liner per source, returned alongside hits (`context` in
+# `yaams query --json` and the MCP tools, "Source notes" in synthesized
+# answers). Keys are `item.source` ids; a bare family key (`teams`) covers
+# every `teams_<profile>` that has no exact entry. Edit with `c` in
+# `yaams sources`.
+# sources_context:
+#   teams_brkh: "BRKH volunteer fire brigade Teams; vakt = shift roster"
+#   teams: "Microsoft Teams chats, one source per profile"

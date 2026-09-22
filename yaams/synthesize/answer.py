@@ -79,14 +79,22 @@ def build_synthesis_prompt(
   results: Sequence[HybridResult],
   *,
   shape: str | None = None,
+  source_notes: dict[str, str] | None = None,
 ) -> str:
   blocks = [_render_source(rank, r) for rank, r in enumerate(results, 1)]
   date_lead = _DATE_LEAD_RULE.get(shape or "", "")
-  return SYNTH_PROMPT_TEMPLATE.format(
+  prompt = SYNTH_PROMPT_TEMPLATE.format(
     question=question.strip(),
     sources="\n\n".join(blocks) if blocks else "(no sources retrieved)",
     date_lead=("\n" + date_lead) if date_lead else "",
   )
+  if source_notes:
+    notes = "\n".join(f"- {source}: {text}" for source, text in source_notes.items())
+    prompt = (
+      "Source notes (what each source is; background for reading the SOURCES, "
+      f"not facts to cite):\n{notes}\n\n{prompt}"
+    )
+  return prompt
 
 
 def _render_source(rank: int, result: HybridResult) -> str:
@@ -210,10 +218,11 @@ def synthesize_answer(
   adapter: LLMAdapter,
   *,
   shape: str | None = None,
+  source_notes: dict[str, str] | None = None,
   max_tokens: int = 600,
   temperature: float = 0.0,
 ) -> AnswerResult:
-  prompt = build_synthesis_prompt(question, results, shape=shape)
+  prompt = build_synthesis_prompt(question, results, shape=shape, source_notes=source_notes)
   response = adapter.complete(prompt, max_tokens=max_tokens, temperature=temperature)
   body, confidence, confidence_reason, gaps = parse_structured_answer(response.text)
   ranks, ids = parse_citation_ids(response.text, results)

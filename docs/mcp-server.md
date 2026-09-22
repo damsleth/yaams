@@ -58,7 +58,7 @@ Add `"--allow-write"` to the `args` array to enable `yaams_feedback`.
   the isolated chat-facts tier (empty unless that opt-in source is ingested).
 
 Returns `{"results": [ ... ]}` where each result mirrors the
-`yaams query --format json` shape and carries a `trust` object. When the
+`yaams query --format json` shape and carries a `trust` object and a `components` score breakdown (see user-guide section 5, "Inspecting and scripting"). When the
 config has a `sources_context` note for any source present in the results, a
 `context: {source: text}` object is added once (deduplicated per source; a
 bare family key like `teams` covers `teams_<profile>`). The key is omitted

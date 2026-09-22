@@ -179,6 +179,8 @@ class ScoreComponents:
   fts_rank: int | None = None
   fts_score: float | None = None
   rrf_score: float = 0.0
+  # Credits applied to rrf_score before hydration, by name. Display only.
+  credits: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -203,6 +205,10 @@ class HybridResult:
   # ranking. None until populated post-scoring by attach_trust_verdicts. Typed
   # loosely to avoid importing yaams.trust into the hot retrieval path.
   trust: object | None = None
+  # Post-fusion multipliers that fired on this result, by name (tier2_boost,
+  # recency, entity_boost, feedback_boost, assoc) plus the additive
+  # tier2_coverage credit and rerank (score replaced). Display only.
+  boosts: dict[str, float] = field(default_factory=dict)
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -364,6 +370,7 @@ def query(
     scores = rerank_pairs(text, pairs, cfg.reranker_model, device=cfg.reranker_device)
     for r, s in zip(pool, scores):
       r.score = s
+      r.boosts["rerank"] = float(s)
     hydrated = pool
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity
@@ -372,6 +379,7 @@ def query(
     for r in hydrated:
       if r.id in (item_b if r.kind == "item" else cons_b):
         r.score *= cfg.boost_factor
+        r.boosts["entity_boost"] = cfg.boost_factor
   if cfg.feedback_boost and hydrated:
     # Precision-with-use: lift results that real usage proved good — cited by an
     # answer, or named by a human correction as the right (mis-ranked) doc. Both
@@ -385,7 +393,9 @@ def query(
     for r in hydrated:
       pos = counts.get(r.id, 0)
       if pos:
-        r.score *= 1.0 + min(FEEDBACK_BOOST_PER * pos, FEEDBACK_BOOST_CAP)
+        factor = 1.0 + min(FEEDBACK_BOOST_PER * pos, FEEDBACK_BOOST_CAP)
+        r.score *= factor
+        r.boosts["feedback_boost"] = factor
   if cfg.assoc_weights:
     item_w, cons_w = _assoc_weight_maps(conn, cfg.assoc_weights)
     for r in hydrated:
@@ -393,6 +403,7 @@ def query(
       r.assoc_weight = weight
       if weight != 1.0:
         r.score *= weight
+        r.boosts["assoc"] = weight
   if cfg.sort in ("asc", "desc"):
     hydrated = _apply_relevance_floor(hydrated, cfg.relevance_floor)
     # Sort on the primary key alone and reverse it, then break ties by score
@@ -818,6 +829,7 @@ def _fuse(
       and comp.vector_rank <= 2
     ):
       comp.rrf_score *= 1.0 + _RANK_AGREEMENT_DELTA
+      comp.credits["rank_agreement"] = 1.0 + _RANK_AGREEMENT_DELTA
   return fused
 
 
@@ -888,7 +900,9 @@ def _hydrate(
         if kind == "item" and comp.fts_rank is not None:
           tid = thread_of.get(identifier)
           if tid is not None and tid in top3_cons_thread:
-            comp.rrf_score += _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
+            credit = _THREAD_COHERENCE_OMEGA * top3_cons_thread[tid]
+            comp.rrf_score += credit
+            comp.credits["thread_coherence"] = credit
       # Re-sort after credit injection
       ordered = sorted(fused.items(), key=lambda kv: kv[1].rrf_score, reverse=True)
 
@@ -978,6 +992,7 @@ def _hydrate_item(
     return None
   recipients = json.loads(row["recipients"] or "[]")
   score = components.rrf_score
+  boosts: dict[str, float] = {}
   # tier2_factual_coverage_recovery: additive RRF credit for tier2 items that
   # are FTS-present but vector-absent on factual queries, BEFORE tier2_boost.
   if (
@@ -988,11 +1003,14 @@ def _hydrate_item(
     and components.fts_rank <= 5
     and components.vector_rank is None
   ):
-    score += cfg.tier2_factual_coverage_gamma / (cfg.rrf_k + components.fts_rank + 1)
+    credit = cfg.tier2_factual_coverage_gamma / (cfg.rrf_k + components.fts_rank + 1)
+    score += credit
+    boosts["tier2_coverage"] = credit
   if cfg.tier2_boost != 1.0 and row["source"] == cfg.tier2_source:
     score *= cfg.tier2_boost
+    boosts["tier2_boost"] = cfg.tier2_boost
   timestamp = ensure_utc(_parse_iso(row["timestamp"]))
-  score = _apply_recency_decay(score, row["source"], timestamp, cfg)
+  score = _decay_noted(score, row["source"], timestamp, cfg, boosts)
   return HybridResult(
     id=row["id"],
     kind="item",
@@ -1005,6 +1023,7 @@ def _hydrate_item(
     score=score,
     components=components,
     participants=recipients,
+    boosts=boosts,
   )
 
 
@@ -1027,6 +1046,8 @@ def _hydrate_consolidation(
   if cfg.sender_filter and not any(p in cfg.sender_filter for p in participants):
     return None
   timestamp = ensure_utc(_parse_iso(row["start_timestamp"]))
+  boosts: dict[str, float] = {}
+  score = _decay_noted(components.rrf_score, row["source"], timestamp, cfg, boosts)
   return HybridResult(
     id=row["id"],
     kind="consolidation",
@@ -1036,10 +1057,11 @@ def _hydrate_consolidation(
     subject=f"{row['source']} session ({row['item_count']} items)",
     content=row["summary"] or "",
     thread_id=row["thread_id"],
-    score=_apply_recency_decay(components.rrf_score, row["source"], timestamp, cfg),
+    score=score,
     components=components,
     participants=participants,
     item_count=int(row["item_count"]),
+    boosts=boosts,
   )
 
 
@@ -1081,6 +1103,15 @@ def _apply_recency_decay(
     return score
   now = ensure_utc(cfg.recency_now) if cfg.recency_now is not None else datetime.now(timezone.utc)
   return score * _recency_factor(ts, now, cfg.recency_decay_tau_days, cfg.recency_decay_floor)
+
+
+def _decay_noted(
+  score: float, source: str, ts: datetime | None, cfg: HybridQueryConfig, boosts: dict[str, float]
+) -> float:
+  decayed = _apply_recency_decay(score, source, ts, cfg)
+  if score and decayed != score:
+    boosts["recency"] = decayed / score
+  return decayed
 
 
 def _recency_factor(ts: datetime | None, now: datetime, tau_days: float, floor: float) -> float:

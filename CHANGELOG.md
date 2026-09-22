@@ -10,6 +10,13 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Added
+
+- Score transparency: every JSON result (`yaams query --json`, MCP
+  `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
+  ranks, raw lane scores, RRF score, named credits and boosts that fired), and
+  `--explain` prints it under each result. Ranking is unchanged.
+
 ## [0.10.1] - 2026-09-22
 
 ### Changed

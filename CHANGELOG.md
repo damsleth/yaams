@@ -25,6 +25,20 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- **Junk-gold guard in the retrieval harness.** `scripts/autoresearch_retrieval.py`
+  now joins every gold `result_id` against `items.junk_reason` before scoring
+  and refuses a gold set with a junk-annotated document: each offender is
+  printed to stderr and the run exits 1 with `status: invalid_gold`, writing
+  nothing. `--allow-junk-gold` bypasses it with a warning. Consolidation golds
+  and pre-0009 fixtures are unaffected. Metric code is untouched; on the era-2
+  fixture the hybrid dev anchor reproduces exactly (rank-1 22/38, recall@10
+  0.9211).
+- **`scripts/recency_gold_candidates.py`**, a read-only candidate sheet for a
+  recency-sensitive gold slice: replays the owner's short CLI queries FTS-only
+  with the 60-day recency lane and `recency_now` pinned to each query's own
+  `ts` against the live db (`mode=ro`), and writes the top-5 recent hits per
+  query as TSV for hand labeling. Selection criterion documented in the
+  script; see `docs/experiments/README.md`.
 - **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`
   and the `yaams.quality` module. Measured on the live corpus 2026-09-16: 32% of
   iMessages are under 10 characters and 23% are exact-content duplicates. Two

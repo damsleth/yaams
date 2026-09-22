@@ -23,6 +23,12 @@ surface; pin to a specific version if you need stability.
 - Unused CLI progress and throughput helpers and the direct `tqdm` requirement.
   Embedding dependencies may still install `tqdm` transitively.
 
+### Fixed
+
+- `docs/experiments/CURRENT_ERA` now reads `42 gold curated (sep17)`; the era-2
+  promotion (b6eb4a0) never bumped it, so the two `era2-anchor-*` timeline rows
+  carried the era-1 label. Rows relabelled, viewer rebuilt.
+
 ### Added
 
 - **Junk-gold guard in the retrieval harness.** `scripts/autoresearch_retrieval.py`

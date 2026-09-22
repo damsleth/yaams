@@ -106,3 +106,28 @@ def test_feedback_boost_flag_default_off(tmp_path):
   assert _feedback_boost(cfg) is False
   cfg["retrieve"] = {"feedback_boost": True}
   assert _feedback_boost(cfg) is True
+
+
+def test_answer_token_budget_cuts_tail_keeps_rank_one():
+  from datetime import UTC, datetime
+
+  from yaams.mcp.server import _apply_token_budget
+  from yaams.retrieve.hybrid import HybridResult
+
+  def res(i: int, chars: int) -> HybridResult:
+    return HybridResult(
+      id=f"r{i}", kind="item", source="email", timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+      sender="", subject="", content="x" * chars, thread_id=None, score=1.0 / i,
+    )
+
+  results = [res(1, 400), res(2, 400), res(3, 400)]
+  assert _apply_token_budget(results, 0) == (results, None)
+  kept, omitted = _apply_token_budget(results, 250)
+  assert [r.id for r in kept] == ["r1", "r2"]
+  assert omitted == {"count": 1, "from_rank": 3, "reason": "budget"}
+
+  kept, omitted = _apply_token_budget(results, 50)
+  assert [r.id for r in kept] == ["r1"]
+  assert kept[0].content.endswith("[truncated]") and len(kept[0].content) < 400
+  assert results[0].content == "x" * 400
+  assert omitted == {"count": 2, "from_rank": 2, "reason": "budget"}

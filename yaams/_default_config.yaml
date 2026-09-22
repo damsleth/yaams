@@ -235,6 +235,12 @@ trust:
   # let conversational/imported sources read as lower trust than authored ones.
   provenance_weighting_enabled: false
 
+mcp:
+  # Token cap on the evidence yaams_answer synthesizes over and returns
+  # (len(text)//4 per result, fused-rank order). Rank 1 always survives,
+  # truncated with a [truncated] marker if it alone is over. 0 disables.
+  answer_token_budget: 0
+
 promote:
   semantic_dedup:
     enabled: false

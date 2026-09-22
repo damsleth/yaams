@@ -16,6 +16,9 @@ surface; pin to a specific version if you need stability.
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and
   `--explain` prints it under each result. Ranking is unchanged.
+- `mcp.answer_token_budget` (default `0`, off): caps the evidence
+  `yaams_answer` synthesizes over at about N tokens, never drops rank 1
+  (truncates it with `[truncated]`), and reports cut results as `omitted`.
 
 ## [0.10.1] - 2026-09-22
 

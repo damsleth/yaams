@@ -950,8 +950,10 @@ yaams mcp --allow-write      # also expose the write-gated yaams_feedback tool
 Every response is scrubbed of `<private>…</private>` content before it leaves
 the process. Both read tools return a `context` block with the owner's
 [source notes](#source-notes) for the sources present in the hits, and
-`yaams_answer` feeds the same notes to synthesis. For the full tool reference
-and client configuration, see [mcp-server.md](mcp-server.md).
+`yaams_answer` feeds the same notes to synthesis. Set
+`mcp.answer_token_budget` to cap the evidence `yaams_answer` returns and
+synthesizes over (off by default). For the full tool reference and client
+configuration, see [mcp-server.md](mcp-server.md).
 
 ---
 

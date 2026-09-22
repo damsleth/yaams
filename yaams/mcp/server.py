@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import time as _time
+from dataclasses import replace
 from typing import Any
 
 from yaams.config import get_db_path, load_config, source_context_for
@@ -155,6 +156,26 @@ def _results_payload(results: list, cfg: dict) -> dict:
   return payload
 
 
+def _apply_token_budget(results: list, budget: int) -> tuple[list, dict | None]:
+  """Keep results in rank order until ~budget tokens (len//4); rank 1 always stays."""
+  if budget <= 0 or not results:
+    return results, None
+  kept: list = []
+  used = 0
+  for r in results:
+    cost = len((r.subject or "") + (r.content or "")) // 4
+    if kept and used + cost > budget:
+      break
+    if not kept and cost > budget:
+      r = replace(r, content=(r.content or "")[: max(0, budget * 4 - len(r.subject or ""))] + " [truncated]")
+      cost = budget
+    kept.append(r)
+    used += cost
+  if len(kept) == len(results):
+    return kept, None
+  return kept, {"count": len(results) - len(kept), "from_rank": len(kept) + 1, "reason": "budget"}
+
+
 def create_server(*, config_path: str | None = None, allow_write: bool = False):
   """Build (but do not run) the FastMCP server with YAAMS tools."""
   FastMCP = _require_mcp()
@@ -197,10 +218,12 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
         confidence="unknown",
       )
       return {"answer": "", "confidence": "unknown", "results": [], "query_id": query_id}
+    budget = int((cfg.get("mcp") or {}).get("answer_token_budget") or 0)
+    context_results, omitted = _apply_token_budget(results, budget)
     adapter = llm_adapter_from_config(cfg)
     t1 = _time.perf_counter()
     answer = synthesize_answer(
-      question, results, adapter,
+      question, context_results, adapter,
       source_notes=source_context_for(cfg, (r.source for r in results)),
     )
     synthesis_ms = (_time.perf_counter() - t1) * 1000
@@ -224,8 +247,10 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       "cited_result_ids": answer.cited_result_ids,
       "backend": answer.backend,
       "model": answer.model,
-      **_results_payload(results, cfg),
+      **_results_payload(context_results, cfg),
     }
+    if omitted:
+      payload["omitted"] = omitted
     return scrub_for_egress(payload)
 
   if allow_write:

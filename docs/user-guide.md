@@ -687,7 +687,10 @@ yaams review --json       # machine output
 ```
 
 This is the loop that lets you see, over time, whether your curation and
-config changes are actually making retrieval better.
+config changes are actually making retrieval better. Judged queries become the
+gold set the retrieval harness replays; if you want to measure a retrieval
+change yourself (fixture, anchor, keep rule, logging), that operator story is
+in [retrieval-tuning.md](retrieval-tuning.md).
 
 ---
 

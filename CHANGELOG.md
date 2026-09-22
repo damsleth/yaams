@@ -10,6 +10,8 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-22
+
 ### Changed
 
 - Share YAML source-block editing, entity-import persistence, subprocess LLM
@@ -1059,7 +1061,8 @@ documentation, and establishes a versioning baseline.
 - Added `SECURITY.md` documenting the threat model, data classification,
   and disclosure flow (GitHub Security Advisories).
 
-[Unreleased]: https://github.com/damsleth/YAAMS/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/damsleth/yaams/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/damsleth/yaams/compare/v0.10.0...v0.10.1
 [0.1.11]: https://github.com/damsleth/YAAMS/compare/v0.1.10...v0.1.11
 [0.1.1]: https://github.com/damsleth/YAAMS/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/damsleth/YAAMS/releases/tag/v0.1.0

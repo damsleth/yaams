@@ -38,6 +38,9 @@ Options:
                        ~/brain/feed/eval/autoresearch_fixture.db if it exists, else
                        /tmp/yaams_autoresearch.db, else the live config DB).
     --no-write         Don't append to results.tsv / update prev-run state.
+    --allow-junk-gold  Score even when a gold document is annotated junk
+                       (items.junk_reason). Without it the harness prints the
+                       offending golds and exits 1 with status invalid_gold.
 
 Re-snapshot procedure (run after a reboot wipes /tmp, or to refresh the fixture):
 
@@ -162,6 +165,28 @@ def _load_gold(conn) -> tuple[list[dict], int, int]:
     return gold, n_miss, n_miss_zero
 
 
+def _junk_gold(conn, gold: list[dict]) -> list[tuple[str, str, str]]:
+    """Gold rows whose document is annotated junk (``items.junk_reason``).
+
+    Precondition check, not a metric: a junk gold silently inverts the
+    ``--exclude-junk`` gate, so the harness refuses to score one. Returns
+    ``(query_text, result_id, junk_reason)`` per offender. Consolidation golds
+    (``cons:`` ids) carry no annotation and never match. A fixture predating
+    migration 0009 has no column and is treated as clean."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(items)")}
+    if "junk_reason" not in cols:
+        return []
+    bad: list[tuple[str, str, str]] = []
+    for g in gold:
+        row = conn.execute(
+            "SELECT junk_reason FROM items WHERE id = ? AND junk_reason IS NOT NULL",
+            (g["result_id"],),
+        ).fetchone()
+        if row:
+            bad.append((g["text"], g["result_id"], row["junk_reason"]))
+    return bad
+
+
 def _replay_one(
     conn,
     embedder,
@@ -265,6 +290,9 @@ def main() -> int:
     ap.add_argument("--feedback-boost", action="store_true", dest="feedback_boost",
                     help="Enable the precision-with-use feedback boost (P2), with "
                          "leave-one-out per gold query. Keyed separately in results.tsv.")
+    ap.add_argument("--allow-junk-gold", action="store_true", dest="allow_junk_gold",
+                    help="Score even if a gold document is annotated junk "
+                         "(items.junk_reason). Default: refuse with status invalid_gold.")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -286,6 +314,25 @@ def main() -> int:
     try:
         conn = open_db(db_path, readonly=True)
         gold, n_miss, n_miss_zero = _load_gold(conn)
+        junk_gold = _junk_gold(conn, gold)
+        if junk_gold:
+            for text, rid, reason in junk_gold:
+                print(f"junk gold: {text!r} -> {rid} ({reason})", file=sys.stderr)
+            if not args.allow_junk_gold:
+                conn.close()
+                out = {
+                    "fitness": 0.0, "status": "invalid_gold", "tag": args.tag,
+                    "junk_gold": len(junk_gold),
+                    "error": f"{len(junk_gold)} gold document(s) annotated junk; "
+                             "fix the gold set or pass --allow-junk-gold",
+                }
+                print(
+                    json.dumps(out) if args.as_json
+                    else f"\n---\nstatus: invalid_gold\njunk_gold: {len(junk_gold)}\nerror: {out['error']}"
+                )
+                return 1
+            print(f"warning: scoring with {len(junk_gold)} junk gold (--allow-junk-gold)",
+                  file=sys.stderr)
         gold = [g for g in gold if args.split == "all" or _split_bucket(g["query_id"]) == args.split]
         if not gold:
             raise RuntimeError("no gold (hit/correction) labels found for split")

@@ -457,7 +457,8 @@ def build_review_queue(
       " AND NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind != 'deferred')"
     )
   elif unjudged_only:
-    where.append("NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id)")
+    # bad_result is a per-doc note, not a verdict: the query stays unjudged.
+    where.append("NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind != 'bad_result')")
 
   sql = """
     SELECT

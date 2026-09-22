@@ -52,8 +52,7 @@ draws no line across a band boundary; `log_experiment.py` reads
 `CURRENT_ERA` as the default (`docs/experiments/log_experiment.py:13-15,32-36`).
 So **whenever the manifest changes, bump `CURRENT_ERA` in the same commit**,
 before logging the new anchor. Precondition for any anchor: the era string
-must describe the manifest's `gold_queries` (as of this writing the file still
-reads `79 gold (jul01)` against a 42-gold manifest; fix that before logging).
+must describe the manifest's `gold_queries`.
 Everything above the `era2-*` rows in `scripts/autoresearch_results.tsv` is
 era 1.
 

@@ -141,6 +141,10 @@ The raw `items` table is the firehose floor. These are rules, not preferences �
 
 Any retrieval/promote experiment that *measures* fitness — `quality`, `hit_rate`, `mrr`, `recall@10`, `latency_p95_ms` — **must** be appended to the chart dataset, win or lose. The kills are as valuable as the keeps: the timeline exists so we never re-try a dead idea or mistake noise for a trend. This is a rule, not a courtesy.
 
+- **The procedure is `docs/retrieval-tuning.md`.** Fixture and manifest, the
+  anchor and `scripts/.autoresearch_state.json` (incl. the `+nojunk` key), the
+  keep rule, the `--no-write` run recipe, and what to log by hand. Read it
+  before running the harness; the bullets below are the rules it implements.
 - **It is already automatic for the harnesses.** `scripts/autoresearch_retrieval.py` (any recorded run, i.e. not `--no-write`) and `scripts/rerank_sweep.py` both call `docs/experiments/log_experiment.py`, which appends the row and rebuilds the viewer. Dry runs (`--no-write`) are correctly skipped. You usually don't have to do anything.
 - **For a manual / ad-hoc experiment**, record it with the logger — never hand-edit the JSON unless you must:
   `python docs/experiments/log_experiment.py --key my_idea --disposition kill --quality 0.62 --hit-rate 0.667 --mrr 0.49 --note "why"`

@@ -16,7 +16,7 @@ import re
 import time as _time
 from typing import Any
 
-from yaams.config import get_db_path, load_config
+from yaams.config import get_db_path, load_config, source_context_for
 from yaams.db import open_db
 from yaams.retrieve import HybridQueryConfig, attach_trust_verdicts
 from yaams.retrieve import query as run_query
@@ -145,10 +145,14 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   return results
 
 
-def _results_payload(results: list) -> dict:
+def _results_payload(results: list, cfg: dict) -> dict:
   from yaams.cli.query import _result_to_dict
 
-  return {"results": [_result_to_dict(r) for r in results]}
+  payload: dict = {"results": [_result_to_dict(r) for r in results]}
+  context = source_context_for(cfg, (r.source for r in results))
+  if context:
+    payload["context"] = context
+  return payload
 
 
 def create_server(*, config_path: str | None = None, allow_write: bool = False):
@@ -173,7 +177,7 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       cfg, query_id=query_id, text=query, top_k=limit, source_filter=source_filter,
       results=results, latency_ms=retrieval_ms, retrieval_ms=retrieval_ms,
     )
-    payload = _results_payload(results)
+    payload = _results_payload(results, cfg)
     payload["query_id"] = query_id
     return scrub_for_egress(payload)
 
@@ -195,7 +199,10 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       return {"answer": "", "confidence": "unknown", "results": [], "query_id": query_id}
     adapter = llm_adapter_from_config(cfg)
     t1 = _time.perf_counter()
-    answer = synthesize_answer(question, results, adapter)
+    answer = synthesize_answer(
+      question, results, adapter,
+      source_notes=source_context_for(cfg, (r.source for r in results)),
+    )
     synthesis_ms = (_time.perf_counter() - t1) * 1000
     # The cited results ARE the automatic positive label — this is what makes
     # the flywheel turn without any human in the loop.
@@ -217,7 +224,7 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       "cited_result_ids": answer.cited_result_ids,
       "backend": answer.backend,
       "model": answer.model,
-      "results": _results_payload(results)["results"],
+      **_results_payload(results, cfg),
     }
     return scrub_for_egress(payload)
 

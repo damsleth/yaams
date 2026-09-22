@@ -527,7 +527,7 @@ def _render(
   sys.stdout.write(f"{BOLD}YAAMS Sources{RESET}  {DIM}({config_path}){RESET}\n")
   sys.stdout.write(
     f"{DIM}up/down navigate  ·  space toggle  ·  a add path  "
-    f"·  d remove path  ·  enter apply  ·  q quit{RESET}\n\n"
+    f"·  d remove path  ·  c context  ·  enter apply  ·  q quit{RESET}\n\n"
   )
   for i, row in enumerate(rows):
     cursor_mark = f"{CYAN}{ARROW}{RESET} " if i == cursor else "  "
@@ -634,6 +634,9 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
           rows[:] = new_rows
           cursor = min(cursor, len(rows) - 1)
         continue
+      if key == "c":
+        message = _set_context(row, config_path)
+        continue
       if key in ("\r", "\n"):
         return {
           r.name: selected.get(r.name, r.enabled)
@@ -643,6 +646,26 @@ def _interactive(rows: list[Row], config_path: Path) -> dict[str, bool] | None:
   finally:
     sys.stdout.write("\033[?25h")
     sys.stdout.flush()
+
+
+def _context_key(row: Row) -> str:
+  """The `item.source` id a row stands for: `teams` for the family row,
+  `teams_<profile>` for a profile row."""
+  if isinstance(row, SourceRow):
+    return row.name
+  if row.subkind == "profile":
+    return f"{row.parent}_{row.label}"
+  return row.parent
+
+
+def _set_context(row: Row, config_path: Path) -> str:
+  source = _context_key(row)
+  current = (load_config(config_path).get("sources_context") or {}).get(source, "")
+  value = _prompt(f"Context for {source}", default=str(current))
+  if not value or not value.strip():
+    return "Context unchanged."
+  _yaml_set_source_context(config_path, source, value.strip())
+  return f"Context set for {source}."
 
 
 def _toggle_subpath(row: SubPathRow, config_path: Path) -> tuple[list[Row] | None, str | None]:
@@ -919,6 +942,29 @@ def _yaml_set_notes_vault_path(config_path: Path, value: str) -> None:
     lines.insert(insert_at, new_line)
   else:
     lines[vault_idx] = new_line
+  config_path.write_text("".join(lines))
+
+
+def _yaml_set_source_context(config_path: Path, source: str, value: str) -> None:
+  """Set `sources_context.<source>` in the top-level block, creating the block
+  at the end of the file when missing. The value is written JSON-quoted so
+  colons and hashes in the prose survive as a YAML scalar."""
+  lines = config_path.read_text().splitlines(keepends=True)
+  block_start, block_end = _find_block_span(lines, top_level_key="sources_context")
+  if block_start is None:
+    if lines and not lines[-1].endswith("\n"):
+      lines[-1] += "\n"
+    if lines and lines[-1].strip():
+      lines.append("\n")
+    lines.append("sources_context:\n")
+    block_start, block_end = len(lines) - 1, len(lines)
+  assert block_end is not None
+  new_line = f"  {source}: {json.dumps(value, ensure_ascii=False)}\n"
+  key_idx = _find_key_line(lines, block_start, block_end, source)
+  if key_idx is None:
+    lines.insert(block_start + 1, new_line)
+  else:
+    lines[key_idx] = new_line
   config_path.write_text("".join(lines))
 
 

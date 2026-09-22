@@ -49,6 +49,15 @@ surface; pin to a specific version if you need stability.
   constants, and where the dead ideas are recorded. Linked from AGENTS.md,
   the user guide's relevance-loop section, `docs/experiments/README.md` and
   `docs/architecture.md`.
+- **Per-source context notes alongside hits.** A top-level `sources_context:
+  {<source>: "<one line>"}` config block (keys are `item.source` ids; a bare
+  family key such as `teams` covers every `teams_<profile>`) is returned as a
+  `context: {source: text}` object by `yaams query --json` and the MCP
+  `yaams_query` / `yaams_answer` tools, once per distinct source present and
+  omitted when empty; text output prints it dimmed under the results.
+  `yaams_answer` and `yaams query --answer` prepend the notes to the synthesis
+  prompt as "Source notes". Edit a note with `c` on a row in `yaams sources`.
+
 - **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`
   and the `yaams.quality` module. Measured on the live corpus 2026-09-16: 32% of
   iMessages are under 10 characters and 23% are exact-content duplicates. Two

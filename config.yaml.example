@@ -111,12 +111,12 @@ ingest:
   # ado:
   #   enabled: false
   #   profiles:
-  #     - nc-ado
+  #     - nc        # any m365 or ado-type owa-piggy profile with a devops audience
   #   content_types: [workitems, wiki]
   #   wiki_dir: ~/brain/ado-wiki
   #   top: 500
   #   projects:
-  #     nc-ado: NOCOS
+  #     nc: NOCOS
 
 embed:
   model: BAAI/bge-m3

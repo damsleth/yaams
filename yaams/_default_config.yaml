@@ -170,7 +170,7 @@ ingest:
   ado:
     enabled: false
     profiles: []
-      # - nc-ado
+      # - nc          # any m365 or ado-type owa-piggy profile with a devops audience
     # Drop either to ingest only the other.
     content_types: [workitems, wiki]
     wiki_dir: ~/brain/ado-wiki
@@ -179,7 +179,7 @@ ingest:
     # Optional per-profile --project override when the wiki or backlog lives
     # in a different project than the one pinned in owa-ado config:
     # projects:
-    #   nc-ado: NOCOS
+    #   nc: NOCOS
 
 embed:
   model: BAAI/bge-m3

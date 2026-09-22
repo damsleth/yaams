@@ -431,9 +431,9 @@ def test_build_rows_drive_lists_google_and_m365_not_ado(
   assert drive_children == {"crayon", "brkh-g"}
 
 
-def test_build_rows_ado_lists_only_ado_profiles(tmp_path: Path, monkeypatch) -> None:
-  # The ado source is fed only by ado-type profiles, and an ado profile feeds
-  # nothing else: no mail/teams/calendar toggle for it.
+def test_build_rows_ado_lists_ado_and_m365_profiles(tmp_path: Path, monkeypatch) -> None:
+  # ado is fed by ado-type and m365 profiles (an m365 identity mints the
+  # devops audience); an ado profile feeds nothing else.
   body = (
     "ingest:\n"
     "  imessage:\n"
@@ -455,7 +455,7 @@ def test_build_rows_ado_lists_only_ado_profiles(tmp_path: Path, monkeypatch) -> 
   for r in rows:
     if isinstance(r, SubPathRow):
       by_parent.setdefault(r.parent, set()).add(r.label)
-  assert by_parent["ado"] == {"nc-ado"}
+  assert by_parent["ado"] == {"nc-ado", "crayon"}
   for parent in ("mail", "calendar", "teams", "teams_channels", "drive"):
     assert "nc-ado" not in by_parent.get(parent, set()), parent
 

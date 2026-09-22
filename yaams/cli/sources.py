@@ -53,11 +53,13 @@ SINGLE_PATH_SOURCES = {"notes"}
 # What each owa-piggy profile `type` can feed. Grounded in ingest paths that
 # exist today: owa-cal/owa-mail are Graph-only, so a google profile is drive
 # only (drive picks its provider by token shape at ingest time, so a single
-# `drive` row lists both m365 and google profiles); an ADO profile feeds
-# only `ado` (owa-ado work items + wiki). owa-piggy owns the `type`; yaams
-# owns this mapping. Widen a row only when its ingest path exists.
+# `drive` row lists both m365 and google profiles); `ado` is fed by ado-type
+# profiles and by m365 profiles, since an m365 identity mints the devops
+# audience too (`owa-piggy --profile nc --audience devops`). owa-piggy owns
+# the `type`; yaams owns this mapping. Widen a row only when its ingest path
+# exists.
 SOURCES_BY_PROFILE_TYPE: dict[str, set[str]] = {
-  "m365": {"mail", "calendar", "teams", "teams_channels", "drive"},
+  "m365": {"mail", "calendar", "teams", "teams_channels", "drive", "ado"},
   "google": {"drive"},
   "ado": {"ado"},
 }

@@ -207,8 +207,9 @@ Microsoft 365 sources are **profile-keyed**: configure a profile once with
 profile becomes its own source id (e.g. `mail_work`, `calendar_work`), so you
 can ingest and query per identity. The `sources` TUI only offers a source to
 profiles whose owa-piggy `type` can feed it: `m365` profiles get mail,
-calendar, teams and drive; `google` profiles get drive; `ado` profiles get
-`ado` and nothing else.
+calendar, teams, drive and ado (an m365 identity mints the devops audience,
+`owa-piggy --profile nc --audience devops`); `google` profiles get drive;
+`ado` profiles get `ado` and nothing else.
 
 #### Azure DevOps (`ado`)
 

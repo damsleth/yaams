@@ -37,6 +37,40 @@ Shaded bands are gold-set eras; **metrics do not compare across bands** (the gol
 set grew 46 → 58 → 78, and the rerank sweep uses full-MRR vs the campaigns'
 partial-credit MRR).
 
+## Harness preconditions
+
+`scripts/autoresearch_retrieval.py` checks the gold set before it scores
+anything. The metric code is off-limits; these are gates in front of it.
+
+- **No junk gold.** After loading the gold set, every `result_id` is joined
+  against `items.junk_reason` on the fixture in use. If any gold document is
+  annotated junk (`mech:short`, `mech:dup`, `llm:junk`, ...), the harness
+  prints each offender as `junk gold: <query> -> <result_id> (<reason>)` on
+  stderr and exits 1 with `status: invalid_gold` (JSON: `{"status":
+  "invalid_gold", "junk_gold": N, ...}`). Nothing is written to `results.tsv`,
+  the state file or the timeline. Two junk gold rows silently inverted the
+  `--exclude-junk` gate through three runs; this is the cheap guard from
+  `.plans/done/data-quality.md`. Fix the gold set (or the annotation), or pass
+  `--allow-junk-gold` to score anyway with a stderr warning. Consolidation
+  golds (`cons:` ids) carry no annotation and never trip it; a fixture
+  predating migration 0009 has no column and is treated as clean.
+- **Some gold in the split.** An empty split is a crash, not a zero.
+
+### Recency gold candidates (`scripts/recency_gold_candidates.py`)
+
+Read-only companion for building a recency-sensitive gold slice
+(`.plans/eval-gold-hygiene.md`). It replays the owner's short queries from the
+live query log (`provenance='cli'`, at most 3 tokens, `ts` before 2026-09-16,
+deduped by lowercased text; 113 queries on the live db, the archived
+recency-lane plan reported 79 with an unrecorded filter) FTS-only with
+`recency_lane_days=60` and `recency_now` pinned to each query's own `ts`, and
+writes the top-5 hits dated within 60 days before the query as TSV
+(`query, rank, item_id, ts, snippet, query_id, query_ts`) to
+`~/brain/feed/eval/recency_candidates.tsv`. The owner marks the wanted row per
+query; `query_id` is what the apply step files the mark under. `--db`, `--out`,
+`--days`, `--top`, `--max-tokens`, `--before` override the defaults. The db
+is opened `mode=ro`.
+
 ## Add an experiment (the rule)
 
 Every run that measures `quality` / `hit_rate` / `mrr` / `recall@10` /

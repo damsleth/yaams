@@ -130,4 +130,23 @@ def test_answer_token_budget_cuts_tail_keeps_rank_one():
   assert [r.id for r in kept] == ["r1"]
   assert kept[0].content.endswith("[truncated]") and len(kept[0].content) < 400
   assert results[0].content == "x" * 400
-  assert omitted == {"count": 2, "from_rank": 2, "reason": "budget"}
+  assert omitted == {"count": 2, "from_rank": 2, "reason": "budget", "truncated_rank_1": True}
+
+  _, omitted = _apply_token_budget(results[:1], 50)
+  assert omitted == {"count": 0, "from_rank": 2, "reason": "budget", "truncated_rank_1": True}
+
+
+def test_log_auto_miss_writes_query_level_miss(tmp_path):
+  import yaml
+
+  from yaams.db import open_db
+  from yaams.mcp.server import _log_auto_miss
+  from yaams.signals import log_query
+
+  cfg = yaml.safe_load(_config(tmp_path).read_text())
+  conn = open_db(cfg["db_path"])
+  log_query(conn, query_id="q_auto", text="x", top_k=1, source_filter=None,
+            since=None, until=None, results=[])
+  _log_auto_miss(cfg, "q_auto")
+  rows = conn.execute("SELECT kind, result_id, payload FROM query_feedback WHERE query_id = 'q_auto'").fetchall()
+  assert [tuple(r) for r in rows] == [("miss", None, '{"auto": "no_citations"}')]

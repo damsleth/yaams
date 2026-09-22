@@ -243,3 +243,18 @@ def test_recent_queries_returns_most_recent_first():
     )
   rows = recent_queries(conn, limit=3)
   assert [r["id"] for r in rows] == ["q4", "q3", "q2"]
+
+
+def test_result_boost_counts_bad_result_subtracts_floored_at_zero():
+  conn = _open()
+  log_query(conn, query_id="q1", text="x", top_k=2, source_filter=None, since=None,
+            until=None, results=[_result("ra"), _result("rb")],
+            cited_result_ids=["ra"])
+  log_feedback(conn, query_id="q1", kind="bad_result", result_id="rb")
+  log_feedback(conn, query_id="q1", kind="bad_result", result_id="ra")
+  log_query(conn, query_id="q2", text="y", top_k=1, source_filter=None, since=None,
+            until=None, results=[_result("ra")], cited_result_ids=["ra"])
+
+  counts = result_boost_counts(conn, ["ra", "rb"])
+  assert counts["ra"] == 1  # two citations, one bad_result
+  assert counts["rb"] == 0  # bad_result with no positives stays at 0, never negative

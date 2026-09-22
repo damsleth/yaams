@@ -81,6 +81,12 @@ reads as full coverage. The query log still records every retrieved result.
 Measured 2026-09-22 on the era-2 fixture at `limit=5`: top-5 contexts run
 p50 1461 / p90 2320 tokens, and a 2000 budget kept a gold doc in context for
 20 of 38 gold queries vs 21 unbudgeted. That is why the default stays off.
+If rank 1 alone was cut, `omitted.truncated_rank_1` is `true`.
+
+`mcp.auto_miss: true` (default off) logs a query-level `miss` with payload
+`{"auto": "no_citations"}` whenever a synthesized answer cites none of its
+results, so agent traffic feeds `yaams review` / `yaams gaps` negatives without
+the agent calling `yaams_feedback`.
 
 ### `yaams_feedback(query_id, rank, verdict, note="")`
 

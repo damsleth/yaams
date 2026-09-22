@@ -22,7 +22,7 @@ from typing import Any
 from yaams.render import DEFAULT_SNIPPET_CHARS
 from yaams.signals.logger import log_feedback
 
-VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin", "deferred"}
+VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin", "deferred", "bad_result"}
 """Feedback kinds the review loop can emit.
 
 Answer-shaped queries (factual, first/last_occurrence, event_anchored) have
@@ -81,6 +81,7 @@ _RANK1_SNIPPET_CHARS = 480
 _HELP_LINES_ANSWER = [
   "h  hit (top result was right)      m  miss (none right)",
   "1-9  correction (that rank is the right answer)",
+  "b<1-9>  bad result at that rank (per-doc negative, stays on card)",
   "n  noise (no real intent — cascades to identical text)",
   "?  defer (come back later via yaams review --deferred)",
   "tab/right  expand next rank        u  undo last      q  quit & save",
@@ -583,6 +584,10 @@ def verdict_signal(item: ReviewItem, key: str) -> dict[str, Any] | None:
     - ``r`` → ``relevant`` (the result set was useful context).
     - ``t`` → ``thin`` (results too sparse/off-topic to help).
 
+  Either shape:
+    - ``b1``..``b9`` → ``bad_result`` naming the result at that rank as wrong
+      for this query (per-doc negative, subtracted in ``result_boost_counts``).
+
   Keys that don't apply to the query's shape — and anything else (space,
   enter, ``q``, etc.) — return None.
   """
@@ -592,6 +597,12 @@ def verdict_signal(item: ReviewItem, key: str) -> dict[str, Any] | None:
     return {"query_id": item.query_id, "kind": "deferred"}
   if key == "n":
     return {"query_id": item.query_id, "kind": "noise"}
+  if len(key) == 2 and key[0] == "b" and key[1] in "123456789":
+    # Per-doc negative, either shape: "this result is wrong for this query".
+    target = next((r for r in item.results if r.rank == int(key[1])), None)
+    if target is None:
+      return None
+    return {"query_id": item.query_id, "kind": "bad_result", "result_id": target.result_id}
 
   if is_answer_shaped(item.shape, item.parser_fallback):
     if key == "h":
@@ -952,6 +963,16 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
       continue
 
     key = chr(ch) if 0 <= ch < 256 else ""
+    if key == "b":
+      nxt = stdscr.getch()
+      bad = verdict_signal(item, "b" + (chr(nxt) if 0 <= nxt < 256 else ""))
+      if bad is None:
+        flash = "b needs a rank 1-9 that exists"
+      else:
+        entries.append(bad)
+        history.append((idx, 1))
+        flash = f"bad result at rank {chr(nxt)} (still on this card)"
+      continue
 
     if key == "n":
       text = item.text or ""

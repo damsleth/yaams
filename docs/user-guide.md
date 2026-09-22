@@ -752,6 +752,12 @@ yaams review --stats      # dashboard: hit/miss rates over time
 yaams review --json       # machine output
 ```
 
+In the TUI, `b` followed by a rank (`b3`) marks that one result as wrong for
+the query without leaving the card. It is the per-doc negative: each
+`bad_result` subtracts one from the doc's citation/correction count in the
+opt-in `retrieve.feedback_boost`, floored so it never sinks below the
+un-boosted score.
+
 This is the loop that lets you see, over time, whether your curation and
 config changes are actually making retrieval better. Judged queries become the
 gold set the retrieval harness replays; if you want to measure a retrieval

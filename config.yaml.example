@@ -236,3 +236,12 @@ retrieve:
   # recency_lane:
   #   days: 60
   #   weight: 0.5
+
+# Owner-written one-liner per source, returned alongside hits (`context` in
+# `yaams query --json` and the MCP tools, "Source notes" in synthesized
+# answers). Keys are `item.source` ids; a bare family key (`teams`) covers
+# every `teams_<profile>` that has no exact entry. Edit with `c` in
+# `yaams sources`.
+# sources_context:
+#   teams_brkh: "BRKH volunteer fire brigade Teams; vakt = shift roster"
+#   teams: "Microsoft Teams chats, one source per profile"

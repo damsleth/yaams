@@ -160,6 +160,27 @@ ingest:
     # dirs:
     #   brkh-g: ~/brain/docs/brkh
 
+  # Azure DevOps work items + wiki pages via owa-ado, one source per
+  # owa-piggy profile of type `ado`. Org/project come from owa-ado's own
+  # per-profile config; yaams only passes --profile. Work items are pulled
+  # incrementally on System.ChangedDate and keep their revision in source_id,
+  # so an edit lands as a new item. The wiki is mirrored to
+  # <wiki_dir>/<profile> with `owa-ado wiki --download` and indexed from there.
+  # PRs, pipelines and runs are deliberately not ingested.
+  ado:
+    enabled: false
+    profiles: []
+      # - nc-ado
+    # Drop either to ingest only the other.
+    content_types: [workitems, wiki]
+    wiki_dir: ~/brain/ado-wiki
+    # WIQL page size (owa-ado --top); the adapter pages on System.Id.
+    top: 500
+    # Optional per-profile --project override when the wiki or backlog lives
+    # in a different project than the one pinned in owa-ado config:
+    # projects:
+    #   nc-ado: NOCOS
+
 embed:
   model: BAAI/bge-m3
   batch_size: 32

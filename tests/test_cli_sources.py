@@ -75,7 +75,7 @@ def _write(tmp_path: Path, body: str = SAMPLE) -> Path:
 
 
 @pytest.mark.parametrize("source", ["mail", "calendar", "teams", "teams_channels", "drive",
-                                   "folders", "notes"])
+                                   "ado", "folders", "notes"])
 @pytest.mark.parametrize("blank_line", ["", "\n"])
 def test_source_block_creation_preserves_surroundings_and_is_idempotent(source, blank_line):
   before = f"# header\ningest:\n  since: '2025-01-01'\n{blank_line}# footer\nembed:\n  dimension: 4\n"
@@ -91,7 +91,7 @@ def test_source_block_creation_preserves_surroundings_and_is_idempotent(source, 
 
 
 @pytest.mark.parametrize("source", ["mail", "calendar", "teams", "teams_channels", "drive",
-                                   "folders", "notes"])
+                                   "ado", "folders", "notes"])
 @pytest.mark.parametrize("synthetic", [True, False])
 def test_interactive_toggle_keeps_path_setup_gate(tmp_path, monkeypatch, source, synthetic):
   keys = iter([" ", "q"])
@@ -429,6 +429,35 @@ def test_build_rows_drive_lists_google_and_m365_not_ado(
     if isinstance(r, SubPathRow) and r.parent == "drive"
   }
   assert drive_children == {"crayon", "brkh-g"}
+
+
+def test_build_rows_ado_lists_only_ado_profiles(tmp_path: Path, monkeypatch) -> None:
+  # The ado source is fed only by ado-type profiles, and an ado profile feeds
+  # nothing else: no mail/teams/calendar toggle for it.
+  body = (
+    "ingest:\n"
+    "  imessage:\n"
+    "    enabled: true\n"
+    "    chat_db_path: ~/Library/Messages/chat.db\n"
+  )
+  _stub_discovery(
+    monkeypatch,
+    teams=[
+      {"alias": "crayon", "type": "m365", "enabled": True, "default": True},
+      {"alias": "nc-ado", "type": "ado", "enabled": True, "default": False},
+    ],
+  )
+  cfg_path = _write(tmp_path, body)
+  import yaml
+  cfg = yaml.safe_load(cfg_path.read_text())
+  rows = _build_rows(cfg)
+  by_parent: dict[str, set[str]] = {}
+  for r in rows:
+    if isinstance(r, SubPathRow):
+      by_parent.setdefault(r.parent, set()).add(r.label)
+  assert by_parent["ado"] == {"nc-ado"}
+  for parent in ("mail", "calendar", "teams", "teams_channels", "drive"):
+    assert "nc-ado" not in by_parent.get(parent, set()), parent
 
 
 def test_set_profile_enabled_lazy_creates_drive_block(tmp_path: Path) -> None:

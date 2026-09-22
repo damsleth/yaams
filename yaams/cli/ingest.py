@@ -76,7 +76,7 @@ from yaams.watermark import get_watermark, update_watermark
     "chats, chats_facts, outlook_calendar, outlook_mail, "
     "teams or teams_<profile>, teams-channels or teams_channels_<profile>, "
     "calendar or calendar_<profile>, mail or mail_<profile>, "
-    "drive or drive_<profile>"
+    "drive or drive_<profile>, ado or ado_<profile>"
   ),
 )
 @click.option("--dry-run", is_flag=True)
@@ -781,6 +781,16 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
     base = cfg.get("local_dir") or "~/brain/docs"
     local_dir = (cfg.get("dirs") or {}).get(profile) or str(Path(base) / profile)
     return DriveAdapter(profile=profile, local_dir=Path(local_dir))
+  if source.startswith("ado_"):
+    from yaams.ingest.ado import CONTENT_TYPES, AdoAdapter
+    profile = source[len("ado_"):]
+    return AdoAdapter(
+      profile=profile,
+      wiki_dir=Path(cfg.get("wiki_dir") or "~/brain/ado-wiki"),
+      content_types=tuple(cfg.get("content_types") or CONTENT_TYPES),
+      project=(cfg.get("projects") or {}).get(profile),
+      top=int(cfg.get("top", 500)),
+    )
   if source.startswith("mail_"):
     profile = source[len("mail_"):]
     folders = tuple(cfg.get("folders") or ("Inbox", "SentItems"))
@@ -1013,6 +1023,7 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
       *_piggy_sources("calendar", "calendar_"),
       *_piggy_sources("mail", "mail_"),
       *_piggy_sources("drive", "drive_"),
+      *_piggy_sources("ado", "ado_"),
     ]
   if source == "teams":
     return _piggy_sources("teams", "teams_")
@@ -1024,6 +1035,8 @@ def _sources_to_run(source: str, cfg: dict | None = None) -> list[str]:
     return _piggy_sources("mail", "mail_")
   if source == "drive":
     return _piggy_sources("drive", "drive_")
+  if source == "ado":
+    return _piggy_sources("ado", "ado_")
   return [source]
 
 
@@ -1058,6 +1071,8 @@ def _config_section(source: str) -> str:
     return "mail"
   if source.startswith("drive_") or source == "drive":
     return "drive"
+  if source.startswith("ado_") or source == "ado":
+    return "ado"
   return source
 
 
@@ -1067,7 +1082,7 @@ def _source_enabled(cfg: dict, source: str) -> bool:
   # deactivated in owa-piggy. teams_channels_ is checked first: it also
   # startswith "teams_", and slicing the wrong prefix would feed
   # "channels_<p>" to the profile-active check.
-  for prefix in ("teams_channels_", "teams_", "calendar_", "mail_", "drive_"):
+  for prefix in ("teams_channels_", "teams_", "calendar_", "mail_", "drive_", "ado_"):
     if source.startswith(prefix):
       if not _owa_piggy_profile_active(source[len(prefix):]):
         return False
@@ -1149,6 +1164,11 @@ def _source_paths(source: str, cfg: dict) -> list[str]:
     base = source_cfg.get("local_dir") or "~/brain/docs"
     local_dir = (source_cfg.get("dirs") or {}).get(profile) or str(Path(base) / profile)
     return [f"drive profile: {profile} -> {Path(local_dir).expanduser()}"]
+  if source.startswith("ado_"):
+    profile = source[len("ado_"):]
+    kinds = ", ".join(source_cfg.get("content_types") or ["workitems", "wiki"])
+    wiki_dir = Path(source_cfg.get("wiki_dir") or "~/brain/ado-wiki").expanduser() / profile
+    return [f"owa-ado profile: {profile} ({kinds}) wiki -> {wiki_dir}"]
   return ["n/a"]
 
 

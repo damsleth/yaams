@@ -64,6 +64,17 @@ surface; pin to a specific version if you need stability.
   `yaams_answer` and `yaams query --answer` prepend the notes to the synthesis
   prompt as "Source notes". Edit a note with `c` on a row in `yaams sources`.
 
+- **Azure DevOps source** - `yaams ingest --source ado` / `ado_<profile>`
+  ingests work items and wiki pages by shelling out to `owa-ado` (never
+  importing its internals), gated to owa-piggy profiles of type `ado`. Work
+  items are pulled incrementally by WIQL on `System.ChangedDate`, HTML fields
+  are stripped, and the revision is encoded in `source_id` (`<id>:<rev>`) so
+  edits become new items. The wiki is mirrored with `owa-ado wiki --download`
+  into `ingest.ado.wiki_dir/<profile>` and indexed as markdown with an inferred
+  mtime timestamp and a body hash in `source_id`. New config block
+  `ingest.ado` (`enabled`, `profiles`, `content_types`, `wiki_dir`, `top`,
+  optional per-profile `projects`), and the `sources` TUI now offers `ado`
+  only to ado-type profiles.
 - **Retrieval-quality annotation of raw items** — `yaams refresh --annotate-junk`
   and the `yaams.quality` module. Measured on the live corpus 2026-09-16: 32% of
   iMessages are under 10 characters and 23% are exact-content duplicates. Two

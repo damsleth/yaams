@@ -1,0 +1,54 @@
+{
+  "id": 17964,
+  "rev": 18,
+  "fields": {
+    "System.Id": 17964,
+    "System.AreaPath": "EXAMPLE",
+    "System.TeamProject": "EXAMPLE",
+    "System.Rev": 18,
+    "System.IterationPath": "EXAMPLE\\Sprint 1",
+    "System.WorkItemType": "Task",
+    "System.State": "Active",
+    "System.Reason": "Work started",
+    "System.AssignedTo": {
+      "displayName": "Placeholder Person",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "uniqueName": "placeholder.person@example.com"
+    },
+    "System.CreatedDate": "2026-08-06T07:00:09.62Z",
+    "System.CreatedBy": {
+      "displayName": "Placeholder Person",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "uniqueName": "placeholder.person@example.com"
+    },
+    "System.ChangedDate": "2026-09-22T06:21:22.637Z",
+    "System.ChangedBy": {
+      "displayName": "Placeholder Person",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "uniqueName": "placeholder.person@example.com"
+    },
+    "System.CommentCount": 2,
+    "System.Title": "Configure support role list & lookup",
+    "System.Tags": "Example Tag; Another",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "System.Description": "<div><span style=\"box-sizing:border-box;\">example_SupportRoles: choice</span> </div><div><ul><li><span>Role: Text</span> </li><li>Predefined values:</li><ul><li>Quality coordinator </li><li><strike>Project manager</strike></li></ul><li>Consider which values to add &amp; why </li></ul> </div>",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "<div>List renders in the dialog.</div>",
+    "System.Parent": 17665
+  },
+  "multilineFieldsFormat": {
+    "System.Description": "html",
+    "Microsoft.VSTS.Common.AcceptanceCriteria": "html"
+  },
+  "relations": [
+    {
+      "rel": "System.LinkTypes.Hierarchy-Reverse",
+      "url": "https://dev.azure.com/Example-Org/00000000-0000-0000-0000-0000000000aa/_apis/wit/workItems/17665",
+      "attributes": {"isLocked": false, "name": "Parent"}
+    }
+  ],
+  "_links": {
+    "self": {"href": "https://dev.azure.com/Example-Org/00000000-0000-0000-0000-0000000000aa/_apis/wit/workItems/17964"},
+    "html": {"href": "https://dev.azure.com/Example-Org/00000000-0000-0000-0000-0000000000aa/_workitems/edit/17964"}
+  },
+  "url": "https://dev.azure.com/Example-Org/00000000-0000-0000-0000-0000000000aa/_apis/wit/workItems/17964"
+}

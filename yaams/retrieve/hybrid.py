@@ -813,7 +813,9 @@ def _fuse(
       comp.rrf_score += contribution
       _stash_component(
         comp,
-        ranking is ranked_lists[0] or ranking is ranked_lists[1],
+        # Lanes come in groups of four (fts_items, fts_cons, vec_items,
+        # vec_cons); the recency lane appends a second group.
+        idx % 4 < 2,
         rank,
         raw_score,
       )

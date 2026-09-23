@@ -15,10 +15,12 @@ surface; pin to a specific version if you need stability.
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and
-  `--explain` prints it under each result. Ranking is unchanged.
+  `--explain` prints it under each result. Ranking is unchanged. When rerank
+  fires, only `rerank` and the boosts applied after it are listed.
 - `mcp.answer_token_budget` (default `0`, off): caps the evidence
   `yaams_answer` synthesizes over at about N tokens, never drops rank 1
   (truncates it with `[truncated]`), and reports cut results as `omitted`.
+  The query log and source notes cover only the results synthesis saw.
 - `yaams review`: `b<rank>` logs a per-doc `bad_result` note, subtracted once
   per query (floored at 0) from the `retrieve.feedback_boost` count. It is
   never a verdict: the query stays in the unjudged/deferred queues, and gold

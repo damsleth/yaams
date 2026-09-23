@@ -420,7 +420,7 @@ result (CLI `--json` and the MCP payload) carries the same data as a
 - `boosts`: post-fusion adjustments that fired, by name: `tier2_coverage`
   (additive), `tier2_boost`, `recency`, `entity_boost`, `feedback_boost`,
   `assoc` (multipliers), `rerank` (cross-encoder score that replaced the RRF
-  score). An empty block means `score` is the plain RRF score.
+  score; boosts applied before it are dropped, since they no longer count). An empty block means `score` is the plain RRF score.
 
 ### Source notes
 

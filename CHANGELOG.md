@@ -30,6 +30,13 @@ surface; pin to a specific version if you need stability.
 - `yaams stats --usage`: most-cited items and never-surfaced Tier 2 notes,
   derived read-only from the query log (`yaams/signals/usage.py`).
 
+### Fixed
+
+- Recency lane (`retrieve.recency_lane`, opt-in): its FTS hits were recorded
+  as vector ranks, which leaked into `rank_agreement`, the `tier2_coverage`
+  gate and the new `components` output. Default ranking (lane off) is
+  unchanged; lane measurements from before this fix are not comparable.
+
 ## [0.10.1] - 2026-09-22
 
 ### Changed

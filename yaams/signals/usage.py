@@ -10,6 +10,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from yaams.signals.logger import VERDICT_ROW
+
+# Stricter than the review queue's ('legacy', 'eval'): review keeps 'test' so
+# fixture rows can be judged, but fixture traffic is never real usage.
 EXCLUDE_PROVENANCE = ("eval", "test", "legacy")
 
 
@@ -35,7 +39,8 @@ def item_usage(
     FROM query_results r JOIN queries q ON q.id = r.query_id
     WHERE COALESCE(q.provenance, '') NOT IN ({placeholders})
       AND COALESCE((
-        SELECT f.kind FROM query_feedback f WHERE f.query_id = q.id
+        SELECT f.kind FROM query_feedback f
+        WHERE f.query_id = q.id AND f.{VERDICT_ROW} AND f.kind != 'deferred'
         ORDER BY f.id DESC LIMIT 1
       ), '') != 'noise'
     GROUP BY r.result_id

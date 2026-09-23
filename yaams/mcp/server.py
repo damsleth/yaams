@@ -254,7 +254,13 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       gaps=answer.gaps, latency_ms=retrieval_ms + synthesis_ms,
       retrieval_ms=retrieval_ms, synthesis_ms=synthesis_ms,
     )
-    if not answer.cited_result_ids and (cfg.get("mcp") or {}).get("auto_miss"):
+    # Only a real backend's uncited answer is evidence of a retrieval miss.
+    if (
+      (cfg.get("mcp") or {}).get("auto_miss")
+      and not answer.cited_result_ids
+      and answer.backend != "dummy"
+      and (answer.answer or "").strip()
+    ):
       _log_auto_miss(cfg, query_id)
     payload = {
       "query_id": query_id,

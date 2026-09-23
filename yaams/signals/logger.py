@@ -16,6 +16,11 @@ def new_query_id() -> str:
   return f"q_{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}_{secrets.token_hex(4)}"
 
 
+# A query_feedback row that is a judgment of the query. bad_result is a per-doc
+# note left alongside a verdict, so it never counts as one.
+VERDICT_ROW = "kind != 'bad_result'"
+
+
 def detect_provenance(explicit: str | None = None) -> str:
   """Return the provenance label for a logged query.
 
@@ -231,7 +236,8 @@ def result_boost_counts(
     for rid, n in conn.execute(sql, ids + ex_param).fetchall():
       counts[rid] = counts.get(rid, 0) + int(n)
   for rid, n in conn.execute(
-    f"SELECT result_id, COUNT(*) FROM query_feedback "
+    # DISTINCT: pressing b2 twice, or re-reviewing later, is still one negative.
+    f"SELECT result_id, COUNT(DISTINCT query_id) FROM query_feedback "
     f"WHERE kind = 'bad_result' AND result_id IN ({placeholders}){ex_clause} GROUP BY result_id",
     ids + ex_param,
   ).fetchall():

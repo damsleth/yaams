@@ -143,7 +143,7 @@ def _load_gold(conn) -> tuple[list[dict], int, int]:
         SELECT f.query_id, f.kind, f.result_id,
                q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.ts
         FROM query_feedback f
-        JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
+        JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback WHERE kind != 'bad_result' GROUP BY query_id) last
           ON last.mid = f.id
         JOIN queries q ON q.id = f.query_id
         """

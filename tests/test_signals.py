@@ -252,6 +252,7 @@ def test_result_boost_counts_bad_result_subtracts_floored_at_zero():
             cited_result_ids=["ra"])
   log_feedback(conn, query_id="q1", kind="bad_result", result_id="rb")
   log_feedback(conn, query_id="q1", kind="bad_result", result_id="ra")
+  log_feedback(conn, query_id="q1", kind="bad_result", result_id="ra")  # repeat press
   log_query(conn, query_id="q2", text="y", top_k=1, source_filter=None, since=None,
             until=None, results=[_result("ra")], cited_result_ids=["ra"])
 

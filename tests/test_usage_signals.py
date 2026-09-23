@@ -44,3 +44,12 @@ def test_item_usage_counts_real_traffic_only():
   store_items(conn, items, [b"\x00" * 16] * 2, [[]] * 2)
   assert stale_tier2(conn, usage, since_ts="2026-09-05") == [("z", "n/z.md")]
   assert stale_tier2(conn, usage, since_ts="2026-09-20") == [("a", "n/a.md"), ("z", "n/z.md")]
+
+
+def test_later_bad_result_does_not_mask_noise_verdict():
+  conn = sqlite3.connect(":memory:")
+  init_schema(conn, embedding_dim=4)
+  _q(conn, "q1", "cli", [("a", 0)])
+  conn.execute("INSERT INTO query_feedback (query_id, kind, ts) VALUES ('q1', 'noise', 'x')")
+  conn.execute("INSERT INTO query_feedback (query_id, kind, result_id, ts) VALUES ('q1', 'bad_result', 'a', 'y')")
+  assert item_usage(conn) == {}

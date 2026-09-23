@@ -241,14 +241,15 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
     t1 = _time.perf_counter()
     answer = synthesize_answer(
       question, context_results, adapter,
-      source_notes=source_context_for(cfg, (r.source for r in results)),
+      source_notes=source_context_for(cfg, (r.source for r in context_results)),
     )
     synthesis_ms = (_time.perf_counter() - t1) * 1000
     # The cited results ARE the automatic positive label — this is what makes
-    # the flywheel turn without any human in the loop.
+    # the flywheel turn without any human in the loop. Log what synthesis saw:
+    # budget-cut results were never surfaced, so they must not read as ignored.
     _log_mcp_query(
       cfg, query_id=query_id, text=question, top_k=limit, source_filter=None,
-      results=results, cited_result_ids=answer.cited_result_ids,
+      results=context_results, cited_result_ids=answer.cited_result_ids,
       answer=answer.answer, backend=answer.backend, model=answer.model,
       confidence=answer.confidence, confidence_reason=answer.confidence_reason,
       gaps=answer.gaps, latency_ms=retrieval_ms + synthesis_ms,

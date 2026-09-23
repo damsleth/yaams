@@ -77,7 +77,8 @@ and the returned `results` at roughly N tokens (`len(text) // 4` per result,
 in fused-rank order). Rank 1 always survives, truncated with a `[truncated]`
 marker if it alone is over budget, and the payload gains
 `omitted: {count, from_rank, reason: "budget"}` so a trimmed context never
-reads as full coverage. The query log still records every retrieved result.
+reads as full coverage. The query log and the source notes cover only the
+results synthesis saw, so budget-cut results never count as surfaced-but-ignored.
 Measured 2026-09-22 on the era-2 fixture at `limit=5`: top-5 contexts run
 p50 1461 / p90 2320 tokens, and a 2000 budget kept a gold doc in context for
 20 of 38 gold queries vs 21 unbudgeted. That is why the default stays off.

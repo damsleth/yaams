@@ -370,7 +370,8 @@ def query(
     scores = rerank_pairs(text, pairs, cfg.reranker_model, device=cfg.reranker_device)
     for r, s in zip(pool, scores):
       r.score = s
-      r.boosts["rerank"] = float(s)
+      # Hydration-time boosts no longer shape the score; only later ones do.
+      r.boosts = {"rerank": float(s)}
     hydrated = pool
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity

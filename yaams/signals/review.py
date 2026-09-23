@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from yaams.render import DEFAULT_SNIPPET_CHARS
-from yaams.signals.logger import log_feedback
+from yaams.signals.logger import VERDICT_ROW, log_feedback
 
 VERDICT_KINDS = {"hit", "miss", "correction", "noise", "relevant", "thin", "deferred", "bad_result"}
 """Feedback kinds the review loop can emit.
@@ -454,11 +454,11 @@ def build_review_queue(
   if deferred_only:
     where.append(
       "EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind = 'deferred')"
-      " AND NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind != 'deferred')"
+      " AND NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id"
+      f" AND f.kind != 'deferred' AND f.{VERDICT_ROW})"
     )
   elif unjudged_only:
-    # bad_result is a per-doc note, not a verdict: the query stays unjudged.
-    where.append("NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.kind != 'bad_result')")
+    where.append(f"NOT EXISTS (SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.{VERDICT_ROW})")
 
   sql = """
     SELECT
@@ -555,7 +555,7 @@ def build_review_queue(
 
 def _is_unjudged(conn: sqlite3.Connection, query_id: str) -> bool:
   row = conn.execute(
-    "SELECT 1 FROM query_feedback WHERE query_id = ? LIMIT 1", (query_id,)
+    f"SELECT 1 FROM query_feedback WHERE query_id = ? AND {VERDICT_ROW} LIMIT 1", (query_id,)
   ).fetchone()
   return row is None
 
@@ -650,12 +650,12 @@ def noise_cascade(
   matching would risk false positives that erase real signal.
   """
   rows = conn.execute(
-    """
+    f"""
     SELECT q.id
     FROM queries AS q
     WHERE q.text = ?
       AND NOT EXISTS (
-        SELECT 1 FROM query_feedback f WHERE f.query_id = q.id
+        SELECT 1 FROM query_feedback f WHERE f.query_id = q.id AND f.{VERDICT_ROW}
       )
     """,
     (text,),
@@ -694,7 +694,7 @@ def dashboard_data(conn: sqlite3.Connection) -> dict[str, Any]:
   )
   judged = int(
     conn.execute(
-      "SELECT COUNT(DISTINCT query_id) FROM query_feedback"
+      f"SELECT COUNT(DISTINCT query_id) FROM query_feedback WHERE {VERDICT_ROW}"
     ).fetchone()[0]
     or 0
   )

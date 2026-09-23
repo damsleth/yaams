@@ -19,10 +19,14 @@ surface; pin to a specific version if you need stability.
 - `mcp.answer_token_budget` (default `0`, off): caps the evidence
   `yaams_answer` synthesizes over at about N tokens, never drops rank 1
   (truncates it with `[truncated]`), and reports cut results as `omitted`.
-- `yaams review`: `b<rank>` logs a per-doc `bad_result` verdict, subtracted
-  (floored at 0) from the `retrieve.feedback_boost` count.
-- `mcp.auto_miss` (default off): a `yaams_answer` that cites no results logs a
-  query-level `miss`.
+- `yaams review`: `b<rank>` logs a per-doc `bad_result` note, subtracted once
+  per query (floored at 0) from the `retrieve.feedback_boost` count. It is
+  never a verdict: the query stays in the unjudged/deferred queues, and gold
+  selection, the fixture hash and `stats --usage` skip it when picking a
+  query's latest verdict.
+- `mcp.auto_miss` (default off): a `yaams_answer` from a real backend that
+  cites no results logs a query-level `miss` (never for the `dummy` backend or
+  an empty answer).
 - `yaams stats --usage`: most-cited items and never-surfaced Tier 2 notes,
   derived read-only from the query log (`yaams/signals/usage.py`).
 

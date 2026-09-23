@@ -84,7 +84,7 @@ p50 1461 / p90 2320 tokens, and a 2000 budget kept a gold doc in context for
 If rank 1 alone was cut, `omitted.truncated_rank_1` is `true`.
 
 `mcp.auto_miss: true` (default off) logs a query-level `miss` with payload
-`{"auto": "no_citations"}` whenever a synthesized answer cites none of its
+`{"auto": "no_citations"}` whenever a real (non-`dummy`) backend's answer cites none of its
 results, so agent traffic feeds `yaams review` / `yaams gaps` negatives without
 the agent calling `yaams_feedback`.
 

@@ -19,7 +19,11 @@ surface; pin to a specific version if you need stability.
   `~/brain/feed/eval/jev/cache.db`; every request appends real
   `input_tokens` and latency to `usage.jsonl` (`scripts/jev_usage.py` sums
   dollars and p50/p95 per tag). Key from `TYPESAFE_API_KEY` or `./.env`.
-  Nothing in the query path calls it.
+  Nothing in the query path calls it. Experiment scripts on top of it:
+  `scripts/jev_junk_pass.py` + `jev_junk_score.py` (A1, junk verdicts vs
+  Sonnet, kappa/calibration, owner disagreement sheet) and
+  `scripts/jev_bruteforce.py` (B4, rank the whole corpus per gold query,
+  `--max-dollars` hard stop).
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and

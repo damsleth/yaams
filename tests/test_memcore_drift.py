@@ -19,7 +19,7 @@ from __future__ import annotations
 import sys
 from itertools import product
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -58,7 +58,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _sym(name: str):
+def _sym(name: str) -> Callable[..., Any]:
   """Resolve a memcore symbol from the top level or its trust/rerank modules.
 
   A missing symbol is a drift failure, not a skip: the seam this repo plans
@@ -71,7 +71,7 @@ def _sym(name: str):
     for candidate in (name, f"_{name}"):
       if hasattr(holder, candidate):
         return getattr(holder, candidate)
-  pytest.fail(
+  raise AssertionError(
     f"memcore does not expose {name!r} (looked in memcore, memcore.trust, "
     f"memcore.rerank) - the import seam has moved; update the adoption plan"
   )

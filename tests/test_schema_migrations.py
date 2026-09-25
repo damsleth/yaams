@@ -19,10 +19,9 @@ from yaams.migrations import Migration, applied, apply_pending, discover
 # ---------------------------------------------------------------------------
 
 def _make_migration(name: str, fn: Callable[[sqlite3.Connection], None] | None = None) -> Migration:
-    if fn is None:
-        def fn(conn: sqlite3.Connection) -> None:
-            conn.execute(f"CREATE TABLE IF NOT EXISTS _{name} (id INTEGER PRIMARY KEY)")
-    return Migration(name=name, apply=fn)
+    def _create_table(conn: sqlite3.Connection) -> None:
+        conn.execute(f"CREATE TABLE IF NOT EXISTS _{name} (id INTEGER PRIMARY KEY)")
+    return Migration(name=name, apply=fn or _create_table)
 
 
 def _fresh_db() -> sqlite3.Connection:

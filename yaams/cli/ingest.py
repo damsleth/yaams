@@ -662,14 +662,14 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       raise ValueError(
         "folders source requires at least one enabled path under ingest.folders.paths"
       )
-    kwargs: dict = {"folder_paths": [Path(p) for p in active_paths]}
+    folder_kwargs: dict = {"folder_paths": [Path(p) for p in active_paths]}
     extensions = cfg.get("extensions")
     if extensions:
-      kwargs["extensions"] = tuple(extensions)
+      folder_kwargs["extensions"] = tuple(extensions)
     skip_dirs = cfg.get("skip_dirs")
     if skip_dirs:
-      kwargs["skip_dirs"] = set(skip_dirs)
-    return FolderAdapter(**kwargs)
+      folder_kwargs["skip_dirs"] = set(skip_dirs)
+    return FolderAdapter(**folder_kwargs)
   if source == "agent_memory":
     claude = cfg.get("claude_projects")
     codex = cfg.get("codex_memories")

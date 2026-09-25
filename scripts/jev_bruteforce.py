@@ -1,7 +1,7 @@
 """Jev B4: brute-force ceiling. Score every non-junk item (and consolidation)
 for each gold query with Jev and record where the gold lands. Default criterion
-version rel-2: the criterion rides in `state` once, candidates carry a date
-prefix; `--criterion-version rel-1` reproduces the pilot format.
+version rel-1 (the per-question criterion is needed: rel-2, criterion in `state`
+only + date prefix, dropped Spearman to 0.57-0.87 vs rel-1 on the pilot queries).
 
   .venv/bin/python scripts/jev_bruteforce.py --db <fixture copy> --queries 5 --max-dollars 1 --tag pilot
 
@@ -30,7 +30,7 @@ OWNER = "Kim (Carl Joakim Damsleth); 'I', 'me', 'my' refer to him"
 CHUNK = 4096
 
 
-def corpus(conn, version="rel-2"):
+def corpus(conn, version="rel-1"):
   """rel-1: `[source | ts | subject]` header. rel-2: date prefix only (plus subject)."""
   docs = {}
   for r in conn.execute("SELECT id, source, timestamp, subject, content FROM items "
@@ -59,7 +59,7 @@ def main():
   ap.add_argument("--tag", default="adhoc")
   ap.add_argument("--workers", type=int, default=8)
   ap.add_argument("--max-questions", type=int, default=jev.MAX_QUESTIONS)
-  ap.add_argument("--criterion-version", choices=["rel-1", "rel-2"], default="rel-2",
+  ap.add_argument("--criterion-version", choices=["rel-1", "rel-2"], default="rel-1",
                   help="rel-1 repeats the criterion per question (pilot); rel-2 keeps it in state only")
   a = ap.parse_args()
   crit = CRITERION if a.criterion_version == "rel-1" else None

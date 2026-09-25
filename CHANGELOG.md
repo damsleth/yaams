@@ -25,7 +25,8 @@ surface; pin to a specific version if you need stability.
   `scripts/jev_bruteforce.py` (B4, rank the whole corpus per gold query,
   `--max-dollars` hard stop, `--criterion-version rel-1|rel-2`; rel-2 keeps
   the criterion in `state` only and shortens the candidate header to a date,
-  ~35% fewer tokens but measurably worse ranking on the pilot queries).
+  ~35% fewer tokens but measurably worse ranking on the pilot queries, so
+  the default is rel-1).
   `jev.noul(criterion=None)` omits per-question `criteria`.
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector

@@ -12,6 +12,14 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- `yaams/jev.py`: stdlib client for TypeSafe's Jev (`noul`, `choice`), pinned
+  to `jev-1.13.0`, for the opt-in Jev experiments. Packs up to 256 questions
+  and 22.4k estimated tokens (`len/3`) per request, retries 429/529/5xx, and
+  a failed id comes back missing, never `0.0`. Scores are cached in
+  `~/brain/feed/eval/jev/cache.db`; every request appends real
+  `input_tokens` and latency to `usage.jsonl` (`scripts/jev_usage.py` sums
+  dollars and p50/p95 per tag). Key from `TYPESAFE_API_KEY` or `./.env`.
+  Nothing in the query path calls it.
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and

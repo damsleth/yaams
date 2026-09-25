@@ -34,6 +34,9 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- pyright reports 0 errors (was 29 in CI): two same-name redeclarations in
+  `cli/ingest.py` and `signals/review.py`, the rest test typing only. No
+  behavior change.
 - Recency lane (`retrieve.recency_lane`, opt-in): its FTS hits were recorded
   as vector ranks, which leaked into `rank_agreement`, the `tier2_coverage`
   gate and the new `components` output. Default ranking (lane off) is

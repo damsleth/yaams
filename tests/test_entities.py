@@ -70,23 +70,31 @@ def test_is_norwegian_rejects_english():
   assert not _is_norwegian("The den was hidden in the forest for years")
 
 
+def _tagger(dictionary=None, *, nlp=None, nlp_nb=None) -> EntityTagger:
+  # Fakes stand in for spaCy Language pipes; setattr keeps the typed fields honest.
+  tagger = EntityTagger(None, dictionary) if dictionary else EntityTagger(None)
+  if nlp is not None:
+    setattr(tagger, "nlp", nlp)
+  if nlp_nb is not None:
+    setattr(tagger, "nlp_nb", nlp_nb)
+  return tagger
+
+
 def test_norwegian_content_routes_to_nb_model():
-  tagger = EntityTagger(None)
-  tagger.nlp = _FakeNlp([("London", "GPE")])
-  tagger.nlp_nb = _FakeNlp([("Bærum", "LOC")])
+  en, nb = _FakeNlp([("London", "GPE")]), _FakeNlp([("Bærum", "LOC")])
+  tagger = _tagger(nlp=en, nlp_nb=nb)
 
   tags = tagger.tag("Vi har øvelse i Bærum på lørdag")
 
   assert {t[0] for t in tags} == {"Bærum"}
-  assert tagger.nlp_nb.calls == 1
-  assert tagger.nlp.calls == 0
+  assert nb.calls == 1
+  assert en.calls == 0
 
 
 def test_ner_noise_words_are_dropped_at_tag_time():
-  tagger = EntityTagger(None)
-  tagger.nlp_nb = _FakeNlp(
+  tagger = _tagger(nlp_nb=_FakeNlp(
     [("IKKE", "ORG"), ("Hei", "LOC"), ("takk!", "ORG"), ("Røde Kors", "ORG")]
-  )
+  ))
 
   tags = tagger.tag("Hei alle! Glem IKKE øvelsen med Røde Kors. Tusen takk!")
 
@@ -109,8 +117,7 @@ def test_markup_is_stripped_before_ner():
 
 
 def test_ner_artifact_and_fragment_ents_are_dropped():
-  tagger = EntityTagger(None)
-  tagger.nlp = _FakeNlp(
+  tagger = _tagger(nlp=_FakeNlp(
     [
       ("image](https://github.com", "ORG"),
       ('href="https://redirect.github.com', "ORG"),
@@ -119,7 +126,7 @@ def test_ner_artifact_and_fragment_ents_are_dropped():
       ("EU", "ORG"),  # uppercase acronym survives
       ("NASA", "ORG"),
     ]
-  )
+  ))
 
   tags = tagger.tag("plain english content")
 
@@ -135,8 +142,7 @@ def test_ner_lowercase_org_canonical_is_capitalized():
 
 def test_dictionary_hits_survive_noise_filter():
   # a curated dictionary entry wins even if its name is in NOISE_WORDS
-  tagger = EntityTagger(None, [{"canonical": "Via", "type": "org"}])
-  tagger.nlp_nb = _FakeNlp([("Via", "ORG")])
+  tagger = _tagger([{"canonical": "Via", "type": "org"}], nlp_nb=_FakeNlp([("Via", "ORG")]))
 
   tags = tagger.tag("Møtet med Via er på torsdag")
 

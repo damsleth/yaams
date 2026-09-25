@@ -3,7 +3,7 @@ stores into repo-attributed items. Pure functions plus one end-to-end extract
 over a synthetic store — the real stores are private."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from yaams.ingest.agent_memory import (
@@ -161,7 +161,7 @@ def test_timestamps_are_utc_aware(tmp_path):
   )
   item = next(iter(AgentMemoryAdapter(codex_memories=codex).extract(EPOCH)))
   assert item.timestamp.tzinfo is not None
-  assert item.timestamp.utcoffset().total_seconds() == 0
+  assert item.timestamp.utcoffset() == timedelta(0)
   assert item.timestamp.hour == 12, "14:11+02:00 is 12:11 UTC"
 
 

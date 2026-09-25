@@ -35,8 +35,11 @@ class LedgerNotesAdapter:
       body = (candidate.get("body") or "").strip()
       statement = (candidate.get("statement") or "").strip()
 
-      # body already contains the statement section; prepend bare statement
-      # only if body doesn't open with it, so it surfaces prominently in FTS
+      # ponytail: deliberate Tier 2 lexical weight. Real bodies open
+      # "# Title\n\n## Statement", so this check almost never matches and the
+      # statement is indexed twice. Removing the doubling was measured and lost
+      # (experiments.jsonl `ledger_statement_dedup`, 2026-09-25: dev quality
+      # -0.023, one rank-1 loss). Revisit only with >=10 tier2 golds.
       if statement and not body.lstrip("#\n ").startswith(statement[:40]):
         content = statement + "\n\n" + body
       else:

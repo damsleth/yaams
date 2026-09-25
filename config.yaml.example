@@ -256,6 +256,14 @@ retrieve:
   # recency_lane:
   #   days: 60
   #   weight: 0.5
+  # TypeSafe Jev relevance over the top-k hydrated candidates (OPT-IN, off
+  # unless spec is set). REMOTE and PAID: sends the query and up to k candidate
+  # texts to api.typesafe.ai (TYPESAFE_API_KEY, env or ./.env), ~$0.0003 and
+  # ~1 s per query at k=50; scores are cached in ~/brain/feed/eval/jev/cache.db.
+  # spec: replace | blend:<a> | gate:<h> | filter:<tau>  (see docs/user-guide.md)
+  # jev:
+  #   spec: gate:0.9
+  #   k: 50
 
 # Owner-written one-liner per source, returned alongside hits (`context` in
 # `yaams query --json` and the MCP tools, "Source notes" in synthesized

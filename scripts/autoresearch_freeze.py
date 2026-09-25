@@ -40,7 +40,7 @@ def _gold_hash(conn) -> tuple[str, int, int]:
         """
         SELECT f.query_id, f.kind, f.result_id
         FROM query_feedback f
-        JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
+        JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback WHERE kind != 'bad_result' GROUP BY query_id) last
           ON last.mid = f.id
         WHERE f.kind IN ('hit', 'correction') AND f.result_id IS NOT NULL
         """

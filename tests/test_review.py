@@ -773,3 +773,25 @@ def test_queue_hides_legacy_and_eval_provenance_by_default():
   assert [i.query_id for i in build_review_queue(conn)] == ["q_cli"]
   # ... but stay reachable when asked for explicitly
   assert [i.query_id for i in build_review_queue(conn, provenance="legacy")] == ["q_legacy"]
+
+
+def test_verdict_b_rank_marks_bad_result():
+  item = _item_with_results([1, 2])
+  assert verdict_signal(item, "b2") == {"query_id": "q_x", "kind": "bad_result", "result_id": "r2"}
+  assert verdict_signal(item, "b7") is None
+  assert verdict_signal(item, "b") is None
+
+
+def test_bad_result_alone_keeps_query_unjudged():
+  conn = _open()
+  _log(conn, "q_a", result_ids=["r1", "r2"])
+  log_feedback(conn, query_id="q_a", kind="bad_result", result_id="r2")
+  assert [i.query_id for i in build_review_queue(conn)] == ["q_a"]
+
+
+def test_bad_result_does_not_hide_a_deferred_query():
+  conn = _open()
+  _log(conn, "q_a", result_ids=["r1", "r2"])
+  log_feedback(conn, query_id="q_a", kind="bad_result", result_id="r2")
+  log_feedback(conn, query_id="q_a", kind="deferred")
+  assert [i.query_id for i in build_review_queue(conn, deferred_only=True)] == ["q_a"]

@@ -36,6 +36,7 @@ YAAMS ingests everything: messages, emails, transcripts, documents, browsing con
 
 - **Append-only.** Raw items are immutable. Edits become new items with `supersedes:` links.
 - **Local-only compute.** Embeddings, NER, LLM synthesis run in-environment. No external services.
+  This is primarily a cost rule, not a privacy rule (owner, 2026-09-24): a paid remote service (e.g. TypeSafe Jev, `.plans/jev-experiments.md`) is allowed behind opt-in config when a logged experiment justifies its dollars and latency.
 - **Idempotent ingestion.** Re-running an adapter against the same source produces the same items.
 - **Source traceability.** Every answer cites the items it was grounded in.
 - **Human review at promotion.** Anything that flows from YAAMS into Tier 2 has been seen and accepted.

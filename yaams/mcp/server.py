@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import time as _time
+from dataclasses import replace
 from typing import Any
 
 from yaams.config import get_db_path, load_config, source_context_for
@@ -109,6 +110,17 @@ def _log_mcp_query(
     conn.close()
 
 
+def _log_auto_miss(cfg: dict, query_id: str) -> None:
+  """Agent-side negative: an answer that cited none of its evidence is a miss."""
+  from yaams.signals import log_feedback
+
+  conn = open_db(get_db_path(cfg))
+  try:
+    log_feedback(conn, query_id=query_id, kind="miss", payload={"auto": "no_citations"})
+  finally:
+    conn.close()
+
+
 def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source: str) -> list:
   """Shared retrieval path: embed -> hybrid query -> attach trust verdicts."""
   from yaams.cli.query import (
@@ -155,6 +167,32 @@ def _results_payload(results: list, cfg: dict) -> dict:
   return payload
 
 
+def _apply_token_budget(results: list, budget: int) -> tuple[list, dict | None]:
+  """Keep results in rank order until ~budget tokens (len//4); rank 1 always stays."""
+  if budget <= 0 or not results:
+    return results, None
+  kept: list = []
+  used = 0
+  truncated = False
+  for r in results:
+    cost = len((r.subject or "") + (r.content or "")) // 4
+    if kept and used + cost > budget:
+      break
+    if not kept and cost > budget:
+      r = replace(r, content=(r.content or "")[: max(0, budget * 4 - len(r.subject or ""))] + " [truncated]")
+      cost = budget
+      truncated = True
+    kept.append(r)
+    used += cost
+  if len(kept) == len(results) and not truncated:
+    return kept, None
+  omitted = {"count": len(results) - len(kept), "from_rank": len(kept) + 1, "reason": "budget"}
+  if truncated:
+    # content_preview is capped at 400 chars, so the marker alone can be invisible.
+    omitted["truncated_rank_1"] = True
+  return kept, omitted
+
+
 def create_server(*, config_path: str | None = None, allow_write: bool = False):
   """Build (but do not run) the FastMCP server with YAAMS tools."""
   FastMCP = _require_mcp()
@@ -197,23 +235,34 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
         confidence="unknown",
       )
       return {"answer": "", "confidence": "unknown", "results": [], "query_id": query_id}
+    budget = int((cfg.get("mcp") or {}).get("answer_token_budget") or 0)
+    context_results, omitted = _apply_token_budget(results, budget)
     adapter = llm_adapter_from_config(cfg)
     t1 = _time.perf_counter()
     answer = synthesize_answer(
-      question, results, adapter,
-      source_notes=source_context_for(cfg, (r.source for r in results)),
+      question, context_results, adapter,
+      source_notes=source_context_for(cfg, (r.source for r in context_results)),
     )
     synthesis_ms = (_time.perf_counter() - t1) * 1000
     # The cited results ARE the automatic positive label — this is what makes
-    # the flywheel turn without any human in the loop.
+    # the flywheel turn without any human in the loop. Log what synthesis saw:
+    # budget-cut results were never surfaced, so they must not read as ignored.
     _log_mcp_query(
       cfg, query_id=query_id, text=question, top_k=limit, source_filter=None,
-      results=results, cited_result_ids=answer.cited_result_ids,
+      results=context_results, cited_result_ids=answer.cited_result_ids,
       answer=answer.answer, backend=answer.backend, model=answer.model,
       confidence=answer.confidence, confidence_reason=answer.confidence_reason,
       gaps=answer.gaps, latency_ms=retrieval_ms + synthesis_ms,
       retrieval_ms=retrieval_ms, synthesis_ms=synthesis_ms,
     )
+    # Only a real backend's uncited answer is evidence of a retrieval miss.
+    if (
+      (cfg.get("mcp") or {}).get("auto_miss")
+      and not answer.cited_result_ids
+      and answer.backend != "dummy"
+      and (answer.answer or "").strip()
+    ):
+      _log_auto_miss(cfg, query_id)
     payload = {
       "query_id": query_id,
       "answer": answer.answer_body or answer.answer,
@@ -224,8 +273,10 @@ def create_server(*, config_path: str | None = None, allow_write: bool = False):
       "cited_result_ids": answer.cited_result_ids,
       "backend": answer.backend,
       "model": answer.model,
-      **_results_payload(results, cfg),
+      **_results_payload(context_results, cfg),
     }
+    if omitted:
+      payload["omitted"] = omitted
     return scrub_for_egress(payload)
 
   if allow_write:

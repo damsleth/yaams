@@ -58,7 +58,7 @@ Add `"--allow-write"` to the `args` array to enable `yaams_feedback`.
   the isolated chat-facts tier (empty unless that opt-in source is ingested).
 
 Returns `{"results": [ ... ]}` where each result mirrors the
-`yaams query --format json` shape and carries a `trust` object. When the
+`yaams query --format json` shape and carries a `trust` object and a `components` score breakdown (see user-guide section 5, "Inspecting and scripting"). When the
 config has a `sources_context` note for any source present in the results, a
 `context: {source: text}` object is added once (deduplicated per source; a
 bare family key like `teams` covers `teams_<profile>`). The key is omitted
@@ -71,6 +71,23 @@ Runs the same retrieval, then synthesizes an answer. Returns the answer body,
 the `backend` / `model` used, the underlying `results`, and the same `context`
 block as `yaams_query`. The notes are also prepended to the synthesis prompt as
 "Source notes" so the model reads each source with the owner's framing.
+
+`mcp.answer_token_budget` (default `0`, off) caps the evidence synthesis sees
+and the returned `results` at roughly N tokens (`len(text) // 4` per result,
+in fused-rank order). Rank 1 always survives, truncated with a `[truncated]`
+marker if it alone is over budget, and the payload gains
+`omitted: {count, from_rank, reason: "budget"}` so a trimmed context never
+reads as full coverage. The query log and the source notes cover only the
+results synthesis saw, so budget-cut results never count as surfaced-but-ignored.
+Measured 2026-09-22 on the era-2 fixture at `limit=5`: top-5 contexts run
+p50 1461 / p90 2320 tokens, and a 2000 budget kept a gold doc in context for
+20 of 38 gold queries vs 21 unbudgeted. That is why the default stays off.
+If rank 1 alone was cut, `omitted.truncated_rank_1` is `true`.
+
+`mcp.auto_miss: true` (default off) logs a query-level `miss` with payload
+`{"auto": "no_citations"}` whenever a real (non-`dummy`) backend's answer cites none of its
+results, so agent traffic feeds `yaams review` / `yaams gaps` negatives without
+the agent calling `yaams_feedback`.
 
 ### `yaams_feedback(query_id, rank, verdict, note="")`
 

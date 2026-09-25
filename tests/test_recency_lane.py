@@ -174,3 +174,14 @@ def test_lane_weight_is_parsed_from_config():
   qcfg = HybridQueryConfig()
   apply_recency_lane_config(qcfg, {"retrieve": {"recency_lane": {"days": 60, "weight": 0.5}}})
   assert (qcfg.recency_lane_days, qcfg.recency_lane_weight) == (60.0, 0.5)
+
+
+def test_lane_fts_hits_are_recorded_as_fts_not_vector():
+  conn = _open_db()
+  recent = _seed(conn)
+  results = query(conn, "vakt", config=HybridQueryConfig(
+    top_k=50, per_index_k=20, recency_lane_days=60,
+  ))
+  comp = next(r.components for r in results if r.id == recent)
+  assert comp.fts_rank is not None
+  assert comp.vector_rank is None  # FTS-only run: nothing came from a vector lane

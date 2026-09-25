@@ -146,7 +146,7 @@ def main() -> int:
       """
       SELECT q.id, q.text, q.top_k, q.source_filter, q.since, q.until, q.parsed_query, q.shape, q.ts
       FROM queries q
-      JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback GROUP BY query_id) last
+      JOIN (SELECT query_id, MAX(id) AS mid FROM query_feedback WHERE kind != 'bad_result' GROUP BY query_id) last
         ON last.query_id = q.id
       JOIN query_feedback f ON f.id = last.mid
       WHERE f.kind = 'miss' AND COALESCE(q.results_returned,0) > 0

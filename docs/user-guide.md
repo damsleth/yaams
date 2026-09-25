@@ -406,6 +406,22 @@ yaams query --high-quality "..."# synthesis-grade depth (higher top_k)
 `--explain` is your window into what the parser understood — use it whenever
 results surprise you (see [Troubleshooting](#14-troubleshooting)).
 
+`--explain` also prints one `explain:` line under each result, and every JSON
+result (CLI `--json` and the MCP payload) carries the same data as a
+`components` block:
+
+- `fts_rank` / `vector_rank`: 0-based rank in the best FTS / vector lane, or
+  `null` when that lane missed the doc. `fts_score` is the raw BM25 value
+  (lower is better), `vector_distance` the sqlite-vec distance.
+- `rrf_score`: the fused reciprocal-rank score, including `credits`
+  (`rank_agreement` multiplier, `thread_coherence` additive credit). Scores
+  are RRF-scale (roughly 0.01-0.2), not probabilities, and are only
+  comparable within one query.
+- `boosts`: post-fusion adjustments that fired, by name: `tier2_coverage`
+  (additive), `tier2_boost`, `recency`, `entity_boost`, `feedback_boost`,
+  `assoc` (multipliers), `rerank` (cross-encoder score that replaced the RRF
+  score; boosts applied before it are dropped, since they no longer count). An empty block means `score` is the plain RRF score.
+
 ### Source notes
 
 A source id like `teams_brkh` tells a reader (or an agent) nothing about what
@@ -736,6 +752,12 @@ yaams review --stats      # dashboard: hit/miss rates over time
 yaams review --json       # machine output
 ```
 
+In the TUI, `b` followed by a rank (`b3`) marks that one result as wrong for
+the query without leaving the card. It is the per-doc negative: each
+`bad_result` subtracts one from the doc's citation/correction count in the
+opt-in `retrieve.feedback_boost`, floored so it never sinks below the
+un-boosted score.
+
 This is the loop that lets you see, over time, whether your curation and
 config changes are actually making retrieval better. Judged queries become the
 gold set the retrieval harness replays; if you want to measure a retrieval
@@ -833,6 +855,13 @@ yaams stats                 # item counts per source + last ingest timing
 yaams version               # version (--json for machine output)
 yaams setup                 # install runtime assets (spaCy NER models)
 ```
+
+`yaams stats --usage [--top N] [--stale-months M]` reads the query log
+(excluding `eval` / `test` / `legacy` provenance and queries whose latest
+verdict is `noise`) and prints the most-cited results plus the Tier 2 notes no
+query has surfaced in M months. The second list is an archive-review prompt
+for the ledger; yaams never moves notes itself. Surfaced counts reflect past
+ranking, so they are never fed back into scoring.
 
 Re-tag stored items after changing your entity dictionary or NER model:
 
@@ -934,8 +963,10 @@ yaams mcp --allow-write      # also expose the write-gated yaams_feedback tool
 Every response is scrubbed of `<private>…</private>` content before it leaves
 the process. Both read tools return a `context` block with the owner's
 [source notes](#source-notes) for the sources present in the hits, and
-`yaams_answer` feeds the same notes to synthesis. For the full tool reference
-and client configuration, see [mcp-server.md](mcp-server.md).
+`yaams_answer` feeds the same notes to synthesis. Set
+`mcp.answer_token_budget` to cap the evidence `yaams_answer` returns and
+synthesizes over (off by default). For the full tool reference and client
+configuration, see [mcp-server.md](mcp-server.md).
 
 ---
 

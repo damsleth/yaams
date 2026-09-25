@@ -278,7 +278,10 @@ def init_db(config_path: str, require_vec: bool, as_json: bool) -> None:
 @cli.command("stats")
 @config_option
 @click.option("--json", "as_json", is_flag=True, help="Emit raw stats JSON on stdout.")
-def stats(config_path: str, as_json: bool) -> None:
+@click.option("--usage", is_flag=True, help="Most-cited items and never-surfaced Tier 2 notes, from the query log.")
+@click.option("--top", "top_n", default=20, show_default=True, help="With --usage: rows in the most-cited list.")
+@click.option("--stale-months", default=3, show_default=True, help="With --usage: Tier 2 notes not surfaced in this many months.")
+def stats(config_path: str, as_json: bool, usage: bool, top_n: int, stale_months: int) -> None:
   # Wrap the entire body so config-load and db-open failures surface as
   # data_error envelopes on stdout under --json (Plan 06). The previous
   # implementation only guarded open_db, leaving load_config to traceback.
@@ -287,6 +290,9 @@ def stats(config_path: str, as_json: bool) -> None:
     db_path = get_db_path(cfg)
     conn = open_db(db_path, readonly=True)
     try:
+      if usage:
+        _print_usage(conn, as_json=as_json, top_n=top_n, stale_months=stale_months)
+        return
       from yaams.cli.ingest import print_stats
       from yaams.store import database_stats
 
@@ -301,6 +307,31 @@ def stats(config_path: str, as_json: bool) -> None:
         print_stats(conn, db_path, {}, dry_run=False)
     finally:
       conn.close()
+
+
+def _print_usage(conn, *, as_json: bool, top_n: int, stale_months: int) -> None:
+  import json as _json
+  from datetime import datetime, timedelta, timezone
+
+  from yaams.signals.usage import item_usage, stale_tier2
+
+  usage = item_usage(conn)
+  top = sorted(usage.values(), key=lambda u: (-u.cited_count, -u.surfaced_count, u.item_id))[:top_n]
+  since = (datetime.now(timezone.utc) - timedelta(days=30 * stale_months)).isoformat()
+  stale = stale_tier2(conn, usage, since_ts=since)
+  if as_json:
+    click.echo(_json.dumps({
+      "top_cited": [u.__dict__ for u in top],
+      "stale_tier2": [{"id": i, "source_id": s} for i, s in stale],
+      "stale_months": stale_months,
+    }, ensure_ascii=False))
+    return
+  click.echo(f"Most cited (of {len(usage)} surfaced items):")
+  for u in top:
+    click.echo(f"  cited {u.cited_count:>3}  surfaced {u.surfaced_count:>4}  last {u.last_surfaced_at[:10]}  {u.item_id}")
+  click.echo(f"\nTier 2 notes not surfaced in {stale_months} months ({len(stale)}), archive review only:")
+  for _, source_id in stale:
+    click.echo(f"  {source_id}")
 
 
 @cli.command("reset-db")

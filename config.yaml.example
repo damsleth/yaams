@@ -155,6 +155,15 @@ trust:
   # until A/B validated.
   provenance_weighting_enabled: false
 
+mcp:
+  # Token cap on the evidence yaams_answer synthesizes over and returns
+  # (len(text)//4 per result, fused-rank order). Rank 1 always survives,
+  # truncated with a [truncated] marker if it alone is over. 0 disables.
+  answer_token_budget: 0
+  # Log a query-level `miss` when a yaams_answer cites none of its results
+  # (agent-side negative for the relevance loop). Off by default.
+  auto_miss: false
+
 promote:
   # Semantic dedup: before accepting a drafted candidate, call `ledger embed
   # search` to check whether an equivalent note already exists in Tier 2.

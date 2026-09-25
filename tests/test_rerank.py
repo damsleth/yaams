@@ -47,6 +47,7 @@ def test_rerank_reorders_pool(monkeypatch, tmp_path):
   cfg = HybridQueryConfig(rerank_enabled=True, include_consolidations=False)
   res = query(conn, "alpha", embedding=None, config=cfg)
   assert res[0].subject == "beta"  # cross-encoder lifted the beta item to rank 1
+  assert res[0].boosts == {"rerank": res[0].score}  # pre-rerank boosts no longer count
 
 
 def test_default_path_never_invokes_rerank(monkeypatch, tmp_path):

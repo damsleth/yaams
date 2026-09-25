@@ -1,5 +1,7 @@
 """Jev B4: brute-force ceiling. Score every non-junk item (and consolidation)
-for each gold query with Jev rel-1 and record where the gold lands.
+for each gold query with Jev and record where the gold lands. Default criterion
+version rel-2: the criterion rides in `state` once, candidates carry a date
+prefix; `--criterion-version rel-1` reproduces the pilot format.
 
   .venv/bin/python scripts/jev_bruteforce.py --db <fixture copy> --queries 5 --max-dollars 1 --tag pilot
 
@@ -28,14 +30,23 @@ OWNER = "Kim (Carl Joakim Damsleth); 'I', 'me', 'my' refer to him"
 CHUNK = 4096
 
 
-def corpus(conn):
+def corpus(conn, version="rel-2"):
+  """rel-1: `[source | ts | subject]` header. rel-2: date prefix only (plus subject)."""
   docs = {}
   for r in conn.execute("SELECT id, source, timestamp, subject, content FROM items "
                         "WHERE junk_reason IS NULL ORDER BY id"):
-    docs[r[0]] = f"[{r[1]} | {r[2]} | {r[3] or ''}]\n{(r[4] or '')[:jev.MAX_CHARS]}"
+    body = (r[4] or "")[:jev.MAX_CHARS]
+    if version == "rel-1":
+      docs[r[0]] = f"[{r[1]} | {r[2]} | {r[3] or ''}]\n{body}"
+    else:
+      docs[r[0]] = f"{(r[2] or '')[:10]}{': ' + r[3] if r[3] else ''}\n{body}"
   for r in conn.execute("SELECT id, source, start_timestamp, end_timestamp, summary "
                         "FROM consolidations ORDER BY id"):
-    docs[r[0]] = f"[{r[1]} | {r[2]} - {r[3]} | consolidation]\n{r[4][:jev.MAX_CHARS]}"
+    body = r[4][:jev.MAX_CHARS]
+    if version == "rel-1":
+      docs[r[0]] = f"[{r[1]} | {r[2]} - {r[3]} | consolidation]\n{body}"
+    else:
+      docs[r[0]] = f"{r[2][:10]}..{r[3][:10]} (thread summary)\n{body}"
   return docs
 
 
@@ -48,7 +59,10 @@ def main():
   ap.add_argument("--tag", default="adhoc")
   ap.add_argument("--workers", type=int, default=8)
   ap.add_argument("--max-questions", type=int, default=jev.MAX_QUESTIONS)
+  ap.add_argument("--criterion-version", choices=["rel-1", "rel-2"], default="rel-2",
+                  help="rel-1 repeats the criterion per question (pilot); rel-2 keeps it in state only")
   a = ap.parse_args()
+  crit = CRITERION if a.criterion_version == "rel-1" else None
 
   conn = open_db(a.db, readonly=True)
   gold, _, _ = _load_gold(conn)
@@ -56,14 +70,15 @@ def main():
                 key=lambda g: g["query_id"])
   if a.queries != "all":
     gold = gold[: int(a.queries)]
-  docs = corpus(conn)
+  docs = corpus(conn, a.criterion_version)
   ids = list(docs)
-  print(f"{len(gold)} queries x {len(docs)} candidates", flush=True)
+  print(f"{len(gold)} queries x {len(docs)} candidates [{a.criterion_version}]", flush=True)
 
   stats: dict = {}
   spent = 0.0
+  est_sent = 0
   out = jev.JEV_DIR / f"b4_{a.tag}.jsonl"
-  crit_tok = jev.est_tokens(CRITERION)
+  crit_tok = jev.est_tokens(crit) if crit else 0
   for g in gold:
     state = {"question": g["text"], "asked_on": (g["ts"] or "")[:10], "owner": OWNER,
              "criterion": CRITERION}
@@ -73,13 +88,16 @@ def main():
     complete = True
     for s in range(0, len(ids), CHUNK):
       chunk = {i: docs[i] for i in ids[s:s + CHUNK]}
-      est = sum(jev.est_tokens(t) + crit_tok for t in chunk.values()) * 0.84  # A1: real/est
-      if spent + est * jev.DOLLARS_PER_TOKEN > a.max_dollars:
+      est = sum(jev.est_tokens(t) + crit_tok for t in chunk.values())
+      # len/3 undercounts this content (pilot: ~1.28x); scale by the ratio observed so far
+      ratio = stats["input_tokens"] / est_sent if est_sent and stats.get("input_tokens") else 1.3
+      if spent + est * ratio * jev.DOLLARS_PER_TOKEN > a.max_dollars:
         complete = False
         break
-      scores.update(jev.noul(state, chunk, CRITERION, criterion_version="rel-1",
+      scores.update(jev.noul(state, chunk, crit, criterion_version=a.criterion_version,
                              tag=f"jev_b4_{a.tag}", workers=a.workers,
                              max_questions=a.max_questions, stats=stats))
+      est_sent += est
       spent = stats.get("input_tokens", 0) * jev.DOLLARS_PER_TOKEN
     gid = g["result_id"]
     gn = scores.get(gid)

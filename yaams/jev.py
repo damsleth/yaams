@@ -46,11 +46,11 @@ def api_key() -> str:
   raise RuntimeError("TYPESAFE_API_KEY not set (env or ./.env)")
 
 
-def pack(items: list[tuple[str, str]], fixed_tokens: int, criterion: str,
+def pack(items: list[tuple[str, str]], fixed_tokens: int, criterion: str | None,
          max_questions: int = MAX_QUESTIONS, max_tokens: int = MAX_TOKENS) -> list[list[tuple[str, str]]]:
   """Split (id, text) into requests bounded by question count and estimated tokens.
   fixed_tokens is the state; each question costs its text plus the criterion."""
-  per_q = est_tokens(criterion)
+  per_q = est_tokens(criterion) if criterion else 0
   out: list[list[tuple[str, str]]] = []
   cur: list[tuple[str, str]] = []
   tok = fixed_tokens
@@ -143,12 +143,13 @@ def cache_key(state: dict, text: str, criterion_version: str, model: str = MODEL
   return hashlib.sha256(f"{model}|{criterion_version}|{s}|{text}".encode()).hexdigest()
 
 
-def noul(state: dict, items: dict[str, str], criterion: str, *, criterion_version: str,
+def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion_version: str,
          tag: str, workers: int = 8, max_questions: int = MAX_QUESTIONS,
          max_tokens: int = MAX_TOKENS, use_cache: bool = True,
          stats: dict | None = None) -> dict[str, float]:
   """Score each item text against `criterion` given `state`. A failed id is
-  missing from the result, never 0.0. `stats` accumulates requests/input_tokens."""
+  missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
+  criterion=None sends no per-question `criteria`: put it in `state` once instead."""
   texts = {k: v[:MAX_CHARS] for k, v in items.items()}
   keys = {k: cache_key(state, t, criterion_version) for k, t in texts.items()}
   out: dict[str, float] = {}
@@ -161,8 +162,8 @@ def noul(state: dict, items: dict[str, str], criterion: str, *, criterion_versio
 
   def run(batch: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], dict | None]:
     # question ids are positional: ids never reach the model, and item ids can be long
-    qs = {f"q{i}": {"type": "noul", "instructions": t, "criteria": {"true": criterion}}
-          for i, (_, t) in enumerate(batch)}
+    crit = {"criteria": {"true": criterion}} if criterion else {}
+    qs = {f"q{i}": {"type": "noul", "instructions": t, **crit} for i, (_, t) in enumerate(batch)}
     return batch, _post({"model": MODEL, "state": state, "questions": qs}, tag)
 
   with ThreadPoolExecutor(max_workers=workers) as ex:

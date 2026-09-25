@@ -170,6 +170,17 @@ class HybridQueryConfig:
   # junk gold rows had inverted the verdict. Re-measure per corpus.
   # Consolidations carry no annotation and are unaffected.
   exclude_junk: bool = False
+  # Opt-in TypeSafe Jev relevance over the top `jev_k` hydrated candidates
+  # (remote, paid: off by default). Spec: `replace` (noul replaces the score,
+  # the cross-encoder control), `blend:<a>` (score *= 1 + a*(noul - 0.5)),
+  # `gate:<h>` (if rank 1 has noul < 0.5, lift the best noul >= h to the top),
+  # `filter:<tau>` (drop pool results with noul < tau). The question and asked-on
+  # date are Jev's state; the harness sets them from the stored query.
+  jev_spec: str | None = None
+  jev_k: int = 50
+  jev_question: str | None = None
+  jev_asked_on: datetime | None = None
+  jev_tag: str = "jev_query"
 
 
 @dataclass
@@ -373,6 +384,8 @@ def query(
       # Hydration-time boosts no longer shape the score; only later ones do.
       r.boosts = {"rerank": float(s)}
     hydrated = pool
+  if cfg.jev_spec and hydrated:
+    hydrated = _apply_jev(conn, text, hydrated, cfg)
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity
     # without removing anything else from the result set.
@@ -422,6 +435,51 @@ def query(
     # contract that a plain score multiply + timestamp sort cannot.
     hydrated.sort(key=lambda r: r.assoc_weight < 1.0)
   return hydrated[: cfg.top_k]
+
+
+def _apply_jev(
+  conn: sqlite3.Connection, text: str, hydrated: list[HybridResult], cfg: HybridQueryConfig,
+) -> list[HybridResult]:
+  """Jev noul over the hydrated pool (see HybridQueryConfig.jev_spec). Scores
+  only, never positions: the boost/assoc/sort after this block re-sorts. A
+  result Jev failed to score is left untouched and marked `jev_missing`."""
+  from yaams import jev  # lazy: the default path never touches the network client
+  mode, _, arg = (cfg.jev_spec or "").partition(":")
+  if mode not in ("replace", "blend", "gate", "filter"):
+    raise ValueError(f"unknown jev spec {cfg.jev_spec!r}")
+  pool = hydrated[: cfg.jev_k]
+  asked = (cfg.jev_asked_on or datetime.now(timezone.utc)).date().isoformat()
+  state = jev.rel_state(cfg.jev_question or text, asked)
+  texts = jev.rel_texts(conn, [r.id for r in pool])
+  scores = jev.noul(state, texts, jev.REL_CRITERION, criterion_version="rel-1", tag=cfg.jev_tag)
+  for r in pool:
+    if r.id in scores:
+      r.boosts["jev"] = scores[r.id]
+    else:
+      r.boosts["jev_missing"] = 1.0
+  if mode == "replace":
+    for r in pool:
+      if r.id in scores:
+        r.score = scores[r.id]
+        r.boosts = {"jev": scores[r.id]}
+    return pool
+  if mode == "blend":
+    a = float(arg)
+    for r in pool:
+      if r.id in scores:
+        r.score *= 1 + a * (scores[r.id] - 0.5)
+    return hydrated
+  if mode == "gate":
+    h = float(arg)
+    top = max(hydrated, key=lambda r: r.score)
+    cand = [r for r in pool if scores.get(r.id, 0.0) >= h and r is not top]
+    if top.id in scores and scores[top.id] < 0.5 and cand:
+      best = max(cand, key=lambda r: scores[r.id])  # max keeps the higher-ranked on ties
+      best.score = top.score * 1.001
+      best.boosts["jev_gate"] = scores[best.id]
+    return hydrated
+  tau = float(arg)
+  return [r for r in hydrated if not (r.id in scores and scores[r.id] < tau)]
 
 
 def _resolve_entity_allowlist(

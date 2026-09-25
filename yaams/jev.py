@@ -138,6 +138,36 @@ def _get_cache() -> _Cache:
   return _cache
 
 
+# Relevance question `rel-1`, shared by B4 / B2 / A2 so their scores share the
+# cache: the state, criterion and candidate text must stay byte-identical.
+REL_CRITERION = "This item contains evidence that answers the question or directly helps answer it."
+REL_OWNER = "Kim (Carl Joakim Damsleth); 'I', 'me', 'my' refer to him"
+
+
+def rel_state(question: str, asked_on: str) -> dict:
+  return {"question": question, "asked_on": asked_on, "owner": REL_OWNER,
+          "criterion": REL_CRITERION}
+
+
+def rel_texts(conn: sqlite3.Connection, ids: list[str]) -> dict[str, str]:
+  """rel-1 candidate text per id (items and `cons:` consolidations), from the
+  stored rows so timestamps are the db strings, not re-formatted datetimes."""
+  out: dict[str, str] = {}
+  items = [i for i in ids if not i.startswith("cons:")]
+  cons = [i for i in ids if i.startswith("cons:")]
+  for i in range(0, len(items), 500):
+    ch = items[i:i + 500]
+    for r in conn.execute("SELECT id, source, timestamp, subject, content FROM items "
+                          f"WHERE id IN ({','.join('?' * len(ch))})", ch):
+      out[r[0]] = f"[{r[1]} | {r[2]} | {r[3] or ''}]\n{(r[4] or '')[:MAX_CHARS]}"
+  for i in range(0, len(cons), 500):
+    ch = cons[i:i + 500]
+    for r in conn.execute("SELECT id, source, start_timestamp, end_timestamp, summary FROM "
+                          f"consolidations WHERE id IN ({','.join('?' * len(ch))})", ch):
+      out[r[0]] = f"[{r[1]} | {r[2]} - {r[3]} | consolidation]\n{r[4][:MAX_CHARS]}"
+  return out
+
+
 def cache_key(state: dict, text: str, criterion_version: str, model: str = MODEL) -> str:
   s = json.dumps(state, sort_keys=True, ensure_ascii=False)
   return hashlib.sha256(f"{model}|{criterion_version}|{s}|{text}".encode()).hexdigest()
@@ -150,6 +180,7 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
   """Score each item text against `criterion` given `state`. A failed id is
   missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
   criterion=None sends no per-question `criteria`: put it in `state` once instead."""
+  use_cache = use_cache and os.environ.get("YAAMS_JEV_NO_CACHE") != "1"
   texts = {k: v[:MAX_CHARS] for k, v in items.items()}
   keys = {k: cache_key(state, t, criterion_version) for k, t in texts.items()}
   out: dict[str, float] = {}

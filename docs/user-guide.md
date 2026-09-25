@@ -347,6 +347,30 @@ yaams query --no-synonyms "don't expand aliases"
 - `--no-parse` skips the LLM query parser and does a raw text → hybrid
   retrieve.
 
+### Jev (optional)
+
+```bash
+yaams query --jev gate:0.9 "hva sa Emilie om skolen"
+```
+
+`--jev SPEC` (or `retrieve.jev.spec` in config) asks TypeSafe's Jev model,
+pinned to `jev-1.13.0`, how likely each of the top `k` (default 50) candidates
+is to answer the question, and uses that probability (`noul`) on top of the
+hybrid ranking:
+
+- `replace` - the noul replaces the score (the cross-encoder-style control).
+- `blend:<a>` - `score *= 1 + a*(noul - 0.5)`; `a=1` moves a score by at most ±50%.
+- `gate:<h>` - only when the current rank 1 has noul < 0.5: lift the single
+  highest-noul candidate with noul ≥ `h` to the top. Nothing else moves.
+- `filter:<tau>` - drop candidates with noul < `tau`.
+
+This is a **remote, paid** call (about 1 s and $0.0003 per query at k=50),
+so it is off by default and needs `TYPESAFE_API_KEY` in the environment or
+`./.env`. Scores are cached (`~/brain/feed/eval/jev/cache.db`), so repeat
+queries are free; `YAAMS_JEV_NO_CACHE=1` bypasses the cache. `--explain`
+shows each result's `jev` score in its boosts; a candidate Jev failed to
+score is left as it was and marked `jev_missing`.
+
 ### Entity-aware retrieval
 
 These build on the entity graph (sections 7–8):

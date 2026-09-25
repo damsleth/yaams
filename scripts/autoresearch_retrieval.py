@@ -198,6 +198,8 @@ def _replay_one(
     reranker_device: str | None = "cpu",
     feedback_boost: bool = False,
     exclude_junk: bool = False,
+    jev_spec: str | None = None,
+    jev_k: int = 50,
 ) -> tuple[int | None, float]:
     """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
     text = row["text"]
@@ -226,6 +228,12 @@ def _replay_one(
         # Leave-one-out: this gold query must not boost its own gold doc via its
         # own citation/correction — a live query has no self-feedback yet either.
         qcfg.feedback_boost_exclude_query_id = row["query_id"]
+    if jev_spec:
+        qcfg.jev_spec = jev_spec
+        qcfg.jev_k = jev_k
+        qcfg.jev_question = text
+        qcfg.jev_asked_on = parse_iso_datetime(row["ts"]) if row["ts"] else None
+        qcfg.jev_tag = f"jev_b2_{jev_spec}"
     if rerank_k:
         qcfg.rerank_enabled = True
         qcfg.reranker_model = reranker_model
@@ -265,6 +273,8 @@ def _mode_label(args) -> str:
         # per-index rank, so comparing across the setting reports regressions
         # that are really just a different corpus.
         base = f"{base}+nojunk"
+    if getattr(args, "jev", None):
+        base = f"{base}+jev:{args.jev}:k{args.jev_k}"
     return base
 
 
@@ -293,6 +303,12 @@ def main() -> int:
     ap.add_argument("--allow-junk-gold", action="store_true", dest="allow_junk_gold",
                     help="Score even if a gold document is annotated junk "
                          "(items.junk_reason). Default: refuse with status invalid_gold.")
+    ap.add_argument("--jev", default=None,
+                    help="Jev relevance over the hydrated pool: replace | blend:<a> | gate:<h> | "
+                         "filter:<tau> (remote, paid; see yaams.jev)")
+    ap.add_argument("--jev-k", type=int, default=50, dest="jev_k")
+    ap.add_argument("--ranks-out", default=None,
+                    help="write per-gold ranks {query_id: rank|null} as JSON to this path")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -356,6 +372,7 @@ def main() -> int:
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
                 reranker_device=rerank_device, feedback_boost=args.feedback_boost,
                 exclude_junk=args.exclude_junk,
+                jev_spec=args.jev, jev_k=args.jev_k,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)
@@ -368,6 +385,8 @@ def main() -> int:
         print(json.dumps(out) if args.as_json else f"\n---\nstatus: crash\nerror: {exc}")
         return 1
 
+    if args.ranks_out:
+        Path(args.ranks_out).write_text(json.dumps(ranks, indent=1))
     n = len(gold)
     n_rank1 = sum(1 for r in ranks.values() if r == 1)
     hit_rate = n_rank1 / n

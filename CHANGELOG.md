@@ -12,6 +12,15 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Opt-in Jev relevance hook over the hydrated pool: `HybridQueryConfig.jev_spec`
+  (`replace` | `blend:<a>` | `gate:<h>` | `filter:<tau>`), `jev_k` (default 50),
+  `yaams query --jev SPEC`, config `retrieve.jev.spec` / `k` (off by default;
+  remote and paid). Records `boosts["jev"]`, and `jev_missing` for a candidate
+  Jev failed to score. Harness: `--jev`, `--jev-k` (mode label
+  `+jev:<spec>:k<N>`) and `--ranks-out PATH` (per-gold ranks as JSON; the
+  anchor output is unchanged). `yaams.jev.rel_state` / `rel_texts` are the
+  shared rel-1 question so hook, B4 and A2 scores share the cache;
+  `YAAMS_JEV_NO_CACHE=1` bypasses it.
 - `yaams/jev.py`: stdlib client for TypeSafe's Jev (`noul`, `choice`), pinned
   to `jev-1.13.0`, for the opt-in Jev experiments. Packs up to 256 questions
   and 22.4k estimated tokens (`len/3`) per request, retries 429/529/5xx, and
@@ -19,7 +28,7 @@ surface; pin to a specific version if you need stability.
   `~/brain/feed/eval/jev/cache.db`; every request appends real
   `input_tokens` and latency to `usage.jsonl` (`scripts/jev_usage.py` sums
   dollars and p50/p95 per tag). Key from `TYPESAFE_API_KEY` or `./.env`.
-  Nothing in the query path calls it. Experiment scripts on top of it:
+  Nothing in the default query path calls it. Experiment scripts on top of it:
   `scripts/jev_junk_pass.py` + `jev_junk_score.py` (A1, junk verdicts vs
   Sonnet, kappa/calibration, owner disagreement sheet) and
   `scripts/jev_bruteforce.py` (B4, rank the whole corpus per gold query,

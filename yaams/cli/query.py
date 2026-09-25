@@ -300,6 +300,13 @@ def _resolve_repo_filter(repo_filter: tuple[str, ...]) -> list[str]:
        "config retrieve.rerank.",
 )
 @click.option(
+  "--jev",
+  "jev_spec",
+  default=None,
+  help="Score the top candidates with TypeSafe Jev (remote, paid; needs TYPESAFE_API_KEY): "
+       "replace | blend:<a> | gate:<h> | filter:<tau>. Default from config retrieve.jev.spec (off).",
+)
+@click.option(
   "--lang",
   "lang_filter",
   type=click.Choice(["no", "en"]),
@@ -339,6 +346,7 @@ def query_cmd(
   explain: bool,
   high_quality: bool,
   rerank: bool,
+  jev_spec: str | None,
   lang_filter: str | None,
   feedback_prompt: bool | None,
 ) -> None:
@@ -431,6 +439,11 @@ def query_cmd(
         qcfg.rerank_k = int(rerank_cfg.get("k") or qcfg.rerank_k)
         if "device" in rerank_cfg:
           qcfg.reranker_device = rerank_cfg.get("device")
+      jev_cfg = (cfg.get("retrieve") or {}).get("jev") or {}
+      if jev_spec or jev_cfg.get("spec"):
+        qcfg.jev_spec = jev_spec or jev_cfg["spec"]
+        qcfg.jev_k = int(jev_cfg.get("k") or qcfg.jev_k)
+        qcfg.jev_question = query_text
       if (cfg.get("retrieve") or {}).get("feedback_boost"):
         qcfg.feedback_boost = True
       apply_recency_decay_config(qcfg, cfg)

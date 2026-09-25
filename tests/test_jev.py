@@ -60,6 +60,12 @@ def test_missing_answer_stays_missing_and_cache_skips_request(fake):
   assert usage[0]["input_tokens"] == 10 and usage[0]["request_id"] == "r1"
 
 
+def test_cache_only_never_calls(fake, monkeypatch):
+  monkeypatch.setenv("YAAMS_JEV_CACHE_ONLY", "1")
+  assert jev.noul({}, {"a": "x"}, "c", criterion_version="t", tag="t") == {}
+  assert fake == []
+
+
 def test_criterion_none_sends_no_criteria(fake):
   jev.noul({"criterion": "c"}, {"a": "x", "b": "y"}, None, criterion_version="t2", tag="t", workers=1)
   assert all("criteria" not in q for q in fake[0]["questions"].values())

@@ -529,7 +529,7 @@ def ingest_source(
       inserted += process_batch(conn, batch, processors, dry_run=dry_run, reindex=reindex)
       batch = []
   if batch:
-    inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+    inserted += process_batch(conn, batch, processors, dry_run=dry_run, reindex=reindex)
   # Advance the watermark past messages that were scanned but deliberately
   # skipped (e.g. newsletters) so wide date windows aren't re-walked every
   # run. Adapters that can't bound their scan leave scanned_through unset.

@@ -34,6 +34,10 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- `yaams ingest --reindex` now re-stores the final partial batch too. It was
+  dropped there, so a run smaller than `batch_size` (e.g. a few edited
+  `tier2_ledger` notes) re-stored nothing and edits never reached the store.
+
 - pyright reports 0 errors (was 29 in CI): two same-name redeclarations in
   `cli/ingest.py` and `signals/review.py`, the rest test typing only. No
   behavior change.

@@ -37,6 +37,12 @@ surface; pin to a specific version if you need stability.
   ~35% fewer tokens but measurably worse ranking on the pilot queries, so
   the default is rel-1).
   `jev.noul(criterion=None)` omits per-question `criteria`.
+  `YAAMS_JEV_CACHE_ONLY=1` makes `noul` return cached scores only, with no
+  network call. `scripts/jev_densify.py` (A2): `validate` scores the top-50
+  fresh-parse pool of every gold query (gold rank under Jev vs hybrid, AUC,
+  owner junk labels as negatives, metrics only over fully scored pools);
+  `misses` writes the rejudge-misses owner sheet `a2_candidates.tsv` with
+  Jev top-3 next to the LLM judge's pick and verify votes.
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and

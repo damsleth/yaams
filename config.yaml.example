@@ -46,6 +46,14 @@ ingest:
     claude_projects: ~/.claude/projects
     codex_memories: ~/.codex/memories
 
+  # Tier 2: the cognitive-ledger note store, read from its note_index.json
+  # (default <notes_path>/08_indices/note_index.json; run `ledger sleep index`
+  # first). Notes the ledger has since archived or deleted drop out of that
+  # index and are hidden at query time; their rows stay in the store.
+  tier2_ledger:
+    enabled: false
+    notes_path: ~/brain/ledger
+
   # Generic recursive folder ingestion. Reads .txt and .md natively;
   # .pdf needs `pip install pypdf`, .docx needs `pip install python-docx`.
   # Files of unsupported types (or types with the dep missing) are skipped.

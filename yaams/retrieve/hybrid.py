@@ -170,6 +170,10 @@ class HybridQueryConfig:
   # junk gold rows had inverted the verdict. Re-measure per corpus.
   # Consolidations carry no annotation and are unaffected.
   exclude_junk: bool = False
+  # Item ids that must never be returned: tier2 notes the ledger has since
+  # archived or deleted (its index drops them, the raw store keeps them).
+  # Filled from the live note_index.json by cli.query.apply_tier2_live_config.
+  exclude_item_ids: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -595,12 +599,13 @@ def _fts_search_items(
       AND (? IS NULL OR items.lang = ?)
       AND (? = 0 OR items.timestamp_inferred = 0)
       AND (? = 0 OR items.junk_reason IS NULL)
+      AND items.id NOT IN (SELECT value FROM json_each(?))
       AND items.consolidated_into IS NULL
     ORDER BY score
     LIMIT ?
     """,
     (match,) + _filter_params(cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cfg.per_index_k),
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), _excluded_ids(cfg), cfg.per_index_k),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["score"]))
@@ -666,12 +671,13 @@ def _vec_search_items(
       AND (? IS NULL OR items.lang = ?)
       AND (? = 0 OR items.timestamp_inferred = 0)
       AND (? = 0 OR items.junk_reason IS NULL)
+      AND items.id NOT IN (SELECT value FROM json_each(?))
       AND items.consolidated_into IS NULL
     ORDER BY distance
     """,
     (blob, cfg.per_index_k)
     + _filter_params(cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg)),
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), _excluded_ids(cfg)),
   ).fetchall()
   return [
     ("item", row["id"], rank, float(row["distance"]))
@@ -730,6 +736,10 @@ def _apply_relevance_floor(
     return hydrated
   threshold = top * floor
   return [r for r in hydrated if r.score >= threshold]
+
+
+def _excluded_ids(cfg: HybridQueryConfig) -> str:
+  return json.dumps(sorted(cfg.exclude_item_ids))
 
 
 def _exclude_junk(cfg: HybridQueryConfig) -> int:
@@ -946,11 +956,12 @@ def _browse_window(
         AND (? IS NULL OR lang = ?)
         AND (? = 0 OR timestamp_inferred = 0)
         AND (? = 0 OR junk_reason IS NULL)
+        AND id NOT IN (SELECT value FROM json_each(?))
         AND consolidated_into IS NULL
       ORDER BY timestamp DESC
       LIMIT ?
       """,
-      _filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cap),
+      _filter_params(cfg) + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), _excluded_ids(cfg), cap),
     ).fetchall()
     for row in rows:
       r = _hydrate_item(conn, row["id"], empty, cfg)

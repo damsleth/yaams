@@ -107,6 +107,25 @@ def apply_exclude_junk_config(qcfg, cfg: dict) -> None:
     qcfg.exclude_junk = True
 
 
+def apply_tier2_live_config(qcfg, cfg: dict, conn) -> None:
+  """Hide tier2 notes that are no longer in the ledger's live index.
+
+  Archived or deleted notes stay in the append-only store, and the ledger
+  index is the only place their retirement shows. No-op unless the
+  tier2_ledger source is enabled and its index is readable and non-empty."""
+  block = (cfg.get("ingest") or {}).get("tier2_ledger")
+  if not isinstance(block, dict) or not block.get("enabled"):
+    return
+  from yaams.ingest.ledger_notes import index_path_for, live_ids
+
+  path = index_path_for(block)
+  live = live_ids(path) if path is not None else None
+  if live is None:
+    return
+  stored = {r[0] for r in conn.execute("SELECT id FROM items WHERE source = 'tier2_ledger'")}
+  qcfg.exclude_item_ids = frozenset(stored - live)
+
+
 def _parse_meta_pairs(meta: tuple[str, ...]) -> dict[str, str]:
   """Parse --meta KEY=VALUE flags into a dict. Pairs without '=' or with an
   empty key are skipped (silently tolerant; the resolver AND-s what remains)."""
@@ -436,6 +455,7 @@ def query_cmd(
       apply_recency_decay_config(qcfg, cfg)
       apply_recency_lane_config(qcfg, cfg)
       apply_exclude_junk_config(qcfg, cfg)
+      apply_tier2_live_config(qcfg, cfg, conn_ro)
       if assoc and qcfg.entity_filter:
         # Widen the entity allowlist with associated entities and carry their
         # weights so associated-only documents surface but rank below exact

@@ -43,7 +43,7 @@ from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.folder import FolderAdapter
 from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
-from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter, index_path_for
 from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.outlook_app import OutlookCalendarAdapter, OutlookMailAdapter
@@ -688,12 +688,9 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       raise ValueError(
         "tier2_ledger source requires ingest.tier2_ledger.notes_path in config.yaml"
       )
-    index_path = cfg.get(
-      "index_path", str(Path(notes_path) / "08_indices" / "note_index.json")
-    )
     return LedgerNotesAdapter(
       notes_path=Path(notes_path),
-      index_path=Path(index_path),
+      index_path=cast(Path, index_path_for(cfg)),
     )
   if source == "outlook_calendar":
     return OutlookCalendarAdapter()

@@ -302,6 +302,11 @@ yaams query --lang en "english content only"
   an alias for the internal `tier2_ledger`.
 - `--tier raw|ledger|both` restricts by tier. Explicit `--source` wins over
   `--tier`.
+- Ledger notes you archive or delete stop appearing. Each query compares the
+  stored `tier2_ledger` rows against the ledger's current `note_index.json`
+  and hides any note no longer in it (CLI and MCP; the rows themselves stay
+  in the append-only store). If the index is missing or empty, nothing is
+  hidden.
 - `--since` / `--until` take ISO timestamps.
 - `--lang no|en` restricts to items (and consolidations) in the given language.
   Language is detected at ingest time; run `yaams backfill-lang` once to

@@ -127,6 +127,7 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
     apply_exclude_junk_config,
     apply_recency_decay_config,
     apply_recency_lane_config,
+    apply_tier2_live_config,
   )
   from yaams.enrich import Embedder
 
@@ -142,6 +143,7 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   apply_exclude_junk_config(qcfg, cfg)
   conn = open_db(db_path, readonly=True)
   try:
+    apply_tier2_live_config(qcfg, cfg, conn)
     results = run_query(conn, query_text, embedding=embedding, config=qcfg)
     if exclude_ledger:
       results = [r for r in results if r.source != _LEDGER_SOURCE_ID]

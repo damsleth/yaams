@@ -32,6 +32,14 @@ surface; pin to a specific version if you need stability.
 - `yaams stats --usage`: most-cited items and never-surfaced Tier 2 notes,
   derived read-only from the query log (`yaams/signals/usage.py`).
 
+### Changed
+
+- Ledger notes archived or deleted in cognitive-ledger no longer surface as
+  live Tier 2 results. `yaams query` and the MCP tools hide `tier2_ledger`
+  rows absent from the ledger's current `note_index.json` (14 of 575 on the
+  owner's db, e.g. closed loops). No-op when the source is disabled or the
+  index is unreadable or empty; the retrieval harness is unaffected.
+
 ### Fixed
 
 - `yaams ingest --reindex` now re-stores the final partial batch too. It was

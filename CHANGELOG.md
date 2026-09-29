@@ -21,6 +21,17 @@ surface; pin to a specific version if you need stability.
   anchor output is unchanged). `yaams.jev.rel_state` / `rel_texts` are the
   shared rel-1 question so hook, B4 and A2 scores share the cache;
   `YAAMS_JEV_NO_CACHE=1` bypasses it.
+- `yaams/jev.py` talks to any `/v1/systemone` server, e.g. a local
+  [Jeff](https://github.com/firelex/jeff): `YAAMS_JEV_URL`, `YAAMS_JEV_MODEL`,
+  and `YAAMS_JEV_MAX_INFLIGHT` (cap on concurrent requests across all callers;
+  Jeff serves one at a time). The TypeSafe key is only ever sent to TypeSafe,
+  and `scripts/jev_usage.py` prices usage by the model each row recorded, so
+  local models cost $0. `scripts/jeff_format_probe.py` picks the noul question
+  format for a model on a small probe set kept apart from the evaluation;
+  `scripts/jeff_b4_lite.py` compares Jeff with Jev on the B4 queries over a
+  sample (Jev's top 200 + gold + 2,000 random), reading Jev's scores from its
+  cache; `jev_junk_score.py --compare DIR` reports agreement with another
+  model's run and accuracy on the owner-labelled A1 sheet.
 - `yaams/jev.py`: stdlib client for TypeSafe's Jev (`noul`, `choice`), pinned
   to `jev-1.13.0`, for the opt-in Jev experiments. Packs up to 256 questions
   and 22.4k estimated tokens (`len/3`) per request, retries 429/529/5xx, and

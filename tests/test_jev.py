@@ -66,6 +66,20 @@ def test_cache_only_never_calls(fake, monkeypatch):
   assert fake == []
 
 
+def test_local_server_gets_no_key(fake, monkeypatch):
+  seen = []
+  inner = jev.urllib.request.urlopen
+
+  def urlopen(req, timeout=None):
+    seen.append(req.get_header("Authorization"))
+    return inner(req, timeout)
+
+  monkeypatch.setattr(jev, "URL", "http://127.0.0.1:8765/v1/systemone")
+  monkeypatch.setattr(jev.urllib.request, "urlopen", urlopen)
+  jev.noul({}, {"a": "x"}, "c", criterion_version="t", tag="t", use_cache=False)
+  assert seen == [None]
+
+
 def test_criterion_none_sends_no_criteria(fake):
   jev.noul({"criterion": "c"}, {"a": "x", "b": "y"}, None, criterion_version="t2", tag="t", workers=1)
   assert all("criteria" not in q for q in fake[0]["questions"].values())

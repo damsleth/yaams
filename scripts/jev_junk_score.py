@@ -19,6 +19,9 @@ from junk_sonnet_pass import context, load_ckpt  # noqa: E402
 
 from yaams.jev import JEV_DIR  # noqa: E402
 
+OWNER_SHEET = Path.home() / "brain/feed/eval/jev/a1_disagreements.tsv"
+COMPARE = None
+
 
 def kappa(pairs):
   pairs = list(pairs)
@@ -91,7 +94,24 @@ def report(variant, rows, r1, r2):
   u = summarize(f"jev_a1_{variant}").get(f"jev_a1_{variant}", {})
   print(f"cost ${u.get('dollars')}  requests {u.get('requests')}  p50 {u.get('p50_ms')} ms  "
         f"p95 {u.get('p95_ms')} ms  tokens real {u.get('input_tokens')} est {u.get('est_tokens')}")
+
+  by_id = {r["item_id"]: r["noul"] for r in rows}
+  if OWNER_SHEET.exists():  # the owner-labelled A1 tiebreak rows (Jev-vs-Sonnet disagreements)
+    lab = [(r["item_id"], r["owner_verdict (JUNK/KEEP)"] == "JUNK")
+           for r in csv.DictReader(open(OWNER_SHEET), delimiter="\t") if r["owner_verdict (JUNK/KEEP)"]]
+    hit = [(by_id[i] >= 0.5) == junk for i, junk in lab if i in by_id]
+    print(f"owner-labelled sheet rows: correct@0.5 {sum(hit)}/{len(hit)} "
+          f"(Jev 26/50, Sonnet 24/50 on the same rows)")
+  if COMPARE:  # agreement with another model's scores on the same rows, e.g. Jev
+    other = {r["item_id"]: r["noul"] for r in map(json.loads, open(COMPARE / f"junk-{variant}.jsonl"))}
+    both = [i for i, _ in cons_ids(cons) if i in other]
+    print(f"kappa@0.5 vs {COMPARE.name} on consensus rows: "
+          f"{kappa((by_id[i] >= 0.5, other[i] >= 0.5) for i in both):.3f} (n={len(both)})")
   return {"variant": variant, "kappa": k05, "cons": cons}
+
+
+def cons_ids(cons):
+  return [(r["item_id"], c) for r, c in cons]
 
 
 def sheet(res, r1, db):
@@ -128,7 +148,10 @@ def main():
   ap.add_argument("--variant", default="en,nb")
   ap.add_argument("--sheet", action="store_true")
   ap.add_argument("--db", help="db copy for sheet text")
+  ap.add_argument("--compare", help="another run's dir (junk-<variant>.jsonl) to report agreement with")
   a = ap.parse_args()
+  global COMPARE
+  COMPARE = Path(a.compare) if a.compare else None
   r1, r2 = load_ckpt(1), load_ckpt(2)
   res = [report(v, load(v), r1, r2) for v in a.variant.split(",")]
   if a.sheet:

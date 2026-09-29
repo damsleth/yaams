@@ -32,6 +32,10 @@ surface; pin to a specific version if you need stability.
   sample (Jev's top 200 + gold + 2,000 random), reading Jev's scores from its
   cache; `jev_junk_score.py --compare DIR` reports agreement with another
   model's run and accuracy on the owner-labelled A1 sheet.
+  `scripts/jeff_junk_ftdata.py` builds a `jeff-train` fine-tune set for the
+  junk decision: labels at the owner's bar (JUNK if either Sonnet run or Jev
+  says so), folds by thread, the owner-labelled rows plus a random 200-row
+  blind sheet (and their neighbours) held out of training.
 - `yaams/jev.py`: stdlib client for TypeSafe's Jev (`noul`, `choice`), pinned
   to `jev-1.13.0`, for the opt-in Jev experiments. Packs up to 256 questions
   and 22.4k estimated tokens (`len/3`) per request, retries 429/529/5xx, and

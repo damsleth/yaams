@@ -371,6 +371,25 @@ queries are free; `YAAMS_JEV_NO_CACHE=1` bypasses the cache. `--explain`
 shows each result's `jev` score in its boosts; a candidate Jev failed to
 score is left as it was and marked `jev_missing`.
 
+**Local, free alternative: Jeff.** [Jeff](https://github.com/firelex/jeff) is
+a set of small open fine-tunes (Qwen3.5 0.8B/2B) that serve the same
+`/v1/systemone` API on your own machine (MLX on Apple silicon). Point YAAMS at
+it with environment variables; no key is sent to a non-TypeSafe URL and usage
+is priced at $0:
+
+```bash
+YAAMS_JEV_URL=http://127.0.0.1:8765/v1/systemone \
+YAAMS_JEV_MODEL=jeff-qwen3.5-0.8b \
+YAAMS_JEV_MAX_INFLIGHT=1 \
+YAAMS_JEV_DIR=~/brain/feed/eval/jeff \
+yaams query --jev blend:0.5 "..."
+```
+
+Jeff answers one request at a time, so `YAAMS_JEV_MAX_INFLIGHT=1` keeps every
+caller's thread pool from colliding on its lock. The model name is part of the
+score-cache key, so Jev and Jeff scores never mix; a separate `YAAMS_JEV_DIR`
+also keeps their usage logs apart. Jeff's own caveat: English only.
+
 ### Entity-aware retrieval
 
 These build on the entity graph (sections 7–8):

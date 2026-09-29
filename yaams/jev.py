@@ -16,9 +16,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-URL = "https://api.typesafe.ai/v1/systemone"
-MODEL = "jev-1.13.0"  # pinned: jev-latest moves on release
-DOLLARS_PER_TOKEN = 0.042 / 1_000_000
+# Jev by default; any server speaking the same /v1/systemone API (e.g. a local
+# Jeff, github.com/firelex/jeff) via YAAMS_JEV_URL + YAAMS_JEV_MODEL.
+TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+URL = os.environ.get("YAAMS_JEV_URL", TYPESAFE_URL)
+MODEL = os.environ.get("YAAMS_JEV_MODEL", "jev-1.13.0")  # pinned: jev-latest moves on release
+DOLLARS_PER_TOKEN = 0.042 / 1_000_000 if URL == TYPESAFE_URL else 0.0
 MAX_QUESTIONS = 256
 MAX_TOKENS = 22_400  # 64k aggregate with 30% headroom; tokenizer is not public
 MAX_CHARS = 1_500
@@ -27,6 +30,8 @@ RETRY_STATUS = {429, 500, 502, 503, 504, 529}
 BACKOFF = (1, 2, 4, 8, 16, 32)
 
 _log_lock = threading.Lock()
+# requests in flight across every caller's pools; Jeff serves one at a time (529 otherwise)
+_inflight = threading.BoundedSemaphore(int(os.environ.get("YAAMS_JEV_MAX_INFLIGHT", "64")))
 
 
 def est_tokens(text: str) -> int:
@@ -75,14 +80,18 @@ def _log_usage(row: dict) -> None:
 def _post(body: dict, tag: str) -> dict | None:
   """One request with retry on 429/529/5xx. None after retries; 4xx raises."""
   data = json.dumps(body).encode()
-  req = urllib.request.Request(URL, data=data, method="POST", headers={
-    "Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
+  headers = {"Content-Type": "application/json"}
+  if URL == TYPESAFE_URL:  # never send the TypeSafe key anywhere else
+    headers["Authorization"] = f"Bearer {api_key()}"
+  req = urllib.request.Request(URL, data=data, method="POST", headers=headers)
   for wait in (*BACKOFF, None):
-    t0 = time.perf_counter()
     try:
-      with urllib.request.urlopen(req, timeout=120) as r:
-        resp = json.loads(r.read())
-        rid = r.headers.get("x-request-id") or r.headers.get("request-id")
+      with _inflight:
+        t0 = time.perf_counter()  # after the in-flight wait: latency is the request only
+        with urllib.request.urlopen(req, timeout=300) as r:
+          resp = json.loads(r.read())
+          rid = r.headers.get("x-request-id") or r.headers.get("request-id")
+          ms = (time.perf_counter() - t0) * 1000
     except urllib.error.HTTPError as e:
       if e.code not in RETRY_STATUS:
         raise RuntimeError(f"jev {e.code}: {e.read()[:500]!r}") from e
@@ -100,7 +109,7 @@ def _post(body: dict, tag: str) -> dict | None:
       "model": resp.get("model"), "n_questions": len(body["questions"]),
       "input_tokens": (resp.get("usage") or {}).get("input_tokens"),
       "est_tokens": est_tokens(data.decode()),
-      "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+      "latency_ms": round(ms, 1),
       "request_id": rid, "cached": False})
     return resp
   return None

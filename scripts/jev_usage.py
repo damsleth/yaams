@@ -7,7 +7,9 @@ import argparse
 import json
 from collections import defaultdict
 
-from yaams.jev import DOLLARS_PER_TOKEN, JEV_DIR
+from yaams.jev import JEV_DIR
+
+JEV_DOLLARS = 0.042 / 1_000_000  # TypeSafe list price; local servers (Jeff) are free
 
 
 def pct(xs, p):
@@ -29,7 +31,9 @@ def summarize(tag=None, prefix=False):
     est = sum(r.get("est_tokens") or 0 for r in rs)
     lat = [r["latency_ms"] for r in rs]
     out[t] = {"requests": len(rs), "questions": sum(r["n_questions"] for r in rs),
-              "input_tokens": tok, "est_tokens": est, "dollars": round(tok * DOLLARS_PER_TOKEN, 4),
+              "input_tokens": tok, "est_tokens": est,
+              "dollars": round(sum(r["input_tokens"] or 0 for r in rs
+                                   if (r.get("model") or "").startswith("jev-")) * JEV_DOLLARS, 4),
               "p50_ms": pct(lat, 0.5), "p95_ms": pct(lat, 0.95),
               "models": sorted({r.get("model") or "?" for r in rs})}
   return out

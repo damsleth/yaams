@@ -42,6 +42,9 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- `yaams mcp` releases the embedder's GPU memory after each query. On `mps`,
+  torch's caching allocator kept ~3 GB of Metal memory per server process for
+  the whole Claude session; an idle server now sits at ~0.5 GB.
 - `yaams ingest --reindex` now re-stores the final partial batch too. It was
   dropped there, so a run smaller than `batch_size` (e.g. a few edited
   `tier2_ledger` notes) re-stored nothing and edits never reached the store.

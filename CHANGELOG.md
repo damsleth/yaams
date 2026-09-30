@@ -42,6 +42,10 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- `yaams ingest` stops using an owa-piggy profile for the rest of the run once
+  it needs interactive sign-in (owa-piggy exit 3, or owa-* exit 11): no more
+  per-call retries or token prewarm Edge launches for it, and each of its
+  sources is reported as failed with an `owa-piggy setup --profile <p>` hint.
 - `yaams ingest --reindex` now re-stores the final partial batch too. It was
   dropped there, so a run smaller than `batch_size` (e.g. a few edited
   `tier2_ledger` notes) re-stored nothing and edits never reached the store.

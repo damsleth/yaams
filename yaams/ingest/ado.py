@@ -45,7 +45,7 @@ from urllib.parse import unquote
 
 from yaams.config import expand_path
 from yaams.ingest._markdown import MIN_CONTENT_CHARS, collapse_blank_lines, walk_markdown
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.time import ensure_utc, parse_iso_datetime
 
 logger = logging.getLogger("yaams.ingest.ado")
@@ -217,6 +217,7 @@ class AdoAdapter:
     cmd = ["owa-ado", *args, "--profile", self.profile]
     if self.project:
       cmd += ["--project", self.project]
+    check_profile_alive(self.profile)
     try:
       result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout or self.timeout,
@@ -225,6 +226,7 @@ class AdoAdapter:
       logger.warning("owa-ado %s failed (profile=%s): %s", args[0], self.profile, exc)
       return None
     if result.returncode != 0:
+      raise_if_auth_dead(self.profile, "owa-ado", result.returncode, result.stderr or "")
       logger.warning(
         "owa-ado %s failed (profile=%s rc=%d): %s",
         args[0], self.profile, result.returncode,

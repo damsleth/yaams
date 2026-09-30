@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Iterator
 
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.ingest.email_mbox import (
   MAX_EMAIL_CHARS,
   clean_email_body,
@@ -45,13 +45,6 @@ logger = logging.getLogger("yaams.ingest.m365_mail")
 
 DEFAULT_FOLDERS = ("Inbox", "SentItems")
 DEFAULT_CHUNK_DAYS = 30
-
-# owa-tools' owa_core.errors.ExitCode.AUTH_EXPIRED. An auth failure is never a
-# legitimate "no mail in this window" answer, so it must not be swallowed into
-# an empty result the way a genuinely empty folder is: the run summary would
-# report the source as a successful 0-item fetch and the real cause (dead
-# refresh token, wrong-provider profile) would only show up as a log warning.
-_RC_AUTH_EXPIRED = 11
 
 _AUTOMATED_SUBJECT = re.compile(
   r"(unsubscribe|newsletter|digest|weekly update|do not reply"
@@ -113,6 +106,7 @@ class M365MailAdapter:
     per folder replaces both the per-chunk loop and any per-message `show`
     fan-out. Each entry has the same shape as `owa-mail show` output.
     """
+    check_profile_alive(self.profile)
     result = subprocess.run(
       ["owa-mail", "messages",
        "--profile", self.profile,
@@ -128,11 +122,7 @@ class M365MailAdapter:
       stderr = (result.stderr or "").strip() or "no stderr"
       # Raise rather than degrade: the runner catches this per source and
       # marks it failed, so a dead token stops looking like a quiet day.
-      if result.returncode == _RC_AUTH_EXPIRED:
-        raise RuntimeError(
-          f"owa-mail auth failed for profile '{self.profile}' "
-          f"(folder={folder} rc={_RC_AUTH_EXPIRED}): {stderr}"
-        )
+      raise_if_auth_dead(self.profile, "owa-mail", result.returncode, f"folder={folder}: {stderr}")
       logger.warning(
         "owa-mail messages failed (profile=%s folder=%s rc=%d): %s",
         self.profile, folder, result.returncode, stderr,

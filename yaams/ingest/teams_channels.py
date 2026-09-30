@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator
 
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.ingest.teams import _BOT_LIKE_NAMES, MAX_TEAMS_CHARS
 from yaams.time import ensure_utc, parse_iso_datetime
 
@@ -48,6 +48,10 @@ logger = logging.getLogger("yaams.ingest.teams_channels")
 #   Run: owa-piggy setup --profile swon
 #   Once re-authed, swon should work like any other profile — chatsvc routing
 #   is handled inside owa-teams, not here.
+#
+# rc=11 from owa-teams (or rc=3 from owa-piggy in the prewarm) is never
+# retried: it marks the profile dead for the rest of the run (see
+# yaams.ingest.base.raise_if_auth_dead), since every retry relaunches Edge.
 DEFAULT_MAX_RETRIES = 5
 _BACKOFF_BASE_SEC = 1.0
 _BACKOFF_CAP_SEC = 30.0
@@ -147,9 +151,12 @@ def _prewarm_tokens(profile: str) -> None:
   which is exactly the call that spent the whole run timing out.
 
   Best-effort by design: a failure here is not fatal. The fan-out still tries on
-  its own and reports through the normal per-call error path.
+  its own and reports through the normal per-call error path. The exception is
+  owa-piggy's EXIT_AUTH: interactive sign-in is needed, so it raises
+  `ProfileAuthDead` before the next audience launches another Edge.
   """
   for audience in _PREWARM_AUDIENCES:
+    check_profile_alive(profile)
     cmd = ["owa-piggy", "token", "--audience", audience, "--profile", profile]
     try:
       result = _run_capped(cmd, _PREWARM_TIMEOUT_SEC)
@@ -157,6 +164,7 @@ def _prewarm_tokens(profile: str) -> None:
       logger.warning("token prewarm %s/%s failed: %s", profile, audience, exc)
       continue
     if result.returncode != 0:
+      raise_if_auth_dead(profile, "owa-piggy", result.returncode, result.stderr or "")
       # stdout carries the token itself, so only stderr is ever logged.
       logger.warning(
         "token prewarm %s/%s failed (rc=%d): %s",
@@ -296,12 +304,15 @@ class TeamsChannelsAdapter:
     Rate-limit (429) failures are retried with exponential backoff; the fan-out
     bursts enough calls to trip chatsvc's limiter and owa-teams exits non-zero
     rather than waiting itself, so without this a single 429 silently drops a
-    whole team's channels.
+    whole team's channels. Auth-expired (rc=11) raises `ProfileAuthDead`
+    instead, and the liveness check runs before every attempt so sibling
+    threads stop too once one of them hits it.
     """
     verb = args[0] if args else "?"
     cmd = ["owa-teams", *args, "--profile", self.profile]
     attempts = max(self.max_retries, 0) + 1
     for attempt in range(attempts):
+      check_profile_alive(self.profile)
       try:
         result = _run_capped(cmd, _CALL_TIMEOUT_SEC)
       except subprocess.TimeoutExpired:
@@ -314,6 +325,7 @@ class TeamsChannelsAdapter:
         continue
       if result.returncode == 0:
         return _parse_rows(result.stdout, verb, self.profile)
+      raise_if_auth_dead(self.profile, "owa-teams", result.returncode, result.stderr or "")
       if _is_rate_limited(result) and attempt + 1 < attempts:
         delay = min(_BACKOFF_BASE_SEC * 2 ** attempt, _BACKOFF_CAP_SEC)
         self.rate_limit_retries += 1

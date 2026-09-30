@@ -211,6 +211,11 @@ calendar, teams, drive and ado (an m365 identity mints the devops audience,
 `owa-piggy --profile nc --audience devops`); `google` profiles get drive;
 `ado` profiles get `ado` and nothing else.
 
+When a profile's session needs interactive sign-in (owa-piggy exits 3, or an
+owa-* tool exits 11 for auth expired), ingest stops calling that profile for
+the rest of the run and reports each of its sources as failed with the
+`owa-piggy setup --profile <name>` hint. Other profiles carry on.
+
 #### Azure DevOps (`ado`)
 
 `ado_<profile>` shells out to `owa-ado` (org and project come from owa-ado's

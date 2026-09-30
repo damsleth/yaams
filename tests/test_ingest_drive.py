@@ -24,18 +24,14 @@ def test_provider_detection(monkeypatch):
   import subprocess
 
   def fake_run(cmd, **kw):
-    class R:
-      stdout = "ya29.OPAQUE-GOOGLE-TOKEN\n"
-    return R()
+    return subprocess.CompletedProcess(cmd, 0, "ya29.OPAQUE-GOOGLE-TOKEN\n", "")
 
   monkeypatch.setattr(subprocess, "run", fake_run)
   _tok, provider = _mint_token("brkh-g")
   assert provider == "google"
 
   def fake_jwt(cmd, **kw):
-    class R:
-      stdout = "eyJhbGc.eyJzdWIi.sig\n"
-    return R()
+    return subprocess.CompletedProcess(cmd, 0, "eyJhbGc.eyJzdWIi.sig\n", "")
 
   monkeypatch.setattr(subprocess, "run", fake_jwt)
   _tok, provider = _mint_token("work")

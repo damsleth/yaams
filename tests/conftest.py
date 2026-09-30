@@ -9,6 +9,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(autouse=True)
+def _reset_dead_profiles():
+  """The per-run dead-profile set is module state; never leak it across tests."""
+  from yaams.ingest.base import reset_dead_profiles
+  reset_dead_profiles()
+  yield
+  reset_dead_profiles()
+
+
 @pytest.fixture
 def yaams_caplog(caplog):
   """Like ``caplog`` but reliable for the ``yaams`` logger tree.

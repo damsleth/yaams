@@ -593,3 +593,63 @@ def test_extract_prewarms_before_fetching(monkeypatch):
   monkeypatch.setattr(mod, "_run_capped", run)
   list(TeamsChannelsAdapter(profile="nc").extract(datetime(2026, 1, 1, tzinfo=UTC)))
   assert order[0] == "prewarm:nc", f"prewarm did not run first: {order}"
+
+
+# ---------------------------------------------------------------------------
+# Dead auth - owa-piggy rc=3 / owa-* rc=11 stops the profile for the run.
+# ---------------------------------------------------------------------------
+
+
+def test_run_does_not_retry_auth_expired_and_marks_profile_dead(monkeypatch):
+  from yaams.ingest.base import ProfileAuthDead
+  dead = _FakeProc(stdout="", returncode=11, stderr="auth expired (401)")
+  calls, slept = _seq_run(monkeypatch, [dead])
+  adapter = TeamsChannelsAdapter(profile="work")
+  with pytest.raises(ProfileAuthDead, match="owa-piggy setup --profile work"):
+    adapter._run(["teams"])
+  assert len(calls) == 1
+  assert slept == []
+  # A sibling call for the same profile never reaches a subprocess.
+  with pytest.raises(ProfileAuthDead):
+    adapter._run(["channels", "--team", "t1"])
+  assert len(calls) == 1
+
+
+def test_prewarm_auth_dead_stops_before_the_second_audience(monkeypatch):
+  import yaams.ingest.teams_channels as mod
+  from yaams.ingest.base import ProfileAuthDead
+
+  calls: list[list[str]] = []
+
+  def fake(cmd, timeout=None):  # noqa: ARG001
+    calls.append(cmd)
+    return _FakeProc(returncode=3, stderr="skipped: 3 consecutive sign-in failures")
+
+  monkeypatch.setattr(mod, "_run_capped", fake)
+  with pytest.raises(ProfileAuthDead):
+    mod._prewarm_tokens("nc")
+  assert len(calls) == 1, "each further mint is another Edge launch"
+
+
+def test_dead_profile_skips_later_adapters_without_a_subprocess(monkeypatch):
+  """Once teams_channels_nc finds nc dead, mail_nc must not shell out at all."""
+  import yaams.ingest.m365_mail as mail_mod
+  import yaams.ingest.teams_channels as mod
+  from yaams.ingest.base import ProfileAuthDead
+  from yaams.ingest.m365_mail import M365MailAdapter
+
+  monkeypatch.setattr(mod, "_run_capped", lambda cmd, timeout=None: _FakeProc(returncode=3))
+  with pytest.raises(ProfileAuthDead):
+    list(TeamsChannelsAdapter(profile="nc").extract(datetime(2026, 1, 1, tzinfo=UTC)))
+
+  def no_subprocess(*a, **kw):
+    raise AssertionError("dead profile must not shell out")
+
+  monkeypatch.setattr(mail_mod.subprocess, "run", no_subprocess)
+  with pytest.raises(ProfileAuthDead):
+    list(M365MailAdapter(profile="nc").extract(datetime(2026, 1, 1, tzinfo=UTC)))
+  # Other profiles are untouched.
+  monkeypatch.setattr(
+    mail_mod.subprocess, "run", lambda *a, **kw: _FakeProc(stdout="[]"),
+  )
+  assert list(M365MailAdapter(profile="work").extract(datetime(2026, 1, 1, tzinfo=UTC))) == []

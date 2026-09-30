@@ -37,6 +37,7 @@ from yaams.db import open_db
 from yaams.enrich.entities import detect_lang
 from yaams.ingest import Adapter, Item
 from yaams.ingest.agent_memory import AgentMemoryAdapter
+from yaams.ingest.base import reset_dead_profiles
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.chats import ChatsAdapter
 from yaams.ingest.email_mbox import EmailAdapter
@@ -177,6 +178,9 @@ def ingest(
         return src, None, [], started_at, fetch_ms, exc
 
     fetched: dict[str, tuple] = {}
+    # A profile that needed interactive sign-in in a previous run in this
+    # process (tests, `refresh`) gets a fresh chance.
+    reset_dead_profiles()
     if sources_planned:
       max_workers = min(8, len(sources_planned))
       if not as_json:

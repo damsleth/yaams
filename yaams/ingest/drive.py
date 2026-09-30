@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Iterator
 
 from yaams.config import expand_path
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.ingest.folder import DOCUMENT_EXTENSIONS, FolderAdapter
 from yaams.time import ensure_utc, parse_iso_datetime
 
@@ -42,10 +42,13 @@ _UNSAFE_NAME = re.compile(r'[/\\:<>"|?*\x00-\x1f]+')
 
 def _mint_token(profile: str) -> tuple[str, str]:
   """Return (token, provider) for a profile. provider is 'google' or 'm365'."""
+  check_profile_alive(profile)
   result = subprocess.run(
     ["owa-piggy", "--profile", profile],
-    capture_output=True, text=True, check=True,
+    capture_output=True, text=True,
   )
+  raise_if_auth_dead(profile, "owa-piggy", result.returncode, result.stderr or "")
+  result.check_returncode()
   token = result.stdout.strip()
   if not token:
     raise RuntimeError(f"owa-piggy returned empty token for profile {profile}")

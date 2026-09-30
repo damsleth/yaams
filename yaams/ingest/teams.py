@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator
 
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.ingest.email_mbox import strip_html
 from yaams.time import ensure_utc
 
@@ -166,7 +166,10 @@ class OwaPiggyTokenSource:
     now = time.time()
     if self._token and self._expires_at - TOKEN_REFRESH_MARGIN_SEC > now:
       return self._token
-    result = subprocess.run(self._command, capture_output=True, text=True, check=True)
+    check_profile_alive(self.profile)
+    result = subprocess.run(self._command, capture_output=True, text=True)
+    raise_if_auth_dead(self.profile, "owa-piggy", result.returncode, result.stderr or "")
+    result.check_returncode()
     token = result.stdout.strip()
     if not token:
       raise RuntimeError(f"owa-piggy returned empty token for profile {self.profile}")

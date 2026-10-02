@@ -45,6 +45,9 @@ def main():
   ap.add_argument("--db", required=True)
   ap.add_argument("--out", required=True)
   ap.add_argument("--sample", type=int, default=200, help="random rows held out for blind owner labels")
+  ap.add_argument("--owner-sheet", default="~/brain/feed/eval/jeff/ft/junk-v1/sample_sheet.tsv",
+                  help="labelled blind sheet; if it exists its rows are the held-out sample, never rewritten")
+  ap.add_argument("--labels", help="v2: junk_relabel.py checkpoint jsonl ({id: JUNK|KEEP}) as training labels")
   a = ap.parse_args()
   out = Path(a.out).expanduser()
   out.mkdir(parents=True, exist_ok=True)
@@ -63,7 +66,18 @@ def main():
   # hold out the owner rows' neighbours too: their prev/next context would contain the owner row's text
   # (whole threads cost 2/3 of the data, a few huge chats hold most rows)
   # random eval rows for the owner to label blind (owner50 is 98% JUNK, useless as a test)
-  sample = set(random.Random(29).sample([i for i in ids if i in rows and i not in owner], a.sample))
+  sheet_path = Path(a.owner_sheet).expanduser()
+  labelled = {}
+  if sheet_path.exists():  # reuse the labelled sheet: same 200 rows, owner verdicts, never rewritten
+    for r in csv.DictReader(open(sheet_path), delimiter="\t"):
+      labelled[r["item_id"]] = (int(r["n"]), r["owner_verdict (J/K)"])
+    sample = set(labelled)
+  else:
+    sample = set(random.Random(29).sample([i for i in ids if i in rows and i not in owner], a.sample))
+  relabel = {}
+  if a.labels:  # v2: one judge pass at the owner's bar (junk_relabel.py checkpoint)
+    for line in open(Path(a.labels).expanduser()):
+      relabel.update(json.loads(line))
   held = set()
   for i in [*owner, *sample]:
     r = rows.get(i)
@@ -75,8 +89,14 @@ def main():
       if n:
         held.add(n[0])
 
-  files = {n: open(out / f"{n}.jsonl", "w")
-           for n in ("train", "dev", "calibration", "owner50", "sample_unlabeled")}
+  def train_label(i):
+    if relabel:
+      return relabel.get(i) == "JUNK" if i in relabel else None
+    return "JUNK" in (r1[i], r2[i]) or jev[i]["noul"] >= 0.5
+
+  names = ["train", "dev", "calibration", "owner50"]
+  names += ["sample_tune", "sample_test"] if labelled else ["sample_unlabeled"]
+  files = {n: open(out / f"{n}.jsonl", "w") for n in names}
   counts = {n: [0, 0] for n in files}
   for i in ids:
     r = rows.get(i)
@@ -85,17 +105,23 @@ def main():
     if i in owner:
       name, label = "owner50", owner[i]
     elif i in sample:
-      name, label = "sample_unlabeled", "JUNK" in (r1[i], r2[i]) or jev[i]["noul"] >= 0.5
+      if labelled:  # owner labels; n 1-100 tune the threshold, 101-200 are the test
+        n, v = labelled[i]
+        name, label = ("sample_tune" if n <= 100 else "sample_test"), v == "J"
+      else:
+        name, label = "sample_unlabeled", train_label(i)
     elif i in held:
       continue
     else:
       name = fold(r["thread_id"])
-      label = "JUNK" in (r1[i], r2[i]) or jev[i]["noul"] >= 0.5
+      label = train_label(i)
+      if label is None:  # the relabel pass skipped or failed this row
+        continue
     ex = {"id": f"yaams-junk:{i}", "suite": "yaams_junk", "family": f"thread:{r['thread_id']}",
           "state": STATE,
           "question": {"type": "noul", "instructions": block(conn, r), "criteria": {"true": CRITERION}},
           "label": label, "target": label,
-          "source": {"dataset": "yaams-junk-v1", "lang": jev[i]["lang"], "sonnet": [r1[i], r2[i]],
+          "source": {"dataset": "yaams-junk-v2" if relabel else "yaams-junk-v1", "lang": jev[i]["lang"], "sonnet": [r1[i], r2[i]],
                      "jev_nb": jev[i]["noul"]}}
     files[name].write(json.dumps(ex, ensure_ascii=False) + "\n")
     counts[name][label] += 1
@@ -104,6 +130,8 @@ def main():
   for n, (keep, junk) in counts.items():
     print(f"{n:12s} {keep + junk:6d} rows  JUNK {junk:5d} ({junk / max(1, keep + junk):.0%})")
   print(f"held-out neighbours of owner/sample rows: {len(held)} -> {out}")
+  if labelled:
+    return
   # blind owner sheet for the random sample: shuffled, no model verdicts shown
   with open(out / "sample_sheet.tsv", "w", newline="") as f:
     w = csv.writer(f, delimiter="\t")

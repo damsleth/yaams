@@ -23,6 +23,11 @@ surface; pin to a specific version if you need stability.
   `yaams.jev.noul` takes per-call `url`/`model`/`cache_model`. The row
   rendering moved to `yaams.quality.junk_block` and is shared with the
   fine-tune scripts (byte-identical on 500 training rows).
+- `scripts/ane/`: convert a jeff encoder (mmBERT/ModernBERT) junk checkpoint to
+  Core ML with static length buckets and report op placement
+  (`convert.py`), and benchmark rows/s and SoC power per compute unit
+  (`bench_coreml.py`, `bench_jeff_mlx.py`, `power.py` via `mactop --headless`,
+  no sudo). Own a separate venv; coremltools is not a yaams dependency.
 - `scripts/junk_apply.py` (apply owner-bar verdicts as `llm:junk-owner` with
   gold protection and an undo log), `scripts/junk_relabel.py` +
   `scripts/junk_verdict_prompt.owner.md` (relabel at the owner's bar),

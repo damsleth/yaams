@@ -56,6 +56,21 @@ judges = {
   "all-JUNK baseline": {i: True for i in owner},
 }
 scores = {"Jeff v2": v2}
+M = E / "jeff/ft/junk-mmbert"
+mm_files = [M / f"results/junk-mmbert-{s}.predictions.jsonl" for s in ("sample_tune", "sample_test")]
+if all(f.exists() for f in mm_files):  # mmBERT encoder fine-tune (PyTorch eval on KWIN)
+  mm = {k: v for f in mm_files for k, v in preds(f).items()}
+  scores["mmBERT"] = mm
+  mt = max((kappa((mm[i] >= t / 100, owner[i]) for i in tune), t / 100) for t in range(5, 96))[1]
+  judges[f"mmBERT fine-tuned @{mt:.2f} (tau from tune)"] = {i: mm[i] >= mt for i in owner}
+  ane_f = M / "coreml-ane-scores.jsonl"
+  if ane_f.exists():  # the same model converted to Core ML, run on the Neural Engine
+    ane = {r["id"].split(":", 1)[1]: r["p_junk"] for r in map(json.loads, open(ane_f))}
+    scores["mmBERT Core ML ANE"] = ane
+    judges[f"mmBERT Core ML ANE @{mt:.2f} (same tau)"] = {i: ane.get(i, 0) >= mt for i in owner}
+    d = sorted(abs(ane[i] - mm[i]) for i in ane if i in mm)
+    print(f"ANE vs PyTorch: mean |diff| {sum(d) / len(d):.4f}, max {d[-1]:.4f}, "
+          f"flips @{mt:.2f}: {sum((ane[i] >= mt) != (mm[i] >= mt) for i in ane if i in mm)}")
 G = E / "gliner2"
 for v in ("target", "block"):  # zero-shot GLiNER2 (gliner2-base-v1, MLX via Gliner2Swift)
   f = G / f"out_{v}.jsonl"

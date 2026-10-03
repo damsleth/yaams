@@ -17,7 +17,9 @@ surface; pin to a specific version if you need stability.
   `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the
   10-39 char messaging band `llm:junk-jeff` at `threshold` (0.73). A missing
   model server is skipped with a note (or started from `serve_cmd` and
-  stopped after); gold answers are never hidden; scores are cached.
+  stopped after); gold answers are never hidden; scores are cached. The
+  ingest envelope's `stats.junk.model` reports server start, scoring time and
+  rows/s.
   `yaams.jev.noul` takes per-call `url`/`model`/`cache_model`. The row
   rendering moved to `yaams.quality.junk_block` and is shared with the
   fine-tune scripts (byte-identical on 500 training rows).

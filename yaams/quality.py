@@ -229,11 +229,18 @@ def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bo
   stats: dict[str, Any] = {"candidates": len(rows)}
   if not rows:
     return stats
+  import time
+
   url = cfg.get("url", "http://127.0.0.1:8766/v1/systemone")
+  t0 = time.perf_counter()
   texts = {r["id"]: junk_block(conn, r) for r in rows}
+  t_render = time.perf_counter()
   proc = None
   try:
     proc = _serve(url, cfg.get("serve_cmd"))
+    t_served = time.perf_counter()
+    stats["server_started"] = proc is not None
+    stats["server_start_s"] = round(t_served - t_render, 2)
     scores = jev.noul(cfg.get("state", MODEL_STATE), texts, MODEL_CRITERION,
                       criterion_version=cfg.get("criterion_version", "junk-owner-v2"),
                       tag="ingest_junk", workers=1, url=url, model=cfg.get("model", "jeff-latest"),
@@ -248,9 +255,14 @@ def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bo
         proc.wait(timeout=30)
       except Exception:  # noqa: BLE001
         proc.kill()
+  t_scored = time.perf_counter()
   tau = float(cfg.get("threshold", 0.73))
   junk = [i for i, s in scores.items() if s >= tau]
-  stats.update({"scored": len(scores), "threshold": tau})
+  score_s = t_scored - t_served
+  stats.update({"scored": len(scores), "threshold": tau, "render_s": round(t_render - t0, 2),
+                "score_s": round(score_s, 2),
+                "rows_per_s": round(len(scores) / score_s, 1) if score_s > 0 else None,
+                "total_s": round(time.perf_counter() - t0, 2)})
   if dry_run:
     stats[MODEL_REASON] = len(junk)
     return stats

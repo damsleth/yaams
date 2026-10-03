@@ -309,6 +309,13 @@ def ingest(
     # `entities discover` / `import-people`) and de-dupes aliases. Skipped on
     # dry runs and when there is no JSON store (legacy inline dictionaries).
     entity_cleanup = None if dry_run else _cleanup_entity_dictionary(cfg)
+    # Junk annotation (quality.annotate_on_ingest): mechanical rules, then the
+    # optional junk model. Off by default; never fails the ingest.
+    junk_stats = None
+    if not dry_run:
+      from yaams.quality import annotate_on_ingest
+
+      junk_stats = annotate_on_ingest(conn, cfg)
     total_duration_ms = (time.perf_counter() - total_start) * 1000
     if as_json:
       envelope, exit_code = _build_ingest_envelope(
@@ -321,6 +328,8 @@ def ingest(
         strict=strict,
         entity_cleanup=entity_cleanup,
       )
+      if junk_stats is not None:
+        envelope["stats"]["junk"] = junk_stats
       summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
       if summary is not None:
         envelope["stats"]["summary"] = {
@@ -341,6 +350,11 @@ def ingest(
       total_duration_ms=total_duration_ms,
       entity_cleanup=entity_cleanup,
     )
+    if junk_stats is not None:
+      model = junk_stats.get("model") or {}
+      counts = {k: v for k, v in {**junk_stats, **model}.items() if k.startswith(("mech:", "llm:"))}
+      click.echo("  Junk annotated: " + (", ".join(f"{k} {v:,}" for k, v in counts.items()) or "nothing new")
+                 + (f" ({model['note']})" if model.get("note") else ""))
     summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
     if summary is not None:
       _print_summary(summary)

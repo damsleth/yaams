@@ -273,6 +273,35 @@ YAAMS is built to run nightly without you. See
 **Full Disk Access** setup the `imessage` adapter needs to read `chat.db`
 under `launchd`.
 
+### Junk annotation on ingest
+
+Short chat messages ("ok takk", "på vei", "haha") are noise in search results.
+YAAMS can annotate them after every `yaams ingest`, so retrieval skips them
+when `retrieve.exclude_junk` is on. Nothing is deleted: the annotation is
+`items.junk_reason`, and every reason can be reversed with one UPDATE.
+
+```yaml
+quality:
+  annotate_on_ingest: true   # mechanical rules: <10 chars, tapbacks, same-day duplicates
+  junk_model:
+    enabled: true            # a fine-tuned local classifier for the 10-39 char band
+    url: http://127.0.0.1:8766/v1/systemone
+    threshold: 0.73
+    since: 2026-09-25        # rows before this were labelled in bulk
+    serve_cmd: env JEFF_BACKEND=mlx JEFF_CHECKPOINT=/path/to/checkpoints/yaams-junk-v2 PORT=8766 /path/to/jeff/.venv/bin/jeff-serve
+```
+
+The model is a [Jeff](https://github.com/firelex/jeff) checkpoint fine-tuned on
+the owner's own junk/keep labels (`scripts/jeff_junk_ftdata.py`), served on
+MLX. It labels rows `llm:junk-jeff`. If nothing answers at `url`, `serve_cmd`
+starts a server for the pass and stops it afterwards, so nothing stays
+resident; with neither, the pass is skipped with a note and the ingest still
+succeeds. An item that was ever a hit or correction answer is never hidden.
+Scores are cached, so a row kept on one run costs a cache lookup on the next.
+
+The prompt the model sees (`yaams.quality.junk_block`) is the training
+contract: changing it means retraining.
+
 ---
 
 ## 5. Querying

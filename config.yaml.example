@@ -211,6 +211,19 @@ entities:
       aliases:
         - EX
 
+# Junk annotation after every ingest; see docs/user-guide.md "Junk annotation".
+quality:
+  annotate_on_ingest: false
+  junk_model:
+    enabled: false
+    url: http://127.0.0.1:8766/v1/systemone
+    model: jeff-latest
+    cache_model: jeff-junk-v2     # names the scores in the cache; change per checkpoint
+    threshold: 0.73               # picked on the owner's tune labels, 2026-10-02
+    since: null                   # only rows ingested at/after this ISO date
+    # Start a server for the pass when none is running (stopped afterwards):
+    # serve_cmd: env JEFF_BACKEND=mlx JEFF_CHECKPOINT=/path/to/checkpoints/yaams-junk-v2 PORT=8766 /path/to/jeff/.venv/bin/jeff-serve
+
 retrieve:
   synonyms:
     - [vakt, shift]

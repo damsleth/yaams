@@ -30,9 +30,9 @@ from jev_junk_pass import CRITERION, block  # noqa: E402
 from junk_sonnet_pass import context, load_ckpt  # noqa: E402
 
 from yaams.db import open_db  # noqa: E402
+from yaams.quality import MODEL_STATE as STATE  # noqa: E402
 
 JEV = Path.home() / "brain/feed/eval/jev"
-STATE = {"task": "Junk filter for a personal search index over Kim's chat messages."}
 
 
 def fold(thread):

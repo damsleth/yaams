@@ -15,25 +15,21 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from junk_sonnet_pass import CKPT_DIR, context, load_ckpt  # noqa: E402
+from junk_sonnet_pass import CKPT_DIR, load_ckpt  # noqa: E402
 
 from yaams import jev  # noqa: E402
 from yaams.db import open_db  # noqa: E402
+from yaams.quality import MODEL_CRITERION as CRITERION  # noqa: E402
+from yaams.quality import junk_block as block  # noqa: E402
 
 HERE = Path(__file__).parent
 RUBRICS = {"en": HERE / "junk_verdict_prompt.md", "nb": HERE / "junk_verdict_prompt.nb.md"}
-CRITERION = "The TARGET message is junk: it carries no retrievable content on its own."
 GOLD_SQL = Path.home() / "brain/feed/eval/junk_gold_labels.sql"
 
 
 def rubric(variant):
   # the last paragraph is the "<n>: JUNK" output format for CLI judges; Jev answers a noul
   return RUBRICS[variant].read_text().strip().rsplit("\n\n", 1)[0]
-
-
-def block(conn, row):
-  p, n = context(conn, row)
-  return f"[{row['source']}] prev: {p!r}\nTARGET: {row['content'].strip()!r}\nnext: {n!r}"
 
 
 def main():

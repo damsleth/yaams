@@ -77,13 +77,14 @@ def _log_usage(row: dict) -> None:
     f.write(json.dumps(row) + "\n")
 
 
-def _post(body: dict, tag: str) -> dict | None:
+def _post(body: dict, tag: str, url: str | None = None) -> dict | None:
   """One request with retry on 429/529/5xx. None after retries; 4xx raises."""
   data = json.dumps(body).encode()
+  url = url or URL
   headers = {"Content-Type": "application/json"}
-  if URL == TYPESAFE_URL:  # never send the TypeSafe key anywhere else
+  if url == TYPESAFE_URL:  # never send the TypeSafe key anywhere else
     headers["Authorization"] = f"Bearer {api_key()}"
-  req = urllib.request.Request(URL, data=data, method="POST", headers=headers)
+  req = urllib.request.Request(url, data=data, method="POST", headers=headers)
   for wait in (*BACKOFF, None):
     try:
       with _inflight:
@@ -185,13 +186,18 @@ def cache_key(state: dict, text: str, criterion_version: str, model: str = MODEL
 def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion_version: str,
          tag: str, workers: int = 8, max_questions: int = MAX_QUESTIONS,
          max_tokens: int = MAX_TOKENS, use_cache: bool = True,
-         stats: dict | None = None) -> dict[str, float]:
+         stats: dict | None = None, url: str | None = None, model: str | None = None,
+         cache_model: str | None = None) -> dict[str, float]:
   """Score each item text against `criterion` given `state`. A failed id is
   missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
-  criterion=None sends no per-question `criteria`: put it in `state` once instead."""
+  criterion=None sends no per-question `criteria`: put it in `state` once instead.
+  `url`/`model` override the module defaults per call; `cache_model` names the
+  scores in the cache when `model` is an alias (a local Jeff answers to
+  `jeff-latest` whichever checkpoint it serves)."""
   use_cache = use_cache and os.environ.get("YAAMS_JEV_NO_CACHE") != "1"
+  model = model or MODEL
   texts = {k: v[:MAX_CHARS] for k, v in items.items()}
-  keys = {k: cache_key(state, t, criterion_version) for k, t in texts.items()}
+  keys = {k: cache_key(state, t, criterion_version, cache_model or model) for k, t in texts.items()}
   out: dict[str, float] = {}
   if use_cache:
     hit = _get_cache().get(list(keys.values()))
@@ -206,7 +212,7 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
     # question ids are positional: ids never reach the model, and item ids can be long
     crit = {"criteria": {"true": criterion}} if criterion else {}
     qs = {f"q{i}": {"type": "noul", "instructions": t, **crit} for i, (_, t) in enumerate(batch)}
-    return batch, _post({"model": MODEL, "state": state, "questions": qs}, tag)
+    return batch, _post({"model": model, "state": state, "questions": qs}, tag, url)
 
   with ThreadPoolExecutor(max_workers=workers) as ex:
     for batch, resp in ex.map(run, batches):

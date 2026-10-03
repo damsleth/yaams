@@ -12,6 +12,20 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Junk annotation on ingest (`quality.annotate_on_ingest`, off by default):
+  after every `yaams ingest`, the mechanical junk rules run, and with
+  `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the
+  10-39 char messaging band `llm:junk-jeff` at `threshold` (0.73). A missing
+  model server is skipped with a note (or started from `serve_cmd` and
+  stopped after); gold answers are never hidden; scores are cached.
+  `yaams.jev.noul` takes per-call `url`/`model`/`cache_model`. The row
+  rendering moved to `yaams.quality.junk_block` and is shared with the
+  fine-tune scripts (byte-identical on 500 training rows).
+- `scripts/junk_apply.py` (apply owner-bar verdicts as `llm:junk-owner` with
+  gold protection and an undo log), `scripts/junk_relabel.py` +
+  `scripts/junk_verdict_prompt.owner.md` (relabel at the owner's bar),
+  `scripts/jeff_parity.py` (MLX vs PyTorch score parity),
+  `scripts/junk_owner_score_v2.py` (owner tune/test report incl. GLiNER2).
 - Opt-in Jev relevance hook over the hydrated pool: `HybridQueryConfig.jev_spec`
   (`replace` | `blend:<a>` | `gate:<h>` | `filter:<tau>`), `jev_k` (default 50),
   `yaams query --jev SPEC`, config `retrieve.jev.spec` / `k` (off by default;

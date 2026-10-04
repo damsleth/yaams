@@ -67,11 +67,17 @@ class PairScorer(torch.nn.Module):
   def __init__(self, backbone, scorer, length):
     super().__init__()
     self.backbone, self.scorer = backbone, scorer
+    self.kind = backbone.config.model_type  # modernbert | gemma3_text (bidirectional) | bert
     idx = torch.arange(length)
-    window = ((idx[:, None] - idx[None, :]).abs() <= backbone.config.sliding_window).float()
+    # sliding window: ModernBERT's is 64 (half of local_attention=128); Gemma-3's 1024 exceeds our buckets
+    half = getattr(backbone.config, "sliding_window", None) or length
+    window = ((idx[:, None] - idx[None, :]).abs() <= half).float()
     self.register_buffer("window", window[None, None], persistent=False)  # [1,1,L,L], 1 = may attend
 
   def forward(self, input_ids, attention_mask):
+    if self.kind == "bert":  # BERT's extended mask is plain arithmetic: the stock path converts
+      hidden = self.backbone(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+      return self.scorer(hidden[:, 0]).squeeze(-1)
     # float arithmetic only (no bool &): converts cleanly and stays on the ANE
     keys = attention_mask[:, None, None, :].float()  # [B,1,1,L], 1 = real token
     neg = -1e4  # fp16-safe "minus infinity"

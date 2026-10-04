@@ -200,10 +200,22 @@ def _replay_one(
     exclude_junk: bool = False,
     jev_spec: str | None = None,
     jev_k: int = 50,
+    parse_mode: str | None = None,
 ) -> tuple[int | None, float]:
-    """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
+    """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query.
+
+    parse_mode (ablations): "none" replays without the stored LLM parse;
+    "factual" keeps the parse but forces shape=factual."""
     text = row["text"]
-    parsed = _parsed_from_json(row["parsed_query"], text)
+    parsed = None if parse_mode == "none" else _parsed_from_json(row["parsed_query"], text)
+    if parsed is not None and parse_mode == "factual":
+        parsed.shape = "factual"
+    elif parsed is not None and parse_mode == "noentities":
+        parsed.entities = []
+    elif parsed is not None and parse_mode == "nodates":
+        parsed.date_range = (None, None)
+    elif parsed is not None and parse_mode == "notopics":
+        parsed.topic_terms = []
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
         top_k=_EVAL_TOP_K,
@@ -275,6 +287,8 @@ def _mode_label(args) -> str:
         base = f"{base}+nojunk"
     if getattr(args, "jev", None):
         base = f"{base}+jev:{args.jev}:k{args.jev_k}"
+    if getattr(args, "parse_mode", None):
+        base = f"{base}+parse:{args.parse_mode}"
     return base
 
 
@@ -287,6 +301,9 @@ def main() -> int:
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="dev",
                     help="Score only this bucket (loop should use 'dev').")
+    ap.add_argument("--parse-mode", choices=["none", "factual", "noentities", "nodates", "notopics"], default=None,
+                    help="Ablation: replay without the stored LLM parse (none), with "
+                         "shape forced to factual, or with one parse field dropped. Keyed separately.")
     ap.add_argument("--exclude-junk", action="store_true",
                     help="skip items annotated by yaams.quality (retrieve.exclude_junk); "
                          "run against a junk-annotated COPY of the fixture, never the fixture")
@@ -372,7 +389,7 @@ def main() -> int:
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
                 reranker_device=rerank_device, feedback_boost=args.feedback_boost,
                 exclude_junk=args.exclude_junk,
-                jev_spec=args.jev, jev_k=args.jev_k,
+                jev_spec=args.jev, jev_k=args.jev_k, parse_mode=args.parse_mode,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)

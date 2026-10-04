@@ -105,6 +105,9 @@ _LAMBDA_LATENCY = 0.10
 _HARD_FAIL_LATENCY_MULT = 2.0
 
 
+_PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
+
+
 def _split_bucket(query_id: str) -> str:
     """Stable dev/test assignment from a hash of the query_id (not Python's
     salted hash, which varies per process)."""
@@ -207,7 +210,9 @@ def _replay_one(
     parse_mode (ablations): "none" replays without the stored LLM parse;
     "factual" keeps the parse but forces shape=factual."""
     text = row["text"]
-    parsed = None if parse_mode == "none" else _parsed_from_json(row["parsed_query"], text)
+    stored = (_PARSE_OVERRIDES.get(row["query_id"]) and json.dumps(_PARSE_OVERRIDES[row["query_id"]])
+              or row["parsed_query"])
+    parsed = None if parse_mode == "none" else _parsed_from_json(stored, text)
     if parsed is not None and parse_mode == "factual":
         parsed.shape = "factual"
     elif parsed is not None and parse_mode == "noentities":
@@ -289,6 +294,8 @@ def _mode_label(args) -> str:
         base = f"{base}+jev:{args.jev}:k{args.jev_k}"
     if getattr(args, "parse_mode", None):
         base = f"{base}+parse:{args.parse_mode}"
+    if getattr(args, "parse_override", None):
+        base = f"{base}+reparse"
     return base
 
 
@@ -326,7 +333,11 @@ def main() -> int:
     ap.add_argument("--jev-k", type=int, default=50, dest="jev_k")
     ap.add_argument("--ranks-out", default=None,
                     help="write per-gold ranks {query_id: rank|null} as JSON to this path")
+    ap.add_argument("--parse-override", default=None,
+                    help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
     args = ap.parse_args()
+    if args.parse_override:
+        _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
 
     cfg = load_config()
     retrieve_cfg = cfg.get("retrieve")

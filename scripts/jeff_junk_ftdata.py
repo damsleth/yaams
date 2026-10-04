@@ -47,6 +47,8 @@ def main():
   ap.add_argument("--sample", type=int, default=200, help="random rows held out for blind owner labels")
   ap.add_argument("--owner-sheet", default="~/brain/feed/eval/jeff/ft/junk-v1/sample_sheet.tsv",
                   help="labelled blind sheet; if it exists its rows are the held-out sample, never rewritten")
+  ap.add_argument("--owner-train", nargs="*", help="v3: owner-labelled TSV sheets used as training rows")
+  ap.add_argument("--owner-repeat", type=int, default=5, help="repeat owner training rows in the train fold")
   ap.add_argument("--labels", help="v2: junk_relabel.py checkpoint jsonl ({id: JUNK|KEEP}) as training labels")
   a = ap.parse_args()
   out = Path(a.out).expanduser()
@@ -78,8 +80,13 @@ def main():
   if a.labels:  # v2: one judge pass at the owner's bar (junk_relabel.py checkpoint)
     for line in open(Path(a.labels).expanduser()):
       relabel.update(json.loads(line))
+  owner_train = {}  # v3: owner-labelled training rows (context keeps, A1 rows); they override the relabel
+  for path in a.owner_train or []:
+    rs = list(csv.DictReader(open(Path(path).expanduser()), delimiter="\t"))
+    col = next(c for c in rs[0] if c.startswith("owner_verdict"))
+    owner_train.update({r["item_id"]: r[col] in ("J", "JUNK") for r in rs if r[col]})
   held = set()
-  for i in [*owner, *sample]:
+  for i in [*(i for i in owner if i not in owner_train), *sample]:
     r = rows.get(i)
     if r is None:
       continue
@@ -102,7 +109,11 @@ def main():
     r = rows.get(i)
     if r is None:
       continue
-    if i in owner:
+    repeat = 1
+    if i in owner_train:  # owner truth, placed by thread like any row; upweighted by repetition in train
+      name, label = fold(r["thread_id"]), owner_train[i]
+      repeat = a.owner_repeat if name == "train" else 1
+    elif i in owner:
       name, label = "owner50", owner[i]
     elif i in sample:
       if labelled:  # owner labels; n 1-100 tune the threshold, 101-200 are the test
@@ -117,14 +128,16 @@ def main():
       label = train_label(i)
       if label is None:  # the relabel pass skipped or failed this row
         continue
-    ex = {"id": f"yaams-junk:{i}", "suite": "yaams_junk", "family": f"thread:{r['thread_id']}",
-          "state": STATE,
-          "question": {"type": "noul", "instructions": block(conn, r), "criteria": {"true": CRITERION}},
-          "label": label, "target": label,
-          "source": {"dataset": "yaams-junk-v2" if relabel else "yaams-junk-v1", "lang": jev[i]["lang"], "sonnet": [r1[i], r2[i]],
-                     "jev_nb": jev[i]["noul"]}}
-    files[name].write(json.dumps(ex, ensure_ascii=False) + "\n")
-    counts[name][label] += 1
+    dataset = "yaams-junk-v3" if owner_train else "yaams-junk-v2" if relabel else "yaams-junk-v1"
+    for k in range(repeat):
+      ex = {"id": f"yaams-junk:{i}" + (f":r{k}" if k else ""), "suite": "yaams_junk",
+            "family": f"thread:{r['thread_id']}", "state": STATE,
+            "question": {"type": "noul", "instructions": block(conn, r), "criteria": {"true": CRITERION}},
+            "label": label, "target": label,
+            "source": {"dataset": dataset, "lang": jev[i]["lang"], "sonnet": [r1[i], r2[i]],
+                       "jev_nb": jev[i]["noul"], "owner": i in owner_train}}
+      files[name].write(json.dumps(ex, ensure_ascii=False) + "\n")
+      counts[name][label] += 1
   for f in files.values():
     f.close()
   for n, (keep, junk) in counts.items():

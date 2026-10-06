@@ -75,6 +75,22 @@ def test_occurrence_lane_applies_sender_filter_before_its_limit():
   assert [r.id for r in query(conn, "zzz", config=cfg)] == [mine.id]
 
 
+def test_occurrence_lane_prefers_participation_over_mentions():
+  conn = _open_db()
+  eid = _bob(conn)
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  chat = _make_item(sender="Bob Smith", content="ok", ts=base, msg_id="chat")
+  note = _make_item(source="notes", sender="me", content="ask Bob", ts=base + timedelta(days=5), msg_id="note")
+  store_items(conn, [chat, note], [b"\x00" * 16] * 2, [[]] * 2)
+  conn.execute("INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'participant')",
+               (chat.id, eid))
+  conn.execute("INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'dictionary')",
+               (note.id, eid))
+  cfg = HybridQueryConfig(top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"],
+                          occurrence_browse=True)
+  assert query(conn, "zzz", config=cfg)[0].id == chat.id
+
+
 def test_mechanical_rules_never_hide_a_gold_answer():
   conn = _quality_db()
   gold, other = _item("imessage", 1, "ok", ts=T0), _item("imessage", 2, "ja", ts=T0.replace(minute=1))

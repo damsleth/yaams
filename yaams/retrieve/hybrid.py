@@ -383,8 +383,16 @@ def query(
   # Entity filter required: a participant filter alone ("when did I last talk
   # about the budget") would list the owner's newest messages on any topic.
   if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and item_allow is not None:
-    items = item_allow if part_item_allow is None else item_allow & part_item_allow
-    cons = (cons_allow or set()) if part_cons_allow is None else (cons_allow or set()) & part_cons_allow
+    items, cons = item_allow, cons_allow or set()
+    # Someone the owner exchanges messages with: contact means a message they sent
+    # or received, not a note that mentions them (or a one-word alias like "Jan").
+    # Entities without participant links (orgs, projects) keep every link.
+    p_items, p_cons = _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
+    if p_items:
+      items, cons = p_items, p_cons
+      hydrated = [r for r in hydrated if r.id in items or r.id in cons]
+    if part_item_allow is not None:
+      items, cons = items & part_item_allow, cons & (part_cons_allow or set())
     seen = {r.id for r in hydrated}
     hydrated += [r for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k) if r.id not in seen]
   if cfg.rerank_enabled and hydrated:
@@ -503,6 +511,7 @@ def _apply_jev(
 def _resolve_entity_allowlist(
   conn: sqlite3.Connection,
   entity_names: list[str],
+  link_source: str | None = None,
 ) -> tuple[set[str], set[str]]:
   """Return (item_ids, consolidation_ids) that share at least one of the
   named canonical entities. Consolidations match via raw_item_ids."""
@@ -523,8 +532,9 @@ def _resolve_entity_allowlist(
     return set(), set()
   ent_id_ph = ",".join("?" * len(entity_ids))
   item_rows = conn.execute(
-    f"SELECT DISTINCT item_id FROM item_entities WHERE entity_id IN ({ent_id_ph})",
-    tuple(entity_ids),
+    f"SELECT DISTINCT item_id FROM item_entities WHERE entity_id IN ({ent_id_ph})"
+    + (" AND source = ?" if link_source else ""),
+    (*entity_ids, *([link_source] if link_source else [])),
   ).fetchall()
   item_ids: set[str] = {
     r[0] if not hasattr(r, "keys") else r["item_id"] for r in item_rows

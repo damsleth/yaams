@@ -14,8 +14,9 @@ surface; pin to a specific version if you need stability.
 
 - Occurrence lane, opt-in `HybridQueryConfig.occurrence_browse` (off by
   default): for timestamp-sorted queries with an entity or participant
-  allowlist, append the `top_k` allowlisted items nearest the sort end (newest
-  for "last", oldest for "first") and exempt them from the relevance floor.
+  allowlist, append the `top_k` allowlisted items and consolidations nearest
+  the sort end (newest for "last", oldest for "first") and exempt them from
+  the relevance floor.
   Allowlists only post-filter the text-retrieved pool, so "when did I last
   speak with X" never saw X's newest messages, which share no words with the
   question.
@@ -24,8 +25,10 @@ surface; pin to a specific version if you need stability.
   `scripts/link_participants.py` (participant `item_entities` links on a
   fixture copy), `scripts/reparse_fallback_golds.py`. Harness flags
   `--promote-entities`, `--occurrence-browse`, `--parse-mode` and
-  `--parse-override`. With all three pieces, last-contact hit@1 goes from 0.045
-  to 0.59; gold dev +0.0013, test unchanged (experiments 134-135, wiki P7).
+  `--parse-override`. The eval replays as of the ask time and counts the
+  consolidation that holds the answer. With participant links, name promotion
+  and the lane, last-contact hit@1 goes from 0.11 to 0.82; gold dev +0.0013,
+  test unchanged (experiments 134-136, wiki P7).
 - Junk annotation on ingest (`quality.annotate_on_ingest`, off by default):
   after every `yaams ingest`, the mechanical junk rules run, and with
   `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the

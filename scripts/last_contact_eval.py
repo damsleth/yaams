@@ -100,9 +100,12 @@ def run(a):
   rows = []
   for c in cases:
     row = {"query_id": c["query_id"], "text": c["text"], "parsed_query": c["parsed_query"],
-           "source_filter": None, "since": None, "until": None, "ts": c["ts"], "result_id": c["latest"]}
+           "source_filter": None, "since": None, "until": c["ts"], "ts": c["ts"], "result_id": c["latest"]}
     ar._replay_one(conn, emb, _self_identities(cfg), row, syn, exclude_junk=a.exclude_junk)
-    ok = set(c["acceptable"])
+    # a consolidated conversation is retrieved as its consolidation, so that counts too
+    ok = set(c["acceptable"]) | {r[0] for r in conn.execute(
+      "SELECT DISTINCT consolidated_into FROM items WHERE consolidated_into IS NOT NULL "
+      "AND id IN (SELECT value FROM json_each(?))", (json.dumps(c["acceptable"]),))}
     ids = [r.id for r in holder["res"]]
     rank = next((i for i, x in enumerate(ids, 1) if x in ok), None)
     rows.append((c, rank, rank != 1 and bool(ids) and _newer_link(conn, ids[0], c)))

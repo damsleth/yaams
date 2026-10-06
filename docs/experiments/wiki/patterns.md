@@ -119,9 +119,13 @@ any one alone measures as zero.
   only, so messages from/to a person are unlinked (fix: participant links);
   entity/participant allowlists only post-filter a text-retrieved pool, so the
   newest items, which share no words with the question, are never candidates
-  (fix: `occurrence_browse` lane). hit@1: each alone <= 0.14, all three 0.59
-  (+0.14 newer person-linked top-1). Gold dev +0.0013, test unchanged: the
-  gold set has 4 person-name queries of 38.
+  (fix: `occurrence_browse` lane, which must browse consolidations too: a
+  consolidated conversation is only reachable through its consolidation).
+  hit@1: every partial stack <= 0.18, all three 0.82. Gold dev +0.0013, test
+  unchanged: the gold set has 4 person-name queries of 38.
+- Eval trap: replay as of the ask (`until` = ask time). Without it, items after
+  the question fill a newest-first lane, and a first run reported 0.59 with
+  0.14 "newer mention" top-1s that were really leakage (seq 135 -> 136).
 - Implication: judge entity/person work on the last-contact eval, not the
   gold-set quality scalar; a neutral gold delta is the non-regression check,
   not the verdict.

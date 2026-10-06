@@ -211,6 +211,11 @@ calendar, teams, drive and ado (an m365 identity mints the devops audience,
 `owa-piggy --profile nc --audience devops`); `google` profiles get drive;
 `ado` profiles get `ado` and nothing else.
 
+When a profile's session needs interactive sign-in (owa-piggy exits 3, or an
+owa-* tool exits 11 for auth expired), ingest stops calling that profile for
+the rest of the run and reports each of its sources as failed with the
+`owa-piggy setup --profile <name>` hint. Other profiles carry on.
+
 #### Azure DevOps (`ado`)
 
 `ado_<profile>` shells out to `owa-ado` (org and project come from owa-ado's
@@ -335,6 +340,11 @@ yaams query --lang en "english content only"
   an alias for the internal `tier2_ledger`.
 - `--tier raw|ledger|both` restricts by tier. Explicit `--source` wins over
   `--tier`.
+- Ledger notes you archive or delete stop appearing. Each query compares the
+  stored `tier2_ledger` rows against the ledger's current `note_index.json`
+  and hides any note no longer in it (CLI and MCP; the rows themselves stay
+  in the append-only store). If the index is missing or empty, nothing is
+  hidden.
 - `--since` / `--until` take ISO timestamps.
 - `--lang no|en` restricts to items (and consolidations) in the given language.
   Language is detected at ingest time; run `yaams backfill-lang` once to

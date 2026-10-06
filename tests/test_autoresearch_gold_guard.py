@@ -26,7 +26,7 @@ _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "autoresearch_retrie
 def _load_harness():
   spec = importlib.util.spec_from_file_location("autoresearch_retrieval", _SCRIPT)
   mod = importlib.util.module_from_spec(spec)
-  assert spec.loader is not None
+  assert spec is not None and spec.loader is not None
   spec.loader.exec_module(mod)
   return mod
 

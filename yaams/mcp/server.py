@@ -121,12 +121,29 @@ def _log_auto_miss(cfg: dict, query_id: str) -> None:
     conn.close()
 
 
+def _release_device_memory() -> None:
+  """Hand the embedder's GPU memory back to the OS after a query.
+
+  The MCP server lives as long as its Claude session, and torch's MPS caching
+  allocator otherwise keeps ~3 GB of Metal memory per process after the model
+  is gone. The embedder is rebuilt per query anyway, so this costs nothing.
+  """
+  import gc
+
+  import torch
+
+  gc.collect()
+  if torch.backends.mps.is_available():
+    torch.mps.empty_cache()
+
+
 def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source: str) -> list:
   """Shared retrieval path: embed -> hybrid query -> attach trust verdicts."""
   from yaams.cli.query import (
     apply_exclude_junk_config,
     apply_recency_decay_config,
     apply_recency_lane_config,
+    apply_tier2_live_config,
   )
   from yaams.enrich import Embedder
 
@@ -134,6 +151,8 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   source_filter, exclude_ledger = _resolve_sources(tier, source)
   embedder = Embedder(**_embed_config(cfg), quiet=True)
   embedding = embedder.embed_batch([query_text])[0]
+  del embedder
+  _release_device_memory()
   qcfg = HybridQueryConfig(
     top_k=top_k, source_filter=source_filter, feedback_boost=_feedback_boost(cfg)
   )
@@ -142,6 +161,7 @@ def _run_text_query(cfg: dict, query_text: str, *, top_k: int, tier: str, source
   apply_exclude_junk_config(qcfg, cfg)
   conn = open_db(db_path, readonly=True)
   try:
+    apply_tier2_live_config(qcfg, cfg, conn)
     results = run_query(conn, query_text, embedding=embedding, config=qcfg)
     if exclude_ledger:
       results = [r for r in results if r.source != _LEDGER_SOURCE_ID]

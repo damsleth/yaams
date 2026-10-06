@@ -18,6 +18,11 @@ from yaams.store import store_items
 from yaams.trust import TrustVerdict
 
 
+def _verdict(r: HybridResult) -> TrustVerdict:
+  assert isinstance(r.trust, TrustVerdict)
+  return r.trust
+
+
 def _db() -> sqlite3.Connection:
   conn = sqlite3.connect(":memory:")
   conn.row_factory = sqlite3.Row
@@ -88,7 +93,7 @@ def test_provenance_weighting_distinguishes_sources():
   chat_id = _store(conn, "imessage", "chat note")
   results = [_result(email_id, "email", 0.9), _result(chat_id, "imessage", 0.9)]
   attach_trust_verdicts(results, conn, provenance_weighting_enabled=True)
-  by_id = {r.id: r.trust for r in results}
+  by_id = {r.id: _verdict(r) for r in results}
   # email (authored, 0.92) clears the high band; imessage (conversational,
   # 0.82) lands in medium.
   assert by_id[email_id].level == "high"
@@ -112,8 +117,8 @@ def test_feedback_counts_drive_verdict():
   log_feedback(conn, query_id=qid, kind="correction", result_id=iid)
   results = [_result(iid, "imessage", 0.9)]
   attach_trust_verdicts(results, conn, provenance_weighting_enabled=True)
-  assert results[0].trust.level == "low"
-  assert "contradicted" in results[0].trust.reason
+  assert _verdict(results[0]).level == "low"
+  assert "contradicted" in _verdict(results[0]).reason
 
 
 def test_trust_to_dict_shapes():

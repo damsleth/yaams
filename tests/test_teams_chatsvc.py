@@ -99,13 +99,14 @@ def test_channel_threads_are_skipped(thread_type):
   ingests them. 348e358 added `topic` but tested only the teams_channels half.
   """
   chat_id = "19:channelthread@thread.tacv2"
-  adapter = _adapter(
+  client = _FakeClient(
     [_chat(chat_id, thread_type)],
     {chat_id: [_msg(PEER_MRI, "Peer", "should never be read", mid="1")]},
   )
+  adapter = ChatsvcAdapter(profile="test", client=client)
   assert list(adapter.extract(datetime(2026, 7, 1, tzinfo=UTC))) == []
   # The messages endpoint must never even be requested.
-  assert not any("/messages" in u for u in adapter.client.requested)
+  assert not any("/messages" in u for u in client.requested)
 
 
 def test_streamof_aggregators_are_skipped():

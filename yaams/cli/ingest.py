@@ -38,13 +38,14 @@ from yaams.db import open_db
 from yaams.enrich.entities import detect_lang
 from yaams.ingest import Adapter, Item
 from yaams.ingest.agent_memory import AgentMemoryAdapter
+from yaams.ingest.base import reset_dead_profiles
 from yaams.ingest.calendar import CalendarAdapter
 from yaams.ingest.chats import ChatsAdapter
 from yaams.ingest.email_mbox import EmailAdapter
 from yaams.ingest.folder import FolderAdapter
 from yaams.ingest.github import GitHubAdapter
 from yaams.ingest.imessage import IMessageAdapter
-from yaams.ingest.ledger_notes import LedgerNotesAdapter
+from yaams.ingest.ledger_notes import LedgerNotesAdapter, index_path_for
 from yaams.ingest.m365_mail import M365MailAdapter
 from yaams.ingest.obsidian import ObsidianAdapter
 from yaams.ingest.outlook_app import OutlookCalendarAdapter, OutlookMailAdapter
@@ -178,6 +179,9 @@ def ingest(
         return src, None, [], started_at, fetch_ms, exc
 
     fetched: dict[str, tuple] = {}
+    # A profile that needed interactive sign-in in a previous run in this
+    # process (tests, `refresh`) gets a fresh chance.
+    reset_dead_profiles()
     if sources_planned:
       max_workers = min(8, len(sources_planned))
       if not as_json:
@@ -566,7 +570,7 @@ def ingest_source(
       inserted += process_batch(conn, batch, processors, dry_run=dry_run, reindex=reindex)
       batch = []
   if batch:
-    inserted += process_batch(conn, batch, processors, dry_run=dry_run)
+    inserted += process_batch(conn, batch, processors, dry_run=dry_run, reindex=reindex)
   # Advance the watermark past messages that were scanned but deliberately
   # skipped (e.g. newsletters) so wide date windows aren't re-walked every
   # run. Adapters that can't bound their scan leave scanned_through unset.
@@ -699,14 +703,14 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       raise ValueError(
         "folders source requires at least one enabled path under ingest.folders.paths"
       )
-    kwargs: dict = {"folder_paths": [Path(p) for p in active_paths]}
+    folder_kwargs: dict = {"folder_paths": [Path(p) for p in active_paths]}
     extensions = cfg.get("extensions")
     if extensions:
-      kwargs["extensions"] = tuple(extensions)
+      folder_kwargs["extensions"] = tuple(extensions)
     skip_dirs = cfg.get("skip_dirs")
     if skip_dirs:
-      kwargs["skip_dirs"] = set(skip_dirs)
-    return FolderAdapter(**kwargs)
+      folder_kwargs["skip_dirs"] = set(skip_dirs)
+    return FolderAdapter(**folder_kwargs)
   if source == "agent_memory":
     claude = cfg.get("claude_projects")
     codex = cfg.get("codex_memories")
@@ -725,12 +729,9 @@ def get_adapter(source: str, cfg: dict) -> Adapter:
       raise ValueError(
         "tier2_ledger source requires ingest.tier2_ledger.notes_path in config.yaml"
       )
-    index_path = cfg.get(
-      "index_path", str(Path(notes_path) / "08_indices" / "note_index.json")
-    )
     return LedgerNotesAdapter(
       notes_path=Path(notes_path),
-      index_path=Path(index_path),
+      index_path=cast(Path, index_path_for(cfg)),
     )
   if source == "outlook_calendar":
     return OutlookCalendarAdapter()

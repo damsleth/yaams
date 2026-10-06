@@ -31,10 +31,10 @@ def test_ledger_notes_cutoff_prepend_skip_and_stable_id(tmp_path):
   assert a.source == "tier2_ledger" and a.id == hash_id("tier2_ledger", "notes/02_facts/a.md")
 
 
-def test_ledger_notes_real_body_shape_gets_statement_prepended(tmp_path):
-  # ponytail: pins current behavior. Real bodies open "# Title\n\n## Statement",
-  # so the no-prepend branch never fires and the statement is indexed twice
-  # (extra BM25 weight). Changing it moves Tier 2 ranking: harness first.
+def test_ledger_notes_statement_doubling_is_deliberate(tmp_path):
+  # Real bodies open "# Title\n\n## Statement", so the statement is indexed
+  # twice (extra BM25 weight). Kept on purpose: removing it lost on the harness
+  # (experiments.jsonl `ledger_statement_dedup`, 2026-09-25).
   index = tmp_path / "note_index.json"
   body = "# Title\n\n## Statement\nGamma statement text"
   index.write_text(json.dumps({"entries": {"g": _entry("n/g.md", 2e9, "Gamma statement text", body)}}))

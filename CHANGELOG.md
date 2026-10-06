@@ -149,6 +149,12 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- First/last questions ("when did I last ...") count a consolidated thread the
+  user only received, not just ones they posted in: `consolidations.participants`
+  lists senders only, so the participant filter dropped group chats the user
+  read and the consolidated messages were unreachable. A consolidation now
+  also matches through its member items. Last-contact hit@1 0.77 -> 0.95; gold
+  unchanged (experiment 141).
 - `yaams ingest` stops using an owa-piggy profile for the rest of the run once
   it needs interactive sign-in (owa-piggy exit 3, or owa-* exit 11): no more
   per-call retries or token prewarm Edge launches for it, and each of its

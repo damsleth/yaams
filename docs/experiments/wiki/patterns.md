@@ -132,6 +132,10 @@ any one alone measures as zero.
   (NER orgs/places are phrases, and promotion is a hard filter). Duplicate
   person entities now cost recall directly; merge them rather than relaxing
   the canonical-first linking.
+- Consolidations hide their raw items, so every filter must reach a
+  consolidation the way it reaches an item: `participants` lists senders
+  only, and matching it alone made threads the owner only received
+  unreachable (seq 141: 0.77 -> 0.95 once matched through member items).
 - Implication: judge entity/person work on the last-contact eval, not the
   gold-set quality scalar; a neutral gold delta is the non-regression check,
   not the verdict.

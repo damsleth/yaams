@@ -603,6 +603,12 @@ def _resolve_participant_allowlist(
   cons_ids: set[str] = {
     r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
   }
+  # consolidations.participants lists senders only, so a thread the user only
+  # received (a group chat they read) also matches through its member items.
+  # ponytail: Python scan of every consolidation; an index table if it shows in p95
+  for cid, raw in conn.execute("SELECT id, raw_item_ids FROM consolidations"):
+    if cid not in cons_ids and any(i in item_ids for i in json.loads(raw or "[]")):
+      cons_ids.add(cid)
   return item_ids, cons_ids
 
 

@@ -88,14 +88,25 @@ def test_occurrence_lane_prefers_participation_over_mentions():
   conn.execute("INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'dictionary')",
                (note.id, eid))
   cfg = HybridQueryConfig(top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"],
-                          occurrence_browse=True)
+                          occurrence_browse=True, occurrence_contact=True)
   assert query(conn, "zzz", config=cfg)[0].id == chat.id
-  # "first" keeps mentions: an older note about Bob still counts
   older = _make_item(source="notes", sender="me", content="met Bob", ts=base - timedelta(days=9), msg_id="old")
   store_items(conn, [older], [b"\x00" * 16], [[]])
   conn.execute("INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'dictionary')",
                (older.id, eid))
-  assert query(conn, "zzz", config=replace(cfg, sort="asc"))[0].id == older.id
+  # "first spoke with" skips the older mention; "first heard about" counts it
+  assert query(conn, "zzz", config=replace(cfg, sort="asc"))[0].id == chat.id
+  assert query(conn, "zzz", config=replace(cfg, sort="asc", occurrence_contact=False))[0].id == older.id
+
+
+def test_contact_verbs_vs_hearsay():
+  base = HybridQueryConfig()
+  def contact(raw: str, shape: str = "first_occurrence") -> bool:
+    return route(_parsed(raw=raw, shape=shape, entities=["Anne Hjort"]), base).occurrence_contact
+  assert contact("when did I first speak with Anne Hjort?")
+  assert contact("når snakket jeg sist med Anne Hjort?", "last_occurrence")
+  assert not contact("when did I first hear about Anne Hjort?")
+  assert not contact("når hørte jeg første gang om Anne Hjort?")
 
 
 def test_received_only_consolidation_counts_as_participation():

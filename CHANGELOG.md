@@ -16,22 +16,29 @@ surface; pin to a specific version if you need stability.
   on by default:
   - Participant links: every ingest links its new items to the people who
     sent or received them (`yaams.enrich.participants`, `item_entities.source
-    = 'participant'`, exact match on person names and aliases; envelope
-    `stats.participant_links`). NER only tags content, so a message from or to
-    someone was never linked to them. One-off history backfill:
-    `scripts/link_participants.py --live`.
-  - Name promotion in `parse_query`: an exact 2-4 word person/org/place name
-    or alias in the question becomes an entity even when it is outside the
-    top-40 the LLM is shown (it used to fall through as a topic term).
-  - Occurrence lane (`HybridQueryConfig.occurrence_browse`, default on): a
-    first/last query with an entity filter also lists the allowlisted items
-    and consolidations nearest the sort end, exempt from the relevance floor.
-    Allowlists only post-filtered the text-retrieved pool, so X's newest
-    messages, which share no words with the question, never became
-    candidates. A participant filter alone does not trigger it.
-  Last-contact hit@1 0.07 -> 0.82 (44 cases, 22 people, EN+NB); gold dev
-  +0.0013 with 0 rank-1 regressions, test unchanged (experiments 134-137,
-  wiki P7).
+    = 'participant'`, exact match on person names and aliases; a canonical
+    name beats another person's alias, an alias two people share links
+    nobody; envelope `stats.participant_links`). NER only tags content, so a
+    message from or to someone was never linked to them. One-off history
+    backfill: `scripts/link_participants.py --live`. A retag or reindex keeps
+    participant links.
+  - Name promotion in `parse_query`: an exact 2-4 word name or alias in the
+    question becomes an entity even when it is outside the top-40 the LLM is
+    shown (it used to fall through as a topic term). Only curated entities
+    (`pending_review = 0`) and people with participant links qualify:
+    NER-discovered orgs/places are mostly phrases, and promotion makes a hard
+    filter.
+  - Occurrence lane (`HybridQueryConfig.occurrence_browse`): route turns it on
+    for a first/last question with an entity filter and no topic words beyond
+    names and contact verbs (`route.CONTACT_WORDS`). It lists the
+    allowlisted items and consolidations nearest the sort end, exempt from
+    the relevance floor. Allowlists only post-filtered the text-retrieved
+    pool, so X's newest messages, which share no words with the question,
+    never became candidates. "When did I last discuss the budget with X"
+    keeps relevance in charge.
+  Last-contact hit@1 0.07 -> 0.77 (44 cases, 22 people, EN+NB, on a fixture
+  copy seeded and linked like live ingest); gold dev +0.0013 with 0 rank-1
+  regressions, test unchanged (experiments 134-138, wiki P7).
 - Person-recall tooling: `scripts/last_contact_eval.py` (mechanical
   last-contact eval, `build` / `run`, replayed as of the ask time; the
   consolidation holding the answer counts), `scripts/reparse_fallback_golds.py`.
@@ -42,9 +49,13 @@ surface; pin to a specific version if you need stability.
   `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the
   10-39 char messaging band `llm:junk-jeff` at `threshold` (0.73). A missing
   model server is skipped with a note (or started from `serve_cmd` and
-  stopped after); gold answers are never hidden; scores are cached. The
-  ingest envelope's `stats.junk.model` reports server start, scoring time and
-  rows/s.
+  stopped after); gold answers are never hidden, by any rule; scores are
+  cached. `junk_model.timeout_s` (120) bounds a request and
+  `junk_model.deadline_s` (900) the pass: no new batch after it or after a
+  failed one, the rest waits for the next run. A failing junk or
+  participant pass is reported in the envelope and never aborts the ingest.
+  The ingest envelope's `stats.junk.model` reports server start, scoring time
+  and rows/s.
   `yaams.jev.noul` takes per-call `url`/`model`/`cache_model`. The row
   rendering moved to `yaams.quality.junk_block` and is shared with the
   fine-tune scripts (byte-identical on 500 training rows).

@@ -554,7 +554,8 @@ def test_occurrence_browse_surfaces_newest_linked_item_without_text_match():
   conn.commit()
 
   cfg = HybridQueryConfig(
-    top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"]
+    top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"],
+    occurrence_browse=True,
   )
   off = replace(cfg, occurrence_browse=False)
   assert newest.id not in {r.id for r in query(conn, "speak with Bob Smith", config=off)}
@@ -572,7 +573,8 @@ def test_occurrence_browse_needs_an_entity_filter():
   newest = _make_item(sender="me", content="ok, ses i morgen", ts=base + timedelta(days=9), msg_id="new")
   store_items(conn, [hit, newest], [b"\x00" * 16] * 2, [[]] * 2)
   cfg = HybridQueryConfig(
-    top_k=5, sort="desc", include_consolidations=False, participant_filter=["me"]
+    top_k=5, sort="desc", include_consolidations=False, participant_filter=["me"],
+    occurrence_browse=True,
   )
   ids = [r.id for r in query(conn, "budget", config=cfg)]
   assert ids == [hit.id]

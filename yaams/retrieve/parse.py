@@ -130,45 +130,64 @@ def parse_query(
   return parsed
 
 
+def _norm_phrase(value: object) -> str:
+  return " ".join(str(value).lower().split())
+
+
 def promotion_map(conn: sqlite3.Connection) -> dict[str, str]:
-  """Lowercased 2-4 word person/org/place names and aliases -> canonical name."""
+  """Lowercased 2-4 word names and aliases -> canonical name, for entities that are
+  curated (pending_review = 0) or people seen as a message sender/recipient.
+
+  NER-discovered orgs/places are mostly phrases ("Ett steg frem", "Office 365"),
+  and promotion makes a hard filter, so they never qualify. A canonical name wins
+  over another entity's alias; an alias shared by two entities is dropped."""
   # ponytail: exact multi-word matches only; single names ("Fredrik") are too ambiguous
-  out: dict[str, str] = {}
   try:
     rows = conn.execute(
-      "SELECT canonical_name, aliases FROM entities WHERE entity_type IN ('person', 'org', 'place')"
+      """
+      SELECT canonical_name, aliases FROM entities e
+      WHERE (pending_review = 0 AND entity_type IN ('person', 'org', 'place'))
+         OR (pending_review = 1 AND entity_type = 'person' AND EXISTS (
+               SELECT 1 FROM item_entities ie WHERE ie.entity_id = e.id AND ie.source = 'participant'))
+      """
     ).fetchall()
   except sqlite3.DatabaseError:
-    return out
+    return {}
+  canon: dict[str, str] = {}
+  alias: dict[str, set[str]] = {}
   for name, aliases in rows:
+    canon.setdefault(_norm_phrase(name), name)
     try:
       alias_list = json.loads(aliases or "[]")
     except (TypeError, ValueError):
       alias_list = []
-    for key in (name, *alias_list):
-      k = " ".join(str(key).lower().split())
-      if 2 <= len(k.split()) <= 4:
-        out.setdefault(k, name)
-  return out
+    for a in alias_list if isinstance(alias_list, list) else []:
+      if isinstance(a, str):
+        alias.setdefault(_norm_phrase(a), set()).add(name)
+  out = {k: next(iter(v)) for k, v in alias.items() if len(v) == 1}
+  out.update(canon)
+  return {k: v for k, v in out.items() if 2 <= len(k.split()) <= 4}
 
 
 def promote_entities(parsed: ParsedQuery, names: dict[str, str]) -> None:
   """Add exact multi-word names from the query text that the parse left out.
 
   The prompt lists only the top-N entities, so the LLM turns every long-tail name
-  into a topic term; a promoted name becomes an entity (and leaves topic_terms),
-  which route turns into an entity filter."""
+  into a topic term; a promoted name becomes an entity (and it and the matched
+  phrase leave topic_terms), which route turns into an entity filter."""
   words = parsed.raw.lower().replace("?", " ").replace(",", " ").split()
   found: list[str] = []
+  drop: set[str] = set()
   for n in (4, 3, 2):
     for i in range(len(words) - n + 1):
-      canon = names.get(" ".join(words[i:i + n]))
+      phrase = " ".join(words[i:i + n])
+      canon = names.get(phrase)
       if canon and canon not in found and canon not in parsed.entities:
         found.append(canon)
+        drop |= {phrase, _norm_phrase(canon)}
   if found:
-    lowered = {f.lower() for f in found}
     parsed.entities = [*parsed.entities, *found]
-    parsed.topic_terms = [t for t in parsed.topic_terms if t.lower() not in lowered]
+    parsed.topic_terms = [t for t in parsed.topic_terms if _norm_phrase(t) not in drop]
 
 
 def _parse_llm(
@@ -367,7 +386,7 @@ def _rows_to_resolver(rows) -> EntityResolver:
         alias_list = json.loads(raw_aliases)
       except (TypeError, ValueError):
         alias_list = []
-      for alias in alias_list:
+      for alias in alias_list if isinstance(alias_list, list) else []:
         if isinstance(alias, str) and alias.strip():
           aliases[alias.strip().lower()] = canon
   return EntityResolver(aliases, canonical)

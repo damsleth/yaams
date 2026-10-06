@@ -77,7 +77,7 @@ def _log_usage(row: dict) -> None:
     f.write(json.dumps(row) + "\n")
 
 
-def _post(body: dict, tag: str, url: str | None = None) -> dict | None:
+def _post(body: dict, tag: str, url: str | None = None, timeout: float = 300) -> dict | None:
   """One request with retry on 429/529/5xx. None after retries; 4xx raises."""
   data = json.dumps(body).encode()
   url = url or URL
@@ -89,7 +89,7 @@ def _post(body: dict, tag: str, url: str | None = None) -> dict | None:
     try:
       with _inflight:
         t0 = time.perf_counter()  # after the in-flight wait: latency is the request only
-        with urllib.request.urlopen(req, timeout=300) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
           resp = json.loads(r.read())
           rid = r.headers.get("x-request-id") or r.headers.get("request-id")
           ms = (time.perf_counter() - t0) * 1000
@@ -187,13 +187,16 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
          tag: str, workers: int = 8, max_questions: int = MAX_QUESTIONS,
          max_tokens: int = MAX_TOKENS, use_cache: bool = True,
          stats: dict | None = None, url: str | None = None, model: str | None = None,
-         cache_model: str | None = None) -> dict[str, float]:
+         cache_model: str | None = None, timeout: float = 300,
+         deadline_s: float | None = None) -> dict[str, float]:
   """Score each item text against `criterion` given `state`. A failed id is
   missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
   criterion=None sends no per-question `criteria`: put it in `state` once instead.
   `url`/`model` override the module defaults per call; `cache_model` names the
   scores in the cache when `model` is an alias (a local Jeff answers to
-  `jeff-latest` whichever checkpoint it serves)."""
+  `jeff-latest` whichever checkpoint it serves). With `deadline_s` (an unattended
+  caller), batches not started by then, or after any batch fails, are skipped:
+  their ids stay missing and the next run retries them."""
   use_cache = use_cache and os.environ.get("YAAMS_JEV_NO_CACHE") != "1"
   model = model or MODEL
   texts = {k: v[:MAX_CHARS] for k, v in items.items()}
@@ -208,11 +211,19 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
   state_tok = est_tokens(json.dumps(state, ensure_ascii=False))
   batches = pack(todo, state_tok, criterion, max_questions, max_tokens)
 
+  end = None if deadline_s is None else time.monotonic() + deadline_s
+  stop = threading.Event()
+
   def run(batch: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], dict | None]:
+    if stop.is_set() or (end is not None and time.monotonic() > end):
+      return batch, None
     # question ids are positional: ids never reach the model, and item ids can be long
     crit = {"criteria": {"true": criterion}} if criterion else {}
     qs = {f"q{i}": {"type": "noul", "instructions": t, **crit} for i, (_, t) in enumerate(batch)}
-    return batch, _post({"model": model, "state": state, "questions": qs}, tag, url)
+    resp = _post({"model": model, "state": state, "questions": qs}, tag, url, timeout)
+    if resp is None and end is not None:
+      stop.set()
+    return batch, resp
 
   with ThreadPoolExecutor(max_workers=workers) as ex:
     for batch, resp in ex.map(run, batches):

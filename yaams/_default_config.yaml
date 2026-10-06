@@ -302,6 +302,8 @@ quality:
     threshold: 0.73
     since: null
     serve_cmd: null
+    timeout_s: 120
+    deadline_s: 900
 
 # Retrieval tuning.
 retrieve:

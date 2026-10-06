@@ -221,6 +221,8 @@ quality:
     cache_model: jeff-junk-v2     # names the scores in the cache; change per checkpoint
     threshold: 0.73               # picked on the owner's tune labels, 2026-10-02
     since: null                   # only rows ingested at/after this ISO date
+    timeout_s: 120                # per request
+    deadline_s: 900               # no new batch after this, or after a failed one; the rest waits for next run
     # Start a server for the pass when none is running (stopped afterwards):
     # serve_cmd: env JEFF_BACKEND=mlx JEFF_CHECKPOINT=/path/to/checkpoints/yaams-junk-v2 PORT=8766 /path/to/jeff/.venv/bin/jeff-serve
 

@@ -108,7 +108,7 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
 _PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
-_OCCURRENCE_BROWSE = True  # --no-occurrence-browse turns HybridQueryConfig.occurrence_browse off
+_OCCURRENCE_BROWSE = True  # --no-occurrence-browse overrides route() turning the lane on
 
 
 def _load_promotions(conn) -> None:
@@ -249,7 +249,8 @@ def _replay_one(
     else:
         qcfg = base
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
-    qcfg.occurrence_browse = _OCCURRENCE_BROWSE
+    if not _OCCURRENCE_BROWSE:
+        qcfg.occurrence_browse = False
     if feedback_boost:
         qcfg.feedback_boost = True
         # Leave-one-out: this gold query must not boost its own gold doc via its

@@ -32,17 +32,24 @@ def link_participants(
   since: datetime | None = None,
 ) -> dict[str, int]:
   """Link participants of items ingested at/after ``since`` (all items when None)."""
-  lookup: dict[str, int] = {}
+  # A canonical name wins over another person's alias; an alias two people share
+  # ("Alex") links neither, since a wrong confidence-1.0 link becomes a hard filter.
+  canon: dict[str, int] = {}
+  alias: dict[str, set[int]] = {}
   for eid, name, aliases in conn.execute(
-    "SELECT id, canonical_name, aliases FROM entities WHERE entity_type = 'person'"
+    "SELECT id, canonical_name, aliases FROM entities WHERE entity_type = 'person' AND pending_review != 2"
   ):
+    if k := _norm(name):
+      canon.setdefault(k, eid)
     try:
       alias_list = json.loads(aliases or "[]")
     except (TypeError, ValueError):
       alias_list = []
-    for key in (name, *alias_list):
-      if k := _norm(key):
-        lookup.setdefault(k, eid)
+    for a in alias_list if isinstance(alias_list, list) else []:
+      if k := _norm(a):
+        alias.setdefault(k, set()).add(eid)
+  lookup = {k: next(iter(v)) for k, v in alias.items() if len(v) == 1}
+  lookup.update(canon)
   skip = {_norm(s) for s in self_identities} | {"me"}
   rows = conn.execute(
     "SELECT id, sender, recipients FROM items WHERE (? IS NULL OR ingested_at >= ?)",

@@ -49,11 +49,15 @@ def _ids(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[str]:
 
 
 def _set_reason(conn: sqlite3.Connection, ids: list[str], reason: str) -> int:
+  """Annotate `ids`, except an item that was ever a hit/correction answer: no rule,
+  mechanical or model, may hide a gold answer."""
   n = 0
   for chunk in chunked(ids):
     placeholders = ",".join("?" * len(chunk))
     cur = conn.execute(
-      f"UPDATE items SET junk_reason = ? WHERE junk_reason IS NULL AND id IN ({placeholders})",
+      f"UPDATE items SET junk_reason = ? WHERE junk_reason IS NULL AND id IN ({placeholders}) "
+      "AND id NOT IN (SELECT result_id FROM query_feedback "
+      "WHERE kind IN ('hit', 'correction') AND result_id IS NOT NULL)",
       (reason, *chunk),
     )
     n += cur.rowcount
@@ -244,7 +248,9 @@ def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bo
     scores = jev.noul(cfg.get("state", MODEL_STATE), texts, MODEL_CRITERION,
                       criterion_version=cfg.get("criterion_version", "junk-owner-v2"),
                       tag="ingest_junk", workers=1, url=url, model=cfg.get("model", "jeff-latest"),
-                      cache_model=cfg.get("cache_model", "jeff-junk-v2"))
+                      cache_model=cfg.get("cache_model", "jeff-junk-v2"),
+                      timeout=float(cfg.get("timeout_s", 120)),
+                      deadline_s=float(cfg.get("deadline_s", 900)))
   except Exception as exc:  # noqa: BLE001 -- the junk pass must never fail an ingest
     stats["note"] = f"skipped: {exc}"
     return stats

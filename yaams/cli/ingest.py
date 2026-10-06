@@ -316,14 +316,22 @@ def ingest(
     if not dry_run:
       from yaams.enrich.participants import link_participants
 
-      participant_links = link_participants(conn, _self_identities(cfg), since=run_started_at)
+      try:
+        participant_links = link_participants(conn, _self_identities(cfg), since=run_started_at)
+      except Exception as exc:  # noqa: BLE001 -- sources are committed; this pass is optional
+        conn.rollback()
+        participant_links = {"linked": 0, "error": str(exc)}
     # Junk annotation (quality.annotate_on_ingest): mechanical rules, then the
     # optional junk model. Off by default; never fails the ingest.
     junk_stats = None
     if not dry_run:
       from yaams.quality import annotate_on_ingest
 
-      junk_stats = annotate_on_ingest(conn, cfg)
+      try:
+        junk_stats = annotate_on_ingest(conn, cfg)
+      except Exception as exc:  # noqa: BLE001 -- e.g. a write lock held past the timeout
+        conn.rollback()
+        junk_stats = {"error": str(exc)}
     total_duration_ms = (time.perf_counter() - total_start) * 1000
     if as_json:
       envelope, exit_code = _build_ingest_envelope(
@@ -360,13 +368,16 @@ def ingest(
       total_duration_ms=total_duration_ms,
       entity_cleanup=entity_cleanup,
     )
-    if participant_links and participant_links["linked"]:
+    if participant_links and participant_links.get("error"):
+      click.echo(f"  Participant links: skipped ({participant_links['error']})")
+    elif participant_links and participant_links["linked"]:
       click.echo(f"  Participant links: {participant_links['linked']:,} new")
     if junk_stats is not None:
       model = junk_stats.get("model") or {}
       counts = {k: v for k, v in {**junk_stats, **model}.items() if k.startswith(("mech:", "llm:"))}
       click.echo("  Junk annotated: " + (", ".join(f"{k} {v:,}" for k, v in counts.items()) or "nothing new")
-                 + (f" ({model['note']})" if model.get("note") else ""))
+                 + (f" ({model['note']})" if model.get("note") else "")
+                 + (f" (skipped: {junk_stats['error']})" if junk_stats.get("error") else ""))
     summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
     if summary is not None:
       _print_summary(summary)

@@ -132,6 +132,12 @@ any one alone measures as zero.
   (NER orgs/places are phrases, and promotion is a hard filter). Duplicate
   person entities now cost recall directly; merge them rather than relaxing
   the canonical-first linking.
+- "Spoke with" is a conversation, not co-membership (seq 148): the owner's
+  own labels are 1:1 chats, and a 24-person duty group or an unanswered
+  broadcast beat them on a newest-first sort. Build eval answer keys with the
+  retrieval rule itself (`conversation_items`) so the two cannot drift, and
+  check `identity.self` first: a missing work address silently drops a whole
+  account from every first/last question.
 - Consolidations hide their raw items, so every filter must reach a
   consolidation the way it reaches an item: `participants` lists senders
   only, and matching it alone made threads the owner only received

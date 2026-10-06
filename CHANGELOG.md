@@ -46,10 +46,19 @@ surface; pin to a specific version if you need stability.
   copy seeded and linked like live ingest); gold dev +0.0013 with 0 rank-1
   regressions, test unchanged (experiments 134-138, wiki P7).
 - Person-recall tooling: `scripts/last_contact_eval.py` (mechanical
-  last-contact eval, `build` / `run`, replayed as of the ask time; the
-  consolidation holding the answer counts), `scripts/reparse_fallback_golds.py`.
-  Harness flags `--promote-entities` (stored parses predate promotion),
-  `--no-occurrence-browse`, `--parse-mode` and `--parse-override`.
+  last/first-contact eval, `build --kind last|first` / `run`, replayed as of
+  the ask time; the consolidation holding the answer counts),
+  `scripts/reparse_fallback_golds.py`. Harness flags
+  `--no-promote-entities`, `--no-occurrence-browse`, `--parse-mode` and
+  `--parse-override`.
+- Eval era 3 (`42 gold curated + participant links (oct06)`): the frozen
+  fixture now carries the current entity dictionary and 133,221 participant
+  links, as live ingest does, and the harness promotes names on replay by
+  default, so harness runs measure the production retrieval path. Same gold
+  set; anchors dev 0.5296 / test 0.5083 (era 2: 0.5283 / 0.5083). The
+  manifest records `participant_links` and `autoresearch_freeze.py --check`
+  compares it. Era 2 fixture kept at
+  `~/brain/feed/eval/autoresearch_fixture_era2-2026-10-06.db`.
 - Junk annotation on ingest (`quality.annotate_on_ingest`, off by default):
   after every `yaams ingest`, the mechanical junk rules run, and with
   `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the

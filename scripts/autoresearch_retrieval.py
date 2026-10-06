@@ -107,7 +107,7 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 
 
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
-_PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
+_PROMOTE: dict[str, str] = {}  # lowercased multi-word name/alias -> canonical (off: --no-promote-entities)
 _OCCURRENCE_BROWSE = True  # --no-occurrence-browse overrides route() turning the lane on
 
 
@@ -307,8 +307,8 @@ def _mode_label(args) -> str:
         base = f"{base}+parse:{args.parse_mode}"
     if getattr(args, "parse_override", None):
         base = f"{base}+reparse"
-    if getattr(args, "promote_entities", False):
-        base = f"{base}+promote"
+    if getattr(args, "no_promote_entities", False):
+        base = f"{base}+no-promote"
     if getattr(args, "no_occurrence_browse", False):
         base = f"{base}+no-occbrowse"
     return base
@@ -350,8 +350,9 @@ def main() -> int:
                     help="write per-gold ranks {query_id: rank|null} as JSON to this path")
     ap.add_argument("--parse-override", default=None,
                     help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
-    ap.add_argument("--promote-entities", action="store_true",
-                    help="Promote exact multi-word dictionary names in the query text to entities")
+    ap.add_argument("--no-promote-entities", action="store_true",
+                    help="Replay stored parses without name promotion (production promotes in "
+                         "parse_query; the stored parses predate it, so replays promote by default)")
     ap.add_argument("--no-occurrence-browse", action="store_true",
                     help="Disable the occurrence lane (on by default, as in production)")
     args = ap.parse_args()
@@ -378,7 +379,7 @@ def main() -> int:
     status = "ok"
     try:
         conn = open_db(db_path, readonly=True)
-        if args.promote_entities:
+        if not args.no_promote_entities:
             _load_promotions(conn)
         gold, n_miss, n_miss_zero = _load_gold(conn)
         junk_gold = _junk_gold(conn, gold)

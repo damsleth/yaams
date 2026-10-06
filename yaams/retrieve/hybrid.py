@@ -104,6 +104,9 @@ class HybridQueryConfig:
   # question (the index lanes are text matches, filtered after the fact). Lane
   # items are exempt from relevance_floor: the allowlist is their relevance.
   occurrence_browse: bool = False
+  # With occurrence_browse: the question is about contact ("last spoke with",
+  # "first met"), so a person's participant links replace their mention links.
+  occurrence_contact: bool = False
   # Query shape forwarded from ParsedQuery so _hydrate_item can gate
   # shape-specific credits (e.g. tier2_factual_coverage_recovery).
   query_shape: str = "factual"
@@ -384,13 +387,13 @@ def query(
   # about the budget") would list the owner's newest messages on any topic.
   if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and item_allow is not None:
     items, cons = item_allow, cons_allow or set()
-    # "Last" with someone the owner exchanges messages with: contact means a message
-    # they sent or received, not a note that mentions them (or a one-word alias like
-    # "Jan"). "First" keeps mentions: "when did I first hear about X" predates any
-    # message. Entities without participant links (orgs, projects) keep every link.
+    # Contact with someone the owner exchanges messages with (route sets
+    # occurrence_contact) means a message they sent or received, not a note that
+    # mentions them (or a one-word alias like "Jan"). "When did I first hear about X"
+    # keeps mentions. Entities without participant links (orgs, projects) keep all.
     p_items, p_cons = (
       _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
-      if cfg.sort == "desc" else (set(), set())
+      if cfg.occurrence_contact else (set(), set())
     )
     if p_items:
       items, cons = p_items, p_cons

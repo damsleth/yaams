@@ -384,10 +384,14 @@ def query(
   # about the budget") would list the owner's newest messages on any topic.
   if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and item_allow is not None:
     items, cons = item_allow, cons_allow or set()
-    # Someone the owner exchanges messages with: contact means a message they sent
-    # or received, not a note that mentions them (or a one-word alias like "Jan").
-    # Entities without participant links (orgs, projects) keep every link.
-    p_items, p_cons = _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
+    # "Last" with someone the owner exchanges messages with: contact means a message
+    # they sent or received, not a note that mentions them (or a one-word alias like
+    # "Jan"). "First" keeps mentions: "when did I first hear about X" predates any
+    # message. Entities without participant links (orgs, projects) keep every link.
+    p_items, p_cons = (
+      _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
+      if cfg.sort == "desc" else (set(), set())
+    )
     if p_items:
       items, cons = p_items, p_cons
       hydrated = [r for r in hydrated if r.id in items or r.id in cons]

@@ -26,7 +26,10 @@ from yaams.config import load_config  # noqa: E402
 from yaams.db import open_db  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
-TEMPLATES = {"en": "when did I last speak with {}?", "nb": "når snakket jeg sist med {}?"}
+TEMPLATES = {
+  "last": {"en": "when did I last speak with {}?", "nb": "når snakket jeg sist med {}?"},
+  "first": {"en": "when did I first speak with {}?", "nb": "når snakket jeg med {} for første gang?"},
+}
 
 
 def build(a):
@@ -50,24 +53,28 @@ def build(a):
     return any(str(p).strip().lower() in selfs_all for p in people)
 
   selfs_all = selfs | {"me"}
+  corpus_end = parse_iso_datetime(conn.execute("SELECT max(timestamp) FROM items").fetchone()[0])
+  first = a.kind == "first"
   for eid, name, n in pick:
     direct = [r for r in conn.execute(
       "SELECT i.id, i.thread_id, i.timestamp FROM item_entities ie JOIN items i ON i.id = ie.item_id "
-      "WHERE ie.entity_id = ? AND ie.source = 'participant' ORDER BY i.timestamp DESC", (eid,)) if with_owner(r[0])]
+      "WHERE ie.entity_id = ? AND ie.source = 'participant' ORDER BY i.timestamp " + ("ASC" if first else "DESC"),
+      (eid,)) if with_owner(r[0])]
     if not direct:
       print(f"{name!r}: no direct conversation with the owner, skipped")
       continue
-    last = direct[0]
-    t_last = parse_iso_datetime(last[2])
-    window_start = (t_last - timedelta(hours=2)).isoformat()
-    ok = [r[0] for r in direct if r[1] == last[1] and window_start <= r[2] <= last[2]]
-    ask = t_last + timedelta(days=1)
-    for lang, tpl in TEMPLATES.items():
+    anchor = direct[0]
+    t = parse_iso_datetime(anchor[2])
+    lo, hi = (anchor[2], (t + timedelta(hours=2)).isoformat()) if first else ((t - timedelta(hours=2)).isoformat(), anchor[2])
+    ok = [r[0] for r in direct if r[1] == anchor[1] and lo <= r[2] <= hi]
+    # "first" is a historical question asked at the corpus edge; "last" the day after
+    ask = corpus_end + timedelta(days=1) if first else t + timedelta(days=1)
+    for lang, tpl in TEMPLATES[a.kind].items():
       text = tpl.format(name)
       parsed = parse_query(text, llm, conn, now=ask)
-      cases.append({"query_id": f"lc:{eid}:{lang}", "person": name, "lang": lang, "text": text,
-                    "ts": ask.isoformat(), "parsed_query": parsed.to_json(), "acceptable": ok,
-                    "latest": last[0], "participant_msgs": n})
+      cases.append({"query_id": f"{'fc' if first else 'lc'}:{eid}:{lang}", "kind": a.kind, "person": name,
+                    "lang": lang, "text": text, "ts": ask.isoformat(), "parsed_query": parsed.to_json(),
+                    "acceptable": ok, "latest": anchor[0], "participant_msgs": n})
       print(f"{name!r} [{lang}] shape={json.loads(parsed.to_json())['shape']} "
             f"entities={json.loads(parsed.to_json())['entities']} ok={len(ok)}", flush=True)
   Path(a.out).write_text("\n".join(json.dumps(c, ensure_ascii=False) for c in cases) + "\n")
@@ -123,14 +130,15 @@ def run(a):
 
 
 def _newer_link(conn, item_id, c):
-  """Top-1 is not in the answer key but is linked to the person and newer than their last
-  direct conversation (a note or meeting that mentions them): a key disagreement, not a miss."""
+  """Top-1 is not in the answer key but is linked to the person and beyond their last (or
+  before their first) direct conversation, e.g. a note that mentions them: a key
+  disagreement, not a miss."""
   row = conn.execute(
     "SELECT i.timestamp FROM items i JOIN item_entities ie ON ie.item_id = i.id "
     "JOIN entities e ON e.id = ie.entity_id WHERE i.id = ? AND e.canonical_name = ?",
     (item_id, c["person"])).fetchone()
-  return bool(row) and row[0] > conn.execute(
-    "SELECT timestamp FROM items WHERE id = ?", (c["latest"],)).fetchone()[0]
+  anchor = conn.execute("SELECT timestamp FROM items WHERE id = ?", (c["latest"],)).fetchone()[0]
+  return bool(row) and (row[0] < anchor if c.get("kind") == "first" else row[0] > anchor)
 
 
 def main():
@@ -141,6 +149,7 @@ def main():
   b.add_argument("--out", required=True)
   b.add_argument("--n", type=int, default=30)
   b.add_argument("--min-msgs", type=int, default=15)
+  b.add_argument("--kind", choices=sorted(TEMPLATES), default="last")
   r = sub.add_parser("run")
   r.add_argument("--cases", required=True)
   r.add_argument("--db", required=True)

@@ -50,6 +50,9 @@ CONTACT_WORDS = frozenset("""
   kontakt kontaktet ringe ringte ringt skrive skrev skrevet melding meldinger
   samtale chatte chattet
 """.split())
+# ...unless the question is about hearing of them rather than talking to them
+# ("when did I first hear about X"): then a note that mentions X counts too.
+HEARSAY_WORDS = frozenset("hear heard mention mentioned høre hørte hørt nevne nevnt nevnte".split())
 
 
 def route(
@@ -129,6 +132,7 @@ def route(
 
   if parsed.shape in OCCURRENCE_SHAPES and cfg.entity_filter and _topic_free(parsed):
     cfg.occurrence_browse = True
+    cfg.occurrence_contact = not (set(re.findall(r"\w+", parsed.raw.lower())) & HEARSAY_WORDS)
   return cfg
 
 

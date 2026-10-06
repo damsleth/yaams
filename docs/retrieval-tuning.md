@@ -19,7 +19,9 @@ a worktree is silently lost.
 
 | Thing | Where | Set by |
 |---|---|---|
-| Frozen fixture (SQLite copy of the store, 42 gold) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
+| Frozen fixture (SQLite copy of the store, 42 gold; era 3: current dictionary seeded + 133,221 participant links) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
+| Era 2 fixture backup (same gold, no participant links, older dictionary) | `~/brain/feed/eval/autoresearch_fixture_era2-2026-10-06.db` | this page, section 1 |
+| Person-recall cases (last/first contact, 44 + 52) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
 | Manifest (fixture path, `source_db`, `gold_hash`, `gold_queries`, `corrections`, `total_queries`) | `scripts/autoresearch_scenario.json` | `scripts/autoresearch_freeze.py:33,81-88` |
 | Era label new experiment rows are tagged with | `docs/experiments/CURRENT_ERA` | you, by hand |
 | Era 1 fixture backup (79 gold, pre-curation) | `~/brain/feed/eval/autoresearch_fixture_pre-curation-2026-09-17.db` | `.plans/done/data-quality.md` "Promotion 2026-09-17" |
@@ -109,8 +111,8 @@ live setting):
 cd /Users/damsleth/code/yaams
 .venv/bin/python scripts/autoresearch_freeze.py --check
 rm -f scripts/.autoresearch_state.json
-.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era2-anchor-nojunk
-.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era2-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era3-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era3-anchor-nojunk
 ```
 
 Recorded runs (no `--no-write`) append to `scripts/autoresearch_results.tsv`,
@@ -183,18 +185,22 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
   retrieval gap.
 - **Person/entity work** is invisible to the gold set (4 person-name queries
   of 38, wiki P7). Use the gold run only as the non-regression check, and
-  judge it on `scripts/last_contact_eval.py run --cases <cases.jsonl> --db
-  <copy> --promote-entities`, for both directions: build cases with
-  `build --kind last` and `--kind first` (a change that helps "last" can
-  cost "first", wiki P7). Production promotes names in the parser, but
-  stored parses predate that, so replays need `--promote-entities` to match
-  production; route turns the occurrence lane on as in production
-  (`--no-occurrence-browse` for the anchor). The frozen fixture has no
-  participant links and an older entity dictionary, so a production-faithful
-  run uses a copy that is first seeded with the current dictionary
-  (`yaams.store.seed_entities`, as every ingest does) and then linked with
-  `scripts/link_participants.py --db <copy>`; linking without the seed finds
-  about a quarter of the links.
+  judge it on `scripts/last_contact_eval.py run --cases
+  ~/brain/feed/eval/last_contact_cases.jsonl --db
+  ~/brain/feed/eval/autoresearch_fixture.db`, and the same with
+  `first_contact_cases.jsonl` (a change that helps "last" can cost "first",
+  wiki P7). Era 3 baselines: last 0.955, first 1.0 hit@1.
+- **Replays match production by default.** Production promotes names in
+  `parse_query`; the stored parses predate that, so the harness promotes on
+  replay (`--no-promote-entities` to switch it off), and route turns the
+  occurrence lane on as in production (`--no-occurrence-browse`). The era-3
+  fixture carries what live ingest adds: the current dictionary seeded
+  (`yaams.store.seed_entities`) and participant links
+  (`scripts/link_participants.py`). To refresh it, seed and link a copy in
+  that order (linking without the seed finds about a quarter of the links),
+  then `autoresearch_freeze.py --promote <copy>`; the manifest records
+  `participant_links`, which `--check` compares, since the gold hash alone
+  cannot tell era 2 from era 3.
 
 ## 5. Recording: win or lose
 

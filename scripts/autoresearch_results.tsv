@@ -84,3 +84,5 @@ junk-curated-off	hybrid	dev	0.4963	0.5789	0.4129	260.2	18	fail:regression
 junk-curated-on	hybrid	dev	0.5283	0.5789	0.4102	231.2	0	ok
 era2-anchor-nojunk	hybrid+nojunk	dev	0.5283	0.5789	0.4102	343.5	0	ok
 era2-anchor-plain	hybrid	dev	0.5291	0.5789	0.4129	286.5	0	ok
+era3-anchor-nojunk	hybrid+nojunk	dev	0.5296	0.5789	0.4145	234.3	0	ok
+era3-anchor-nojunk	hybrid+nojunk	test	0.5083	0.5	0.5278	196.3	0	ok

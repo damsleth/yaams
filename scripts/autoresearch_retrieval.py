@@ -106,6 +106,34 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 
 
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
+_PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
+
+
+def _load_promotions(conn) -> None:
+    """Multi-word person/org/place names and aliases from the db (the parse prompt only
+    shows the top 40 entities, so the LLM demotes every long-tail name to a topic term)."""
+    # ponytail: exact 2-4 word matches only; single names ("Fredrik") are too ambiguous
+    for name, aliases in conn.execute(
+        "SELECT canonical_name, aliases FROM entities WHERE entity_type IN ('person', 'org', 'place')"
+    ):
+        for key in [name, *json.loads(aliases or "[]")]:
+            k = " ".join(str(key).lower().split())
+            if 2 <= len(k.split()) <= 4:
+                _PROMOTE.setdefault(k, name)
+
+
+def _promote_entities(parsed: ParsedQuery, text: str) -> None:
+    words = text.lower().replace("?", " ").replace(",", " ").split()
+    found = []
+    for n in (4, 3, 2):
+        for i in range(len(words) - n + 1):
+            canon = _PROMOTE.get(" ".join(words[i:i + n]))
+            if canon and canon not in found and canon not in parsed.entities:
+                found.append(canon)
+    if found:
+        lowered = {f.lower() for f in found}
+        parsed.entities = [*parsed.entities, *found]
+        parsed.topic_terms = [t for t in parsed.topic_terms if t.lower() not in lowered]
 
 
 def _split_bucket(query_id: str) -> str:
@@ -221,6 +249,8 @@ def _replay_one(
         parsed.date_range = (None, None)
     elif parsed is not None and parse_mode == "notopics":
         parsed.topic_terms = []
+    if parsed is not None and _PROMOTE:
+        _promote_entities(parsed, text)
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
         top_k=_EVAL_TOP_K,
@@ -296,6 +326,8 @@ def _mode_label(args) -> str:
         base = f"{base}+parse:{args.parse_mode}"
     if getattr(args, "parse_override", None):
         base = f"{base}+reparse"
+    if getattr(args, "promote_entities", False):
+        base = f"{base}+promote"
     return base
 
 
@@ -335,6 +367,8 @@ def main() -> int:
                     help="write per-gold ranks {query_id: rank|null} as JSON to this path")
     ap.add_argument("--parse-override", default=None,
                     help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
+    ap.add_argument("--promote-entities", action="store_true",
+                    help="Promote exact multi-word dictionary names in the query text to entities")
     args = ap.parse_args()
     if args.parse_override:
         _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
@@ -357,6 +391,8 @@ def main() -> int:
     status = "ok"
     try:
         conn = open_db(db_path, readonly=True)
+        if args.promote_entities:
+            _load_promotions(conn)
         gold, n_miss, n_miss_zero = _load_gold(conn)
         junk_gold = _junk_gold(conn, gold)
         if junk_gold:

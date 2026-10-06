@@ -12,6 +12,113 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Last-contact retrieval ("when did I last speak with X?"), three pieces, all
+  on by default:
+  - Participant links: every ingest links its new items to the people who
+    sent or received them (`yaams.enrich.participants`, `item_entities.source
+    = 'participant'`, exact match on person names and aliases; a canonical
+    name beats another person's alias, an alias two people share links
+    nobody; envelope `stats.participant_links`). NER only tags content, so a
+    message from or to someone was never linked to them. One-off history
+    backfill: `scripts/link_participants.py --live`. A retag or reindex keeps
+    participant links.
+  - Name promotion in `parse_query`: an exact 2-4 word name or alias in the
+    question becomes an entity even when it is outside the top-40 the LLM is
+    shown (it used to fall through as a topic term). Only curated entities
+    (`pending_review = 0`) and people with participant links qualify:
+    NER-discovered orgs/places are mostly phrases, and promotion makes a hard
+    filter.
+  - Occurrence lane (`HybridQueryConfig.occurrence_browse`): route turns it on
+    for a first/last question with an entity filter and no topic words beyond
+    names and contact verbs (`route.CONTACT_WORDS`). It lists the
+    allowlisted items and consolidations nearest the sort end, exempt from
+    the relevance floor. Allowlists only post-filtered the text-retrieved
+    pool, so X's newest messages, which share no words with the question,
+    never became candidates. "When did I last discuss the budget with X"
+    keeps relevance in charge. For a "last" question about someone with
+    participant links, contact means a message they sent or received: the
+    result set is limited to those links, so a note that mentions them (or a
+    one-word alias like "Jan") does not count. "First" questions ("when did I
+    first hear about X") and orgs/projects keep every link.
+  Last-contact hit@1 0.07 -> 0.77 (44 cases, 22 people, EN+NB, on a fixture
+  copy seeded and linked like live ingest); gold dev +0.0013 with 0 rank-1
+  regressions, test unchanged (experiments 134-138, wiki P7).
+- Person-recall tooling: `scripts/last_contact_eval.py` (mechanical
+  last-contact eval, `build` / `run`, replayed as of the ask time; the
+  consolidation holding the answer counts), `scripts/reparse_fallback_golds.py`.
+  Harness flags `--promote-entities` (stored parses predate promotion),
+  `--no-occurrence-browse`, `--parse-mode` and `--parse-override`.
+- Junk annotation on ingest (`quality.annotate_on_ingest`, off by default):
+  after every `yaams ingest`, the mechanical junk rules run, and with
+  `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the
+  10-39 char messaging band `llm:junk-jeff` at `threshold` (0.73). A missing
+  model server is skipped with a note (or started from `serve_cmd` and
+  stopped after); gold answers are never hidden, by any rule; scores are
+  cached. `junk_model.timeout_s` (120) bounds a request and
+  `junk_model.deadline_s` (900) the pass: no new batch after it or after a
+  failed one, the rest waits for the next run. A failing junk or
+  participant pass is reported in the envelope and never aborts the ingest.
+  The ingest envelope's `stats.junk.model` reports server start, scoring time
+  and rows/s.
+  `yaams.jev.noul` takes per-call `url`/`model`/`cache_model`. The row
+  rendering moved to `yaams.quality.junk_block` and is shared with the
+  fine-tune scripts (byte-identical on 500 training rows).
+- `scripts/ane/`: convert a jeff encoder (mmBERT/ModernBERT) junk checkpoint to
+  Core ML with static length buckets and report op placement
+  (`convert.py`), and benchmark rows/s and SoC power per compute unit
+  (`bench_coreml.py`, `bench_jeff_mlx.py`, `power.py` via `mactop --headless`,
+  no sudo). Own a separate venv; coremltools is not a yaams dependency.
+- `scripts/junk_apply.py` (apply owner-bar verdicts as `llm:junk-owner` with
+  gold protection and an undo log), `scripts/junk_relabel.py` +
+  `scripts/junk_verdict_prompt.owner.md` (relabel at the owner's bar),
+  `scripts/jeff_parity.py` (MLX vs PyTorch score parity),
+  `scripts/junk_owner_score_v2.py` (owner tune/test report incl. GLiNER2).
+- Opt-in Jev relevance hook over the hydrated pool: `HybridQueryConfig.jev_spec`
+  (`replace` | `blend:<a>` | `gate:<h>` | `filter:<tau>`), `jev_k` (default 50),
+  `yaams query --jev SPEC`, config `retrieve.jev.spec` / `k` (off by default;
+  remote and paid). Records `boosts["jev"]`, and `jev_missing` for a candidate
+  Jev failed to score. Harness: `--jev`, `--jev-k` (mode label
+  `+jev:<spec>:k<N>`) and `--ranks-out PATH` (per-gold ranks as JSON; the
+  anchor output is unchanged). `yaams.jev.rel_state` / `rel_texts` are the
+  shared rel-1 question so hook, B4 and A2 scores share the cache;
+  `YAAMS_JEV_NO_CACHE=1` bypasses it.
+- `yaams/jev.py` talks to any `/v1/systemone` server, e.g. a local
+  [Jeff](https://github.com/firelex/jeff): `YAAMS_JEV_URL`, `YAAMS_JEV_MODEL`,
+  and `YAAMS_JEV_MAX_INFLIGHT` (cap on concurrent requests across all callers;
+  Jeff serves one at a time). The TypeSafe key is only ever sent to TypeSafe,
+  and `scripts/jev_usage.py` prices usage by the model each row recorded, so
+  local models cost $0. `scripts/jeff_format_probe.py` picks the noul question
+  format for a model on a small probe set kept apart from the evaluation;
+  `scripts/jeff_b4_lite.py` compares Jeff with Jev on the B4 queries over a
+  sample (Jev's top 200 + gold + 2,000 random), reading Jev's scores from its
+  cache; `jev_junk_score.py --compare DIR` reports agreement with another
+  model's run and accuracy on the owner-labelled A1 sheet.
+  `scripts/jeff_junk_ftdata.py` builds a `jeff-train` fine-tune set for the
+  junk decision: labels at the owner's bar (JUNK if either Sonnet run or Jev
+  says so), folds by thread, the owner-labelled rows plus a random 200-row
+  blind sheet (and their neighbours) held out of training.
+- `yaams/jev.py`: stdlib client for TypeSafe's Jev (`noul`, `choice`), pinned
+  to `jev-1.13.0`, for the opt-in Jev experiments. Packs up to 256 questions
+  and 22.4k estimated tokens (`len/3`) per request, retries 429/529/5xx, and
+  a failed id comes back missing, never `0.0`. Scores are cached in
+  `~/brain/feed/eval/jev/cache.db`; every request appends real
+  `input_tokens` and latency to `usage.jsonl` (`scripts/jev_usage.py` sums
+  dollars and p50/p95 per tag). Key from `TYPESAFE_API_KEY` or `./.env`.
+  Nothing in the default query path calls it. Experiment scripts on top of it:
+  `scripts/jev_junk_pass.py` + `jev_junk_score.py` (A1, junk verdicts vs
+  Sonnet, kappa/calibration, owner disagreement sheet) and
+  `scripts/jev_bruteforce.py` (B4, rank the whole corpus per gold query,
+  `--max-dollars` hard stop, `--criterion-version rel-1|rel-2`; rel-2 keeps
+  the criterion in `state` only and shortens the candidate header to a date,
+  ~35% fewer tokens but measurably worse ranking on the pilot queries, so
+  the default is rel-1).
+  `jev.noul(criterion=None)` omits per-question `criteria`.
+  `YAAMS_JEV_CACHE_ONLY=1` makes `noul` return cached scores only, with no
+  network call. `scripts/jev_densify.py` (A2): `validate` scores the top-50
+  fresh-parse pool of every gold query (gold rank under Jev vs hybrid, AUC,
+  owner junk labels as negatives, metrics only over fully scored pools);
+  `misses` writes the rejudge-misses owner sheet `a2_candidates.tsv` with
+  Jev top-3 next to the LLM judge's pick and verify votes.
 - Score transparency: every JSON result (`yaams query --json`, MCP
   `yaams_query` / `yaams_answer`) carries a `components` block (FTS and vector
   ranks, raw lane scores, RRF score, named credits and boosts that fired), and

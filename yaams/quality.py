@@ -49,11 +49,15 @@ def _ids(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[str]:
 
 
 def _set_reason(conn: sqlite3.Connection, ids: list[str], reason: str) -> int:
+  """Annotate `ids`, except an item that was ever a hit/correction answer: no rule,
+  mechanical or model, may hide a gold answer."""
   n = 0
   for chunk in chunked(ids):
     placeholders = ",".join("?" * len(chunk))
     cur = conn.execute(
-      f"UPDATE items SET junk_reason = ? WHERE junk_reason IS NULL AND id IN ({placeholders})",
+      f"UPDATE items SET junk_reason = ? WHERE junk_reason IS NULL AND id IN ({placeholders}) "
+      "AND id NOT IN (SELECT result_id FROM query_feedback "
+      "WHERE kind IN ('hit', 'correction') AND result_id IS NOT NULL)",
       (reason, *chunk),
     )
     n += cur.rowcount
@@ -139,3 +143,147 @@ def effective_corpus(conn: sqlite3.Connection) -> dict[str, Any]:
     "text_mb_retrievable": round(live_mb or 0, 1),
     "annotated": by_reason,
   }
+
+
+# --- model pass: a fine-tuned junk classifier (Jeff) over the band the mechanical
+# rules cannot decide. Opt-in (`quality.junk_model.enabled`); see docs/user-guide.md.
+# The rendering below is the training contract of the fine-tune
+# (scripts/jeff_junk_ftdata.py imports it): change it and the model must be retrained.
+
+MODEL_BAND = (10, 39)  # trimmed characters; below is mech:short, above was never labelled
+MODEL_REASON = "llm:junk-jeff"
+MODEL_CRITERION = "The TARGET message is junk: it carries no retrievable content on its own."
+MODEL_STATE = {"task": "Junk filter for a personal search index over Kim's chat messages."}
+CONTEXT_CHARS = 120
+
+
+def message_context(conn: sqlite3.Connection, row: dict) -> tuple[str, str]:
+  """The previous and next message in the row's thread, 120 chars each."""
+  prev = conn.execute(
+    "SELECT content FROM items WHERE thread_id=? AND timestamp<? ORDER BY timestamp DESC LIMIT 1",
+    (row["thread_id"], row["timestamp"]),
+  ).fetchone()
+  nxt = conn.execute(
+    "SELECT content FROM items WHERE thread_id=? AND timestamp>? ORDER BY timestamp ASC LIMIT 1",
+    (row["thread_id"], row["timestamp"]),
+  ).fetchone()
+  return (prev[0] if prev else "")[:CONTEXT_CHARS], (nxt[0] if nxt else "")[:CONTEXT_CHARS]
+
+
+def junk_block(conn: sqlite3.Connection, row: dict) -> str:
+  p, n = message_context(conn, row)
+  return f"[{row['source']}] prev: {p!r}\nTARGET: {row['content'].strip()!r}\nnext: {n!r}"
+
+
+def _serve(url: str, cmd: str | None, wait_s: int = 180):
+  """A Popen for a server started here, None if one already answers. Raises if none comes up."""
+  import shlex
+  import subprocess
+  import time
+  import urllib.request
+
+  health = url.rsplit("/v1/", 1)[0] + "/health"
+
+  def ready() -> bool:
+    try:
+      with urllib.request.urlopen(health, timeout=2) as r:
+        return b'"ready"' in r.read()
+    except OSError:
+      return False
+
+  if ready():
+    return None
+  if not cmd:
+    raise RuntimeError(f"no junk model server at {health} and no serve_cmd configured")
+  proc = subprocess.Popen(shlex.split(cmd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  for _ in range(wait_s):
+    if ready():
+      return proc
+    if proc.poll() is not None:
+      raise RuntimeError(f"serve_cmd exited with {proc.returncode}")
+    time.sleep(1)
+  proc.terminate()
+  raise RuntimeError(f"junk model server not ready after {wait_s}s")
+
+
+def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+  """Label the 10-39 char messaging band with the fine-tuned junk model.
+
+  Only rows still unannotated and ingested at/after `since` (an earlier bulk
+  relabel covers what came before). An item that was ever a hit/correction
+  answer is never hidden. Scores are cached (yaams.jev), so a KEEP row re-seen
+  next run costs a lookup, not a model call. A missing server is a note, never
+  an ingest failure.
+  """
+  from yaams import jev
+
+  lo, hi = MODEL_BAND
+  params: list[Any] = [lo, hi]
+  since_sql = ""
+  if cfg.get("since"):
+    since_sql = " AND ingested_at >= ?"
+    params.append(str(cfg["since"]))
+  rows = [dict(r) for r in conn.execute(
+    f"SELECT id, source, thread_id, timestamp, content FROM items WHERE junk_reason IS NULL "
+    f"AND {_MESSAGING_SOURCES_SQL} AND length(trim(content)) BETWEEN ? AND ?{since_sql}", params)]
+  protected = {r[0] for r in conn.execute(
+    "SELECT DISTINCT result_id FROM query_feedback "
+    "WHERE kind IN ('hit', 'correction') AND result_id IS NOT NULL")}
+  rows = [r for r in rows if r["id"] not in protected]
+  stats: dict[str, Any] = {"candidates": len(rows)}
+  if not rows:
+    return stats
+  import time
+
+  url = cfg.get("url", "http://127.0.0.1:8766/v1/systemone")
+  t0 = time.perf_counter()
+  texts = {r["id"]: junk_block(conn, r) for r in rows}
+  t_render = time.perf_counter()
+  proc = None
+  try:
+    proc = _serve(url, cfg.get("serve_cmd"))
+    t_served = time.perf_counter()
+    stats["server_started"] = proc is not None
+    stats["server_start_s"] = round(t_served - t_render, 2)
+    scores = jev.noul(cfg.get("state", MODEL_STATE), texts, MODEL_CRITERION,
+                      criterion_version=cfg.get("criterion_version", "junk-owner-v2"),
+                      tag="ingest_junk", workers=1, url=url, model=cfg.get("model", "jeff-latest"),
+                      cache_model=cfg.get("cache_model", "jeff-junk-v2"),
+                      timeout=float(cfg.get("timeout_s", 120)),
+                      deadline_s=float(cfg.get("deadline_s", 900)))
+  except Exception as exc:  # noqa: BLE001 -- the junk pass must never fail an ingest
+    stats["note"] = f"skipped: {exc}"
+    return stats
+  finally:
+    if proc is not None:  # stop what we started, and wait: a cron run must not leave it resident
+      proc.terminate()
+      try:
+        proc.wait(timeout=30)
+      except Exception:  # noqa: BLE001
+        proc.kill()
+  t_scored = time.perf_counter()
+  tau = float(cfg.get("threshold", 0.73))
+  junk = [i for i, s in scores.items() if s >= tau]
+  score_s = t_scored - t_served
+  stats.update({"scored": len(scores), "threshold": tau, "render_s": round(t_render - t0, 2),
+                "score_s": round(score_s, 2),
+                "rows_per_s": round(len(scores) / score_s, 1) if score_s > 0 else None,
+                "total_s": round(time.perf_counter() - t0, 2)})
+  if dry_run:
+    stats[MODEL_REASON] = len(junk)
+    return stats
+  stats[MODEL_REASON] = _set_reason(conn, junk, MODEL_REASON)
+  conn.commit()
+  return stats
+
+
+def annotate_on_ingest(conn: sqlite3.Connection, cfg: dict[str, Any]) -> dict[str, Any] | None:
+  """Post-ingest junk pass from config `quality`: mechanical rules, then the model."""
+  q = cfg.get("quality") or {}
+  if not q.get("annotate_on_ingest"):
+    return None
+  out: dict[str, Any] = {"ran": True, **annotate_mechanical(conn)}
+  model_cfg = q.get("junk_model") or {}
+  if model_cfg.get("enabled"):
+    out["model"] = annotate_model(conn, model_cfg)
+  return out

@@ -7,6 +7,7 @@ adjustments applied. Explicit user flags always win over parsed inference.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import timedelta
 from typing import Iterable
@@ -34,6 +35,21 @@ OCCURRENCE_SHAPES = frozenset({"first_occurrence", "last_occurrence"})
 # relevance score before the timestamp sort. Conservative — cuts the clearly
 # off-topic tail without dropping moderate genuine matches.
 OCCURRENCE_RELEVANCE_FLOOR = 0.2
+# A first/last question about an entity with nothing else to match ("when did I
+# last speak with X", "når snakket jeg sist med X") turns on the occurrence lane.
+# Any other topic word ("... discussed the budget with X") keeps relevance in
+# charge, since the lane would put X's newest message on any subject first.
+# ponytail: a stoplist; an unlisted verb leaves the lane off (the old behavior)
+CONTACT_WORDS = frozenset("""
+  i me my we with and or the a an to of about when did do was last first time ever
+  speak spoke spoken talk talked chat chatted meet met hear heard contact contacted
+  message messaged mail mailed email emailed call called write wrote text texted
+  conversation conversations
+  jeg meg vi med og om til av når sist siste først første gang noen
+  snakke snakket snakka prate pratet prata møte møtte møtt høre hørte hørt
+  kontakt kontaktet ringe ringte ringt skrive skrev skrevet melding meldinger
+  samtale chatte chattet
+""".split())
 
 
 def route(
@@ -111,7 +127,15 @@ def route(
   else:
     cfg.entity_filter = None
 
+  if parsed.shape in OCCURRENCE_SHAPES and cfg.entity_filter and _topic_free(parsed):
+    cfg.occurrence_browse = True
   return cfg
+
+
+def _topic_free(parsed: ParsedQuery) -> bool:
+  names = {w for e in parsed.entities for w in re.findall(r"\w+", e.lower())}
+  words = {w for t in parsed.topic_terms for w in re.findall(r"\w+", t.lower())}
+  return not (words - names - CONTACT_WORDS)
 
 
 def filter_results_by_entities(

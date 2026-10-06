@@ -278,6 +278,39 @@ YAAMS is built to run nightly without you. See
 **Full Disk Access** setup the `imessage` adapter needs to read `chat.db`
 under `launchd`.
 
+### Junk annotation on ingest
+
+Short chat messages ("ok takk", "på vei", "haha") are noise in search results.
+YAAMS can annotate them after every `yaams ingest`, so retrieval skips them
+when `retrieve.exclude_junk` is on. Nothing is deleted: the annotation is
+`items.junk_reason`, and every reason can be reversed with one UPDATE.
+
+```yaml
+quality:
+  annotate_on_ingest: true   # mechanical rules: <10 chars, tapbacks, same-day duplicates
+  junk_model:
+    enabled: true            # a fine-tuned local classifier for the 10-39 char band
+    url: http://127.0.0.1:8766/v1/systemone
+    threshold: 0.73
+    since: 2026-09-25        # rows before this were labelled in bulk
+    serve_cmd: env JEFF_BACKEND=mlx JEFF_CHECKPOINT=/path/to/checkpoints/yaams-junk-v2 PORT=8766 /path/to/jeff/.venv/bin/jeff-serve
+```
+
+The model is a [Jeff](https://github.com/firelex/jeff) checkpoint fine-tuned on
+the owner's own junk/keep labels (`scripts/jeff_junk_ftdata.py`), served on
+MLX. It labels rows `llm:junk-jeff`. If nothing answers at `url`, `serve_cmd`
+starts a server for the pass and stops it afterwards, so nothing stays
+resident; with neither, the pass is skipped with a note and the ingest still
+succeeds. An item that was ever a hit or correction answer is never hidden,
+by the model or the mechanical rules. Scores are cached, so a row kept on one
+run costs a cache lookup on the next. `timeout_s` (120) bounds one request and
+`deadline_s` (900) the pass: after it, or after a failed batch, no new batch
+starts and the rest waits for the next run, so a stalled server cannot hold up
+the schedule. A failure in this pass is reported, never fatal to the ingest.
+
+The prompt the model sees (`yaams.quality.junk_block`) is the training
+contract: changing it means retraining.
+
 ---
 
 ## 5. Querying
@@ -357,6 +390,49 @@ yaams query --no-synonyms "don't expand aliases"
 - `--no-parse` skips the LLM query parser and does a raw text → hybrid
   retrieve.
 
+### Jev (optional)
+
+```bash
+yaams query --jev gate:0.9 "hva sa Emilie om skolen"
+```
+
+`--jev SPEC` (or `retrieve.jev.spec` in config) asks TypeSafe's Jev model,
+pinned to `jev-1.13.0`, how likely each of the top `k` (default 50) candidates
+is to answer the question, and uses that probability (`noul`) on top of the
+hybrid ranking:
+
+- `replace` - the noul replaces the score (the cross-encoder-style control).
+- `blend:<a>` - `score *= 1 + a*(noul - 0.5)`; `a=1` moves a score by at most ±50%.
+- `gate:<h>` - only when the current rank 1 has noul < 0.5: lift the single
+  highest-noul candidate with noul ≥ `h` to the top. Nothing else moves.
+- `filter:<tau>` - drop candidates with noul < `tau`.
+
+This is a **remote, paid** call (about 1 s and $0.0003 per query at k=50),
+so it is off by default and needs `TYPESAFE_API_KEY` in the environment or
+`./.env`. Scores are cached (`~/brain/feed/eval/jev/cache.db`), so repeat
+queries are free; `YAAMS_JEV_NO_CACHE=1` bypasses the cache. `--explain`
+shows each result's `jev` score in its boosts; a candidate Jev failed to
+score is left as it was and marked `jev_missing`.
+
+**Local, free alternative: Jeff.** [Jeff](https://github.com/firelex/jeff) is
+a set of small open fine-tunes (Qwen3.5 0.8B/2B) that serve the same
+`/v1/systemone` API on your own machine (MLX on Apple silicon). Point YAAMS at
+it with environment variables; no key is sent to a non-TypeSafe URL and usage
+is priced at $0:
+
+```bash
+YAAMS_JEV_URL=http://127.0.0.1:8765/v1/systemone \
+YAAMS_JEV_MODEL=jeff-qwen3.5-0.8b \
+YAAMS_JEV_MAX_INFLIGHT=1 \
+YAAMS_JEV_DIR=~/brain/feed/eval/jeff \
+yaams query --jev blend:0.5 "..."
+```
+
+Jeff answers one request at a time, so `YAAMS_JEV_MAX_INFLIGHT=1` keeps every
+caller's thread pool from colliding on its lock. The model name is part of the
+score-cache key, so Jev and Jeff scores never mix; a separate `YAAMS_JEV_DIR`
+also keeps their usage logs apart. Jeff's own caveat: English only.
+
 ### Entity-aware retrieval
 
 These build on the entity graph (sections 7–8):
@@ -399,6 +475,25 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   Start at `days: 60, weight: 0.5` (weight scales the lane's contribution;
   1.0 lets a lone recent hit tie an established top result), and do not run
   it together with `recency_decay`.
+- **"When did I last speak with X?"** works through three pieces, all on by
+  default. Every ingest links each new message to the people who sent or
+  received it (`item_entities.source = 'participant'`, matched exactly on
+  person names and aliases, incl. emails and phone numbers; the ingest
+  envelope reports `stats.participant_links`). An alias two people share
+  links neither, so give people distinct aliases and merge duplicates
+  (`yaams entities merge`). The parser promotes an exact 2-4 word name or
+  alias in the question to an entity, even when it is outside the top-40
+  entities the LLM sees, for curated entities and people with participant
+  links. And for a first/last question about an entity with no other topic
+  words, the *occurrence lane* lists that entity's newest (or oldest) items
+  and consolidations directly by time, since the newest messages with
+  someone rarely share words with the question. Asking when you *last* spoke
+  with a person you have exchanged messages with, only messages they sent or
+  received count, not notes that mention them; "when did I first hear about
+  X" still counts mentions. Add a topic ("... about the budget") and relevance
+  ranks as before. History from before participant
+  linking needs a one-off `python scripts/link_participants.py --live`
+  (idempotent; rerun it after adding people or aliases to the dictionary).
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

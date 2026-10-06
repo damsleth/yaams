@@ -1,4 +1,4 @@
-# proposal 0001: ledger_statement_dedup
+# proposal 0007: ledger_statement_dedup
 
 - date: 2026-09-25
 - verdict: discarded

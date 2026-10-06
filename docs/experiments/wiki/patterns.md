@@ -107,3 +107,31 @@ Several "retrieval failures" were the harness.
   re-anchor and bump `CURRENT_ERA`. The strict best-of-3 verify gate is doing
   real work (it also rejects BAD_LABEL false positives); do not weaken
   `--votes` to force a flaky gold through.
+
+## P7. Person recall is a pipeline, not a knob; the gold set cannot see it
+
+"When did I last speak with X" fails at three independent stages, and fixing
+any one alone measures as zero.
+
+- Evidence (oct06, `scripts/last_contact_eval.py`, 44 cases / 22 people,
+  EN+NB): the parse prompt lists only the top-40 entities, so long-tail names
+  become topic terms (fix: name promotion); `item_entities` is content-NER
+  only, so messages from/to a person are unlinked (fix: participant links);
+  entity/participant allowlists only post-filter a text-retrieved pool, so the
+  newest items, which share no words with the question, are never candidates
+  (fix: `occurrence_browse` lane, which must browse consolidations too: a
+  consolidated conversation is only reachable through its consolidation).
+  hit@1: every partial stack <= 0.18, all three 0.82. Gold dev +0.0013, test
+  unchanged: the gold set has 4 person-name queries of 38.
+- Eval trap: replay as of the ask (`until` = ask time). Without it, items after
+  the question fill a newest-first lane, and a first run reported 0.59 with
+  0.14 "newer mention" top-1s that were really leakage (seq 135 -> 136).
+- Scope each piece to where it is safe (seq 138): the lane only for
+  topic-free first/last entity questions (a topic word must keep relevance in
+  charge), promotion only for curated entities and participant-linked people
+  (NER orgs/places are phrases, and promotion is a hard filter). Duplicate
+  person entities now cost recall directly; merge them rather than relaxing
+  the canonical-first linking.
+- Implication: judge entity/person work on the last-contact eval, not the
+  gold-set quality scalar; a neutral gold delta is the non-regression check,
+  not the verdict.

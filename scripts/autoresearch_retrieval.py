@@ -84,6 +84,7 @@ from yaams.retrieve import (  # noqa: E402
     route,
 )
 from yaams.retrieve import query as run_query  # noqa: E402
+from yaams.retrieve.parse import promote_entities, promotion_map  # noqa: E402
 from yaams.retrieve.synonyms import normalize_synonym_groups  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
@@ -103,6 +104,15 @@ _W_HITRATE = 0.7
 _W_MRR = 0.3
 _LAMBDA_LATENCY = 0.10
 _HARD_FAIL_LATENCY_MULT = 2.0
+
+
+_PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
+_PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
+_OCCURRENCE_BROWSE = True  # --no-occurrence-browse overrides route() turning the lane on
+
+
+def _load_promotions(conn) -> None:
+    _PROMOTE.update(promotion_map(conn))
 
 
 def _split_bucket(query_id: str) -> str:
@@ -198,10 +208,28 @@ def _replay_one(
     reranker_device: str | None = "cpu",
     feedback_boost: bool = False,
     exclude_junk: bool = False,
+    jev_spec: str | None = None,
+    jev_k: int = 50,
+    parse_mode: str | None = None,
 ) -> tuple[int | None, float]:
-    """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query."""
+    """Return (rank_of_gold_doc_or_None, retrieval_ms) for one gold query.
+
+    parse_mode (ablations): "none" replays without the stored LLM parse;
+    "factual" keeps the parse but forces shape=factual."""
     text = row["text"]
-    parsed = _parsed_from_json(row["parsed_query"], text)
+    stored = (_PARSE_OVERRIDES.get(row["query_id"]) and json.dumps(_PARSE_OVERRIDES[row["query_id"]])
+              or row["parsed_query"])
+    parsed = None if parse_mode == "none" else _parsed_from_json(stored, text)
+    if parsed is not None and parse_mode == "factual":
+        parsed.shape = "factual"
+    elif parsed is not None and parse_mode == "noentities":
+        parsed.entities = []
+    elif parsed is not None and parse_mode == "nodates":
+        parsed.date_range = (None, None)
+    elif parsed is not None and parse_mode == "notopics":
+        parsed.topic_terms = []
+    if parsed is not None and _PROMOTE:
+        promote_entities(parsed, _PROMOTE)
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
         top_k=_EVAL_TOP_K,
@@ -221,11 +249,19 @@ def _replay_one(
     else:
         qcfg = base
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
+    if not _OCCURRENCE_BROWSE:
+        qcfg.occurrence_browse = False
     if feedback_boost:
         qcfg.feedback_boost = True
         # Leave-one-out: this gold query must not boost its own gold doc via its
         # own citation/correction — a live query has no self-feedback yet either.
         qcfg.feedback_boost_exclude_query_id = row["query_id"]
+    if jev_spec:
+        qcfg.jev_spec = jev_spec
+        qcfg.jev_k = jev_k
+        qcfg.jev_question = text
+        qcfg.jev_asked_on = parse_iso_datetime(row["ts"]) if row["ts"] else None
+        qcfg.jev_tag = f"jev_b2_{jev_spec}"
     if rerank_k:
         qcfg.rerank_enabled = True
         qcfg.reranker_model = reranker_model
@@ -265,6 +301,16 @@ def _mode_label(args) -> str:
         # per-index rank, so comparing across the setting reports regressions
         # that are really just a different corpus.
         base = f"{base}+nojunk"
+    if getattr(args, "jev", None):
+        base = f"{base}+jev:{args.jev}:k{args.jev_k}"
+    if getattr(args, "parse_mode", None):
+        base = f"{base}+parse:{args.parse_mode}"
+    if getattr(args, "parse_override", None):
+        base = f"{base}+reparse"
+    if getattr(args, "promote_entities", False):
+        base = f"{base}+promote"
+    if getattr(args, "no_occurrence_browse", False):
+        base = f"{base}+no-occbrowse"
     return base
 
 
@@ -277,6 +323,9 @@ def main() -> int:
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="dev",
                     help="Score only this bucket (loop should use 'dev').")
+    ap.add_argument("--parse-mode", choices=["none", "factual", "noentities", "nodates", "notopics"], default=None,
+                    help="Ablation: replay without the stored LLM parse (none), with "
+                         "shape forced to factual, or with one parse field dropped. Keyed separately.")
     ap.add_argument("--exclude-junk", action="store_true",
                     help="skip items annotated by yaams.quality (retrieve.exclude_junk); "
                          "run against a junk-annotated COPY of the fixture, never the fixture")
@@ -293,7 +342,23 @@ def main() -> int:
     ap.add_argument("--allow-junk-gold", action="store_true", dest="allow_junk_gold",
                     help="Score even if a gold document is annotated junk "
                          "(items.junk_reason). Default: refuse with status invalid_gold.")
+    ap.add_argument("--jev", default=None,
+                    help="Jev relevance over the hydrated pool: replace | blend:<a> | gate:<h> | "
+                         "filter:<tau> (remote, paid; see yaams.jev)")
+    ap.add_argument("--jev-k", type=int, default=50, dest="jev_k")
+    ap.add_argument("--ranks-out", default=None,
+                    help="write per-gold ranks {query_id: rank|null} as JSON to this path")
+    ap.add_argument("--parse-override", default=None,
+                    help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
+    ap.add_argument("--promote-entities", action="store_true",
+                    help="Promote exact multi-word dictionary names in the query text to entities")
+    ap.add_argument("--no-occurrence-browse", action="store_true",
+                    help="Disable the occurrence lane (on by default, as in production)")
     args = ap.parse_args()
+    global _OCCURRENCE_BROWSE
+    _OCCURRENCE_BROWSE = not args.no_occurrence_browse
+    if args.parse_override:
+        _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
 
     cfg = load_config()
     retrieve_cfg = cfg.get("retrieve")
@@ -313,6 +378,8 @@ def main() -> int:
     status = "ok"
     try:
         conn = open_db(db_path, readonly=True)
+        if args.promote_entities:
+            _load_promotions(conn)
         gold, n_miss, n_miss_zero = _load_gold(conn)
         junk_gold = _junk_gold(conn, gold)
         if junk_gold:
@@ -356,6 +423,7 @@ def main() -> int:
                 rerank_k=args.rerank_k, reranker_model=rerank_model,
                 reranker_device=rerank_device, feedback_boost=args.feedback_boost,
                 exclude_junk=args.exclude_junk,
+                jev_spec=args.jev, jev_k=args.jev_k, parse_mode=args.parse_mode,
             )
             ranks[row["query_id"]] = rank
             latencies.append(ms)
@@ -368,6 +436,8 @@ def main() -> int:
         print(json.dumps(out) if args.as_json else f"\n---\nstatus: crash\nerror: {exc}")
         return 1
 
+    if args.ranks_out:
+        Path(args.ranks_out).write_text(json.dumps(ranks, indent=1))
     n = len(gold)
     n_rank1 = sum(1 for r in ranks.values() if r == 1)
     hit_rate = n_rank1 / n

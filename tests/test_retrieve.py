@@ -535,6 +535,51 @@ def test_entity_filter_includes_match_below_relevance_top_k():
   assert all(r.id == target.id for r in filtered)
 
 
+def test_occurrence_browse_surfaces_newest_linked_item_without_text_match():
+  # "when did I last speak with Bob?": the newest Bob item shares no words with the
+  # query, so text retrieval never sees it; only the occurrence lane can.
+  conn = _open_db()
+  conn.execute("INSERT INTO entities (canonical_name, entity_type) VALUES ('Bob Smith', 'person')")
+  ent_id = conn.execute("SELECT id FROM entities WHERE canonical_name = 'Bob Smith'").fetchone()["id"]
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  old = _make_item(content="speak with Bob Smith about the budget", ts=base, msg_id="old")
+  newest = _make_item(content="ok, ses i morgen", ts=base + timedelta(days=30), msg_id="new")
+  other = _make_item(content="unrelated lunch", ts=base + timedelta(days=40), msg_id="other")
+  store_items(conn, [old, newest, other], [b"\x00" * 16] * 3, [[]] * 3)
+  for item in (old, newest):
+    conn.execute(
+      "INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'participant')",
+      (item.id, ent_id),
+    )
+  conn.commit()
+
+  cfg = HybridQueryConfig(
+    top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"],
+    occurrence_browse=True,
+  )
+  off = replace(cfg, occurrence_browse=False)
+  assert newest.id not in {r.id for r in query(conn, "speak with Bob Smith", config=off)}
+  results = query(conn, "speak with Bob Smith", config=cfg)
+  assert results[0].id == newest.id
+  assert other.id not in {r.id for r in results}
+
+
+def test_occurrence_browse_needs_an_entity_filter():
+  # Participant filter alone ("when did I last talk about the budget"): the lane
+  # must not list the owner's newest messages on unrelated topics.
+  conn = _open_db()
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  hit = _make_item(sender="me", content="the budget is approved", ts=base, msg_id="hit")
+  newest = _make_item(sender="me", content="ok, ses i morgen", ts=base + timedelta(days=9), msg_id="new")
+  store_items(conn, [hit, newest], [b"\x00" * 16] * 2, [[]] * 2)
+  cfg = HybridQueryConfig(
+    top_k=5, sort="desc", include_consolidations=False, participant_filter=["me"],
+    occurrence_browse=True,
+  )
+  ids = [r.id for r in query(conn, "budget", config=cfg)]
+  assert ids == [hit.id]
+
+
 def test_entity_filter_drops_unrelated_consolidation():
   from yaams.retrieve import filter_results_by_entities
 

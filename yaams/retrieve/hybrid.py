@@ -97,6 +97,13 @@ class HybridQueryConfig:
   # tangential match can't win first/last just by being the oldest/newest.
   # 0 disables. Set by route() for first/last_occurrence, not by explicit sort.
   relevance_floor: float = 0.0
+  # Occurrence lane (route sets it for topic-free first/last entity questions):
+  # a timestamp-sorted query with an entity filter also lists the allowlisted
+  # items (and consolidations) directly by time, so "when did I last speak
+  # with X" sees X's newest messages even when they share no words with the
+  # question (the index lanes are text matches, filtered after the fact). Lane
+  # items are exempt from relevance_floor: the allowlist is their relevance.
+  occurrence_browse: bool = False
   # Query shape forwarded from ParsedQuery so _hydrate_item can gate
   # shape-specific credits (e.g. tier2_factual_coverage_recovery).
   query_shape: str = "factual"
@@ -170,6 +177,17 @@ class HybridQueryConfig:
   # junk gold rows had inverted the verdict. Re-measure per corpus.
   # Consolidations carry no annotation and are unaffected.
   exclude_junk: bool = False
+  # Opt-in TypeSafe Jev relevance over the top `jev_k` hydrated candidates
+  # (remote, paid: off by default). Spec: `replace` (noul replaces the score,
+  # the cross-encoder control), `blend:<a>` (score *= 1 + a*(noul - 0.5)),
+  # `gate:<h>` (if rank 1 has noul < 0.5, lift the best noul >= h to the top),
+  # `filter:<tau>` (drop pool results with noul < tau). The question and asked-on
+  # date are Jev's state; the harness sets them from the stored query.
+  jev_spec: str | None = None
+  jev_k: int = 50
+  jev_question: str | None = None
+  jev_asked_on: datetime | None = None
+  jev_tag: str = "jev_query"
   # Item ids that must never be returned: tier2 notes the ledger has since
   # archived or deleted (its index drops them, the raw store keeps them).
   # Filled from the live note_index.json by cli.query.apply_tier2_live_config.
@@ -362,6 +380,25 @@ def query(
     # a real match. Skipped when an entity/participant filter is set: there the
     # user asked for a specific thing, and a whole-window dump would be noise.
     hydrated = _browse_window(conn, cfg, cap=hydrate_cap)
+  # Entity filter required: a participant filter alone ("when did I last talk
+  # about the budget") would list the owner's newest messages on any topic.
+  if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and item_allow is not None:
+    items, cons = item_allow, cons_allow or set()
+    # "Last" with someone the owner exchanges messages with: contact means a message
+    # they sent or received, not a note that mentions them (or a one-word alias like
+    # "Jan"). "First" keeps mentions: "when did I first hear about X" predates any
+    # message. Entities without participant links (orgs, projects) keep every link.
+    p_items, p_cons = (
+      _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
+      if cfg.sort == "desc" else (set(), set())
+    )
+    if p_items:
+      items, cons = p_items, p_cons
+      hydrated = [r for r in hydrated if r.id in items or r.id in cons]
+    if part_item_allow is not None:
+      items, cons = items & part_item_allow, cons & (part_cons_allow or set())
+    seen = {r.id for r in hydrated}
+    hydrated += [r for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k) if r.id not in seen]
   if cfg.rerank_enabled and hydrated:
     # Opt-in cross-encoder rerank: re-score the top `rerank_k` candidates and
     # let the cross-encoder score replace the RRF score. The pool becomes the
@@ -377,6 +414,8 @@ def query(
       # Hydration-time boosts no longer shape the score; only later ones do.
       r.boosts = {"rerank": float(s)}
     hydrated = pool
+  if cfg.jev_spec and hydrated:
+    hydrated = _apply_jev(conn, text, hydrated, cfg)
   if cfg.boost_entities:
     # Soft metadata boost: lift documents tagged with a matching entity
     # without removing anything else from the result set.
@@ -428,9 +467,55 @@ def query(
   return hydrated[: cfg.top_k]
 
 
+def _apply_jev(
+  conn: sqlite3.Connection, text: str, hydrated: list[HybridResult], cfg: HybridQueryConfig,
+) -> list[HybridResult]:
+  """Jev noul over the hydrated pool (see HybridQueryConfig.jev_spec). Scores
+  only, never positions: the boost/assoc/sort after this block re-sorts. A
+  result Jev failed to score is left untouched and marked `jev_missing`."""
+  from yaams import jev  # lazy: the default path never touches the network client
+  mode, _, arg = (cfg.jev_spec or "").partition(":")
+  if mode not in ("replace", "blend", "gate", "filter"):
+    raise ValueError(f"unknown jev spec {cfg.jev_spec!r}")
+  pool = hydrated[: cfg.jev_k]
+  asked = (cfg.jev_asked_on or datetime.now(timezone.utc)).date().isoformat()
+  state = jev.rel_state(cfg.jev_question or text, asked)
+  texts = jev.rel_texts(conn, [r.id for r in pool])
+  scores = jev.noul(state, texts, jev.REL_CRITERION, criterion_version="rel-1", tag=cfg.jev_tag)
+  for r in pool:
+    if r.id in scores:
+      r.boosts["jev"] = scores[r.id]
+    else:
+      r.boosts["jev_missing"] = 1.0
+  if mode == "replace":
+    for r in pool:
+      if r.id in scores:
+        r.score = scores[r.id]
+        r.boosts = {"jev": scores[r.id]}
+    return pool
+  if mode == "blend":
+    a = float(arg)
+    for r in pool:
+      if r.id in scores:
+        r.score *= 1 + a * (scores[r.id] - 0.5)
+    return hydrated
+  if mode == "gate":
+    h = float(arg)
+    top = max(hydrated, key=lambda r: r.score)
+    cand = [r for r in pool if scores.get(r.id, 0.0) >= h and r is not top]
+    if top.id in scores and scores[top.id] < 0.5 and cand:
+      best = max(cand, key=lambda r: scores[r.id])  # max keeps the higher-ranked on ties
+      best.score = top.score * 1.001
+      best.boosts["jev_gate"] = scores[best.id]
+    return hydrated
+  tau = float(arg)
+  return [r for r in hydrated if not (r.id in scores and scores[r.id] < tau)]
+
+
 def _resolve_entity_allowlist(
   conn: sqlite3.Connection,
   entity_names: list[str],
+  link_source: str | None = None,
 ) -> tuple[set[str], set[str]]:
   """Return (item_ids, consolidation_ids) that share at least one of the
   named canonical entities. Consolidations match via raw_item_ids."""
@@ -451,8 +536,9 @@ def _resolve_entity_allowlist(
     return set(), set()
   ent_id_ph = ",".join("?" * len(entity_ids))
   item_rows = conn.execute(
-    f"SELECT DISTINCT item_id FROM item_entities WHERE entity_id IN ({ent_id_ph})",
-    tuple(entity_ids),
+    f"SELECT DISTINCT item_id FROM item_entities WHERE entity_id IN ({ent_id_ph})"
+    + (" AND source = ?" if link_source else ""),
+    (*entity_ids, *([link_source] if link_source else [])),
   ).fetchall()
   item_ids: set[str] = {
     r[0] if not hasattr(r, "keys") else r["item_id"] for r in item_rows
@@ -735,7 +821,76 @@ def _apply_relevance_floor(
   if top <= 0:
     return hydrated
   threshold = top * floor
-  return [r for r in hydrated if r.score >= threshold]
+  return [r for r in hydrated if r.score >= threshold or "occurrence_browse" in r.boosts]
+
+
+def _browse_allowlist(
+  conn: sqlite3.Connection,
+  cfg: HybridQueryConfig,
+  allowed: set[str],
+  allowed_cons: set[str],
+  cap: int,
+) -> list[HybridResult]:
+  """The `cap` allowlisted items and consolidations nearest the sort end (newest for
+  desc, oldest for asc), honoring the same filters as the index lanes. A consolidated
+  item is reached through its consolidation, as everywhere else. Score 0.0: the
+  caller's timestamp sort orders them."""
+  order = "DESC" if cfg.sort == "desc" else "ASC"
+  out: list[HybridResult] = []
+  if allowed and cfg.include_items:
+    out += _browse_allowlist_items(conn, cfg, allowed, order, cap)
+  if allowed_cons and cfg.include_consolidations and not cfg.repo_filter:
+    rows = conn.execute(
+      f"""
+      SELECT id FROM consolidations
+      WHERE id IN (SELECT value FROM json_each(?))
+        AND (? = '' OR source IN (SELECT value FROM json_each(?)))
+        AND (? IS NULL OR end_timestamp >= ?)
+        AND (? IS NULL OR start_timestamp <= ?)
+        AND (? = '' OR EXISTS (SELECT 1 FROM json_each(participants) p
+                               WHERE p.value IN (SELECT value FROM json_each(?))))
+      ORDER BY start_timestamp {order}
+      LIMIT ?
+      """,
+      (json.dumps(sorted(allowed_cons)),) + _filter_params(cfg, repo=False)
+      + _sender_params(cfg) + (cap,),
+    ).fetchall()
+    out += [r for r in (_hydrate_consolidation(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
+  out.sort(key=lambda r: r.timestamp, reverse=order == "DESC")
+  for r in out[:cap]:
+    r.boosts["occurrence_browse"] = 1.0
+  return out[:cap]
+
+
+def _browse_allowlist_items(
+  conn: sqlite3.Connection, cfg: HybridQueryConfig, allowed: set[str], order: str, cap: int,
+) -> list[HybridResult]:
+  rows = conn.execute(
+    f"""
+    SELECT id FROM items
+    WHERE id IN (SELECT value FROM json_each(?))
+      AND (? = '' OR source IN (SELECT value FROM json_each(?)))
+      AND (? = '' OR json_extract(raw_metadata, '$.repo') IN (SELECT value FROM json_each(?)))
+      AND (? IS NULL OR timestamp >= ?)
+      AND (? IS NULL OR timestamp <= ?)
+      AND (? IS NULL OR lang = ?)
+      AND (? = 0 OR timestamp_inferred = 0)
+      AND (? = 0 OR junk_reason IS NULL)
+      AND (? = '' OR sender IN (SELECT value FROM json_each(?)))
+      AND consolidated_into IS NULL
+    ORDER BY timestamp {order}
+    LIMIT ?
+    """,
+    (json.dumps(sorted(allowed)),) + _filter_params(cfg)
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg))
+    + _sender_params(cfg) + (cap,),
+  ).fetchall()
+  return [r for r in (_hydrate_item(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
+
+
+def _sender_params(cfg: HybridQueryConfig) -> tuple[str, str]:
+  """sender_filter in SQL, so the lane's LIMIT counts only rows hydration keeps."""
+  return ("" if not cfg.sender_filter else "filter", json.dumps(cfg.sender_filter or []))
 
 
 def _excluded_ids(cfg: HybridQueryConfig) -> str:

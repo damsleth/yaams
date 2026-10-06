@@ -1,0 +1,254 @@
+"""TypeSafe Jev client: packed `noul` scoring with a score cache and usage log.
+
+Stdlib only. Opt-in remote compute (AGENTS.md: local-only is a cost rule);
+every request logs real `usage.input_tokens` so the len/3 estimate is checked.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+# Jev by default; any server speaking the same /v1/systemone API (e.g. a local
+# Jeff, github.com/firelex/jeff) via YAAMS_JEV_URL + YAAMS_JEV_MODEL.
+TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+URL = os.environ.get("YAAMS_JEV_URL", TYPESAFE_URL)
+MODEL = os.environ.get("YAAMS_JEV_MODEL", "jev-1.13.0")  # pinned: jev-latest moves on release
+DOLLARS_PER_TOKEN = 0.042 / 1_000_000 if URL == TYPESAFE_URL else 0.0
+MAX_QUESTIONS = 256
+MAX_TOKENS = 22_400  # 64k aggregate with 30% headroom; tokenizer is not public
+MAX_CHARS = 1_500
+JEV_DIR = Path(os.environ.get("YAAMS_JEV_DIR", Path.home() / "brain/feed/eval/jev"))
+RETRY_STATUS = {429, 500, 502, 503, 504, 529}
+BACKOFF = (1, 2, 4, 8, 16, 32)
+
+_log_lock = threading.Lock()
+# requests in flight across every caller's pools; Jeff serves one at a time (529 otherwise)
+_inflight = threading.BoundedSemaphore(int(os.environ.get("YAAMS_JEV_MAX_INFLIGHT", "64")))
+
+
+def est_tokens(text: str) -> int:
+  return len(text) // 3 + 1  # /3 not /4: Norwegian tokenizes worse than English
+
+
+def api_key() -> str:
+  key = os.environ.get("TYPESAFE_API_KEY")
+  if key:
+    return key
+  env = Path(os.environ.get("YAAMS_ENV_FILE", ".env"))
+  if env.exists():
+    for line in env.read_text().splitlines():
+      k, _, v = line.partition("=")
+      if k.strip().removeprefix("export ").strip() == "TYPESAFE_API_KEY":
+        return v.strip().strip("'\"")
+  raise RuntimeError("TYPESAFE_API_KEY not set (env or ./.env)")
+
+
+def pack(items: list[tuple[str, str]], fixed_tokens: int, criterion: str | None,
+         max_questions: int = MAX_QUESTIONS, max_tokens: int = MAX_TOKENS) -> list[list[tuple[str, str]]]:
+  """Split (id, text) into requests bounded by question count and estimated tokens.
+  fixed_tokens is the state; each question costs its text plus the criterion."""
+  per_q = est_tokens(criterion) if criterion else 0
+  out: list[list[tuple[str, str]]] = []
+  cur: list[tuple[str, str]] = []
+  tok = fixed_tokens
+  for qid, text in items:
+    t = est_tokens(text) + per_q
+    if cur and (len(cur) >= max_questions or tok + t > max_tokens):
+      out.append(cur)
+      cur, tok = [], fixed_tokens
+    cur.append((qid, text))
+    tok += t
+  if cur:
+    out.append(cur)
+  return out
+
+
+def _log_usage(row: dict) -> None:
+  JEV_DIR.mkdir(parents=True, exist_ok=True)
+  with _log_lock, open(JEV_DIR / "usage.jsonl", "a") as f:
+    f.write(json.dumps(row) + "\n")
+
+
+def _post(body: dict, tag: str, url: str | None = None, timeout: float = 300) -> dict | None:
+  """One request with retry on 429/529/5xx. None after retries; 4xx raises."""
+  data = json.dumps(body).encode()
+  url = url or URL
+  headers = {"Content-Type": "application/json"}
+  if url == TYPESAFE_URL:  # never send the TypeSafe key anywhere else
+    headers["Authorization"] = f"Bearer {api_key()}"
+  req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+  for wait in (*BACKOFF, None):
+    try:
+      with _inflight:
+        t0 = time.perf_counter()  # after the in-flight wait: latency is the request only
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+          resp = json.loads(r.read())
+          rid = r.headers.get("x-request-id") or r.headers.get("request-id")
+          ms = (time.perf_counter() - t0) * 1000
+    except urllib.error.HTTPError as e:
+      if e.code not in RETRY_STATUS:
+        raise RuntimeError(f"jev {e.code}: {e.read()[:500]!r}") from e
+      if wait is None:
+        return None
+      time.sleep(float(e.headers.get("retry-after") or wait))
+      continue
+    except (urllib.error.URLError, TimeoutError):
+      if wait is None:
+        return None
+      time.sleep(wait)
+      continue
+    _log_usage({
+      "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "tag": tag,
+      "model": resp.get("model"), "n_questions": len(body["questions"]),
+      "input_tokens": (resp.get("usage") or {}).get("input_tokens"),
+      "est_tokens": est_tokens(data.decode()),
+      "latency_ms": round(ms, 1),
+      "request_id": rid, "cached": False})
+    return resp
+  return None
+
+
+class _Cache:
+  def __init__(self, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    self.db = sqlite3.connect(path, timeout=30, check_same_thread=False)
+    self.db.execute("PRAGMA journal_mode=WAL")
+    self.db.execute("CREATE TABLE IF NOT EXISTS scores (k TEXT PRIMARY KEY, v REAL)")
+    self.lock = threading.Lock()
+
+  def get(self, keys: list[str]) -> dict[str, float]:
+    out = {}
+    with self.lock:
+      for i in range(0, len(keys), 500):
+        chunk = keys[i:i + 500]
+        q = f"SELECT k, v FROM scores WHERE k IN ({','.join('?' * len(chunk))})"
+        out.update(self.db.execute(q, chunk).fetchall())
+    return out
+
+  def put(self, rows: dict[str, float]) -> None:
+    with self.lock, self.db:
+      self.db.executemany("INSERT OR REPLACE INTO scores VALUES (?, ?)", rows.items())
+
+
+_cache: _Cache | None = None
+
+
+def _get_cache() -> _Cache:
+  global _cache
+  if _cache is None:
+    _cache = _Cache(JEV_DIR / "cache.db")
+  return _cache
+
+
+# Relevance question `rel-1`, shared by B4 / B2 / A2 so their scores share the
+# cache: the state, criterion and candidate text must stay byte-identical.
+REL_CRITERION = "This item contains evidence that answers the question or directly helps answer it."
+REL_OWNER = "Kim (Carl Joakim Damsleth); 'I', 'me', 'my' refer to him"
+
+
+def rel_state(question: str, asked_on: str) -> dict:
+  return {"question": question, "asked_on": asked_on, "owner": REL_OWNER,
+          "criterion": REL_CRITERION}
+
+
+def rel_texts(conn: sqlite3.Connection, ids: list[str]) -> dict[str, str]:
+  """rel-1 candidate text per id (items and `cons:` consolidations), from the
+  stored rows so timestamps are the db strings, not re-formatted datetimes."""
+  out: dict[str, str] = {}
+  items = [i for i in ids if not i.startswith("cons:")]
+  cons = [i for i in ids if i.startswith("cons:")]
+  for i in range(0, len(items), 500):
+    ch = items[i:i + 500]
+    for r in conn.execute("SELECT id, source, timestamp, subject, content FROM items "
+                          f"WHERE id IN ({','.join('?' * len(ch))})", ch):
+      out[r[0]] = f"[{r[1]} | {r[2]} | {r[3] or ''}]\n{(r[4] or '')[:MAX_CHARS]}"
+  for i in range(0, len(cons), 500):
+    ch = cons[i:i + 500]
+    for r in conn.execute("SELECT id, source, start_timestamp, end_timestamp, summary FROM "
+                          f"consolidations WHERE id IN ({','.join('?' * len(ch))})", ch):
+      out[r[0]] = f"[{r[1]} | {r[2]} - {r[3]} | consolidation]\n{r[4][:MAX_CHARS]}"
+  return out
+
+
+def cache_key(state: dict, text: str, criterion_version: str, model: str = MODEL) -> str:
+  s = json.dumps(state, sort_keys=True, ensure_ascii=False)
+  return hashlib.sha256(f"{model}|{criterion_version}|{s}|{text}".encode()).hexdigest()
+
+
+def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion_version: str,
+         tag: str, workers: int = 8, max_questions: int = MAX_QUESTIONS,
+         max_tokens: int = MAX_TOKENS, use_cache: bool = True,
+         stats: dict | None = None, url: str | None = None, model: str | None = None,
+         cache_model: str | None = None, timeout: float = 300,
+         deadline_s: float | None = None) -> dict[str, float]:
+  """Score each item text against `criterion` given `state`. A failed id is
+  missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
+  criterion=None sends no per-question `criteria`: put it in `state` once instead.
+  `url`/`model` override the module defaults per call; `cache_model` names the
+  scores in the cache when `model` is an alias (a local Jeff answers to
+  `jeff-latest` whichever checkpoint it serves). With `deadline_s` (an unattended
+  caller), batches not started by then, or after any batch fails, are skipped:
+  their ids stay missing and the next run retries them."""
+  use_cache = use_cache and os.environ.get("YAAMS_JEV_NO_CACHE") != "1"
+  model = model or MODEL
+  texts = {k: v[:MAX_CHARS] for k, v in items.items()}
+  keys = {k: cache_key(state, t, criterion_version, cache_model or model) for k, t in texts.items()}
+  out: dict[str, float] = {}
+  if use_cache:
+    hit = _get_cache().get(list(keys.values()))
+    out = {k: hit[ck] for k, ck in keys.items() if ck in hit}
+  todo = [(k, t) for k, t in texts.items() if k not in out]
+  if os.environ.get("YAAMS_JEV_CACHE_ONLY") == "1":  # no network: uncached ids stay missing
+    return out
+  state_tok = est_tokens(json.dumps(state, ensure_ascii=False))
+  batches = pack(todo, state_tok, criterion, max_questions, max_tokens)
+
+  end = None if deadline_s is None else time.monotonic() + deadline_s
+  stop = threading.Event()
+
+  def run(batch: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], dict | None]:
+    if stop.is_set() or (end is not None and time.monotonic() > end):
+      return batch, None
+    # question ids are positional: ids never reach the model, and item ids can be long
+    crit = {"criteria": {"true": criterion}} if criterion else {}
+    qs = {f"q{i}": {"type": "noul", "instructions": t, **crit} for i, (_, t) in enumerate(batch)}
+    resp = _post({"model": model, "state": state, "questions": qs}, tag, url, timeout)
+    if resp is None and end is not None:
+      stop.set()
+    return batch, resp
+
+  with ThreadPoolExecutor(max_workers=workers) as ex:
+    for batch, resp in ex.map(run, batches):
+      if stats is not None:
+        stats["requests"] = stats.get("requests", 0) + 1
+        stats["input_tokens"] = stats.get("input_tokens", 0) + (
+          ((resp or {}).get("usage") or {}).get("input_tokens") or 0)
+      if resp is None:
+        continue
+      answers = resp.get("answers") or {}
+      got = {}
+      for i, (k, _) in enumerate(batch):
+        a = answers.get(f"q{i}")
+        if a and isinstance(a.get("noul"), (int, float)):
+          got[k] = float(a["noul"])
+      out.update(got)
+      if use_cache and got:
+        _get_cache().put({keys[k]: v for k, v in got.items()})
+  return out
+
+
+def choice(state: dict, text: str, labels: dict[str, str], *, tag: str) -> tuple[str | None, dict]:
+  """One `choice` question. Returns (label, probabilities); (None, {}) on failure."""
+  # ponytail: uncached, one question per call; batch it when B3 needs volume
+  resp = _post({"model": MODEL, "state": state, "questions": {
+    "q": {"type": "choice", "instructions": text, "criteria": labels}}}, tag)
+  a = ((resp or {}).get("answers") or {}).get("q") or {}
+  return a.get("choice"), a.get("probabilities") or {}

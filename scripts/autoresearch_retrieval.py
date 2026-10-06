@@ -84,7 +84,7 @@ from yaams.retrieve import (  # noqa: E402
     route,
 )
 from yaams.retrieve import query as run_query  # noqa: E402
-from yaams.retrieve.parse import promote_entities, promotion_map  # noqa: E402
+from yaams.retrieve.parse import _fallback, promote_entities, promotion_map  # noqa: E402
 from yaams.retrieve.synonyms import normalize_synonym_groups  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
@@ -126,6 +126,9 @@ def _parsed_from_json(raw_json: str | None, fallback_raw: str) -> ParsedQuery | 
     if not raw_json:
         return None
     d = json.loads(raw_json)
+    if d.get("fallback_used"):
+        # the fallback is a pure function of the text: replay what production builds today
+        return _fallback(d.get("raw") or fallback_raw)
     dr = d.get("date_range") or [None, None]
     start = parse_iso_datetime(dr[0]) if dr and dr[0] else None
     end = parse_iso_datetime(dr[1]) if dr and len(dr) > 1 and dr[1] else None
@@ -251,6 +254,11 @@ def _replay_one(
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
     if not _OCCURRENCE_BROWSE:
         qcfg.occurrence_browse = False
+    if qcfg.sort in ("asc", "desc") and row["ts"]:
+        # A first/last answer cannot postdate the question: replay the corpus as of
+        # the ask, or a newest-first sort ranks later items above the gold (wiki P7).
+        asked = parse_iso_datetime(row["ts"])
+        qcfg.until = asked if qcfg.until is None else min(qcfg.until, asked)
     if feedback_boost:
         qcfg.feedback_boost = True
         # Leave-one-out: this gold query must not boost its own gold doc via its

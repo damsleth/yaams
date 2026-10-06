@@ -160,6 +160,28 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- "Speaking with" someone now means a conversation
+  (`yaams.enrich.participants.conversation_items`): a message the person or
+  the user sent that either went 1:1 to the other, or that the other answered
+  in the same thread within 2 h. A third party's message to a big group both
+  are in (a duty roster) or the person's unanswered group broadcast no longer
+  wins "when did I last speak with X". The contact eval builds its answer keys
+  with the same function (`~/brain/feed/eval/{last,first}_contact_cases.jsonl`,
+  18 cases each; the looser v1 keys are kept as `*_v1.jsonl`).
+- Without an LLM backend the parser's fallback recognizes "when did I
+  first/last …" and "når … sist / første gang" and routes them as
+  first/last questions; before, every fallback query was factual and lost
+  the whole occurrence path (about 10% of live queries fell back). The
+  harness replays a stored fallback parse with current code. "for" joins
+  the contact stoplist ("… for første gang").
+- The retrieval harness replays first/last questions on the corpus as of the
+  ask time: a newest-first sort ranked items created after the question above
+  the gold. Re-anchored (`era3-anchor-nojunk-askcutoff`, dev 0.5294 / test
+  0.5083). One dev gold now ranks 9: "when did i last speak with Fredrik
+  Nordmoen?" asked 2026-05-28 is labelled with a 2026-02-07 chat although 1:1
+  chats on 04-20, 04-25 and 04-27 precede the question (label needs review).
+- Contact eval at 1.0 hit@1 for last and first, with the LLM parse and with
+  the fallback parse (experiments 148).
 - The ingest junk pass no longer starts the model server when the score
   cache already covers every candidate. Kept rows stay candidates and come
   back each run, so every scheduled ingest paid about 17 s of server start

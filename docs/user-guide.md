@@ -490,8 +490,15 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   and consolidations directly by time, since the newest messages with
   someone rarely share words with the question. Asking when you first or
   last *spoke with* (met, called, wrote to) a person you have exchanged
-  messages with, only messages they sent or received count, not notes that
-  mention them; "when did I first hear about X" still counts mentions. Add a topic ("... about the budget") and relevance
+  messages with, only a conversation counts: a message one of you sent 1:1 to
+  the other, or one the other answered in the same thread within 2 hours. A
+  third party's message to a big group you are both in, a broadcast you never
+  answered, or a note that mentions them does not; "when did I first hear
+  about X" still counts mentions. This relies on `identity.self` listing every
+  address you write from (a missing work address hides that whole account
+  from first/last questions). It also works when no LLM backend is
+  reachable: the fallback parser recognizes "when did I first/last …" and
+  "når … sist / første gang". Add a topic ("... about the budget") and relevance
   ranks as before. History from before participant
   linking needs a one-off `python scripts/link_participants.py --live`
   (idempotent; rerun it after adding people or aliases to the dictionary).

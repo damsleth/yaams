@@ -80,7 +80,7 @@ def test_occurrence_lane_prefers_participation_over_mentions():
   conn = _open_db()
   eid = _bob(conn)
   base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
-  chat = _make_item(sender="Bob Smith", content="ok", ts=base, msg_id="chat")
+  chat = _make_item(sender="Bob Smith", recipients=["me"], content="ok", ts=base, msg_id="chat")
   note = _make_item(source="notes", sender="me", content="ask Bob", ts=base + timedelta(days=5), msg_id="note")
   store_items(conn, [chat, note], [b"\x00" * 16] * 2, [[]] * 2)
   conn.execute("INSERT INTO item_entities (item_id, entity_id, source) VALUES (?, ?, 'participant')",
@@ -97,6 +97,41 @@ def test_occurrence_lane_prefers_participation_over_mentions():
   # "first spoke with" skips the older mention; "first heard about" counts it
   assert query(conn, "zzz", config=replace(cfg, sort="asc"))[0].id == chat.id
   assert query(conn, "zzz", config=replace(cfg, sort="asc", occurrence_contact=False))[0].id == older.id
+
+
+def test_conversation_items_is_an_exchange_not_a_group_broadcast():
+  from yaams.enrich.participants import conversation_items
+
+  conn = _open_db()
+  t = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+  group = ["me", "Bob Smith", "x@y", "z@y"]
+  items = [
+    _make_item(thread_id="dm", sender="Bob Smith", recipients=["me"], ts=t, msg_id="dm"),
+    _make_item(thread_id="roster", sender="boss@y", recipients=group, ts=t, msg_id="third"),
+    _make_item(thread_id="code", sender="Bob Smith", recipients=group, ts=t, msg_id="broadcast"),
+    _make_item(thread_id="plan", sender="Bob Smith", recipients=group, ts=t, msg_id="asked"),
+    _make_item(thread_id="plan", sender="me", recipients=group, ts=t + timedelta(hours=1), msg_id="answered"),
+  ]
+  store_items(conn, items, [b"\x00" * 16] * len(items), [[]] * len(items))
+  kept = conversation_items(conn, [i.id for i in items], ["Bob Smith"], ["me"])
+  # 1:1 counts; a third party's group message and Bob's unanswered broadcast do not;
+  # a group thread where both wrote does
+  assert kept == {items[0].id, items[3].id, items[4].id}
+
+
+def test_fallback_parse_keeps_first_and_last_questions():
+  from yaams.retrieve.parse import _fallback
+
+  assert _fallback("when did i last speak with Fredrik Nordmoen?").shape == "last_occurrence"
+  assert _fallback("når snakket jeg med Anne for første gang?").shape == "first_occurrence"
+  assert _fallback("when did I first hear about NOCOS").sort == "asc"
+  # a date range or a list, not an occurrence
+  assert _fallback("what did i do last week?").shape == "factual"
+  assert _fallback("what are my last 10 messages with gustav").shape == "factual"
+  # and the fallback's whole-question topic term still counts as topic-free
+  parsed = _fallback("når snakket jeg med Anne Hjort for første gang?")
+  parsed.entities = ["Anne Hjort"]
+  assert route(parsed, HybridQueryConfig()).occurrence_browse
 
 
 def test_contact_verbs_vs_hearsay():

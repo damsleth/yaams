@@ -21,7 +21,7 @@ a worktree is silently lost.
 |---|---|---|
 | Frozen fixture (SQLite copy of the store, 42 gold; era 3: current dictionary seeded + 133,221 participant links) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
 | Era 2 fixture backup (same gold, no participant links, older dictionary) | `~/brain/feed/eval/autoresearch_fixture_era2-2026-10-06.db` | this page, section 1 |
-| Person-recall cases (last/first contact, 44 + 52) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
+| Person-recall cases (last/first contact, 18 + 18 conversations; looser v1 keys in `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
 | Manifest (fixture path, `source_db`, `gold_hash`, `gold_queries`, `corrections`, `total_queries`) | `scripts/autoresearch_scenario.json` | `scripts/autoresearch_freeze.py:33,81-88` |
 | Era label new experiment rows are tagged with | `docs/experiments/CURRENT_ERA` | you, by hand |
 | Era 1 fixture backup (79 gold, pre-curation) | `~/brain/feed/eval/autoresearch_fixture_pre-curation-2026-09-17.db` | `.plans/done/data-quality.md` "Promotion 2026-09-17" |
@@ -189,7 +189,11 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
   ~/brain/feed/eval/last_contact_cases.jsonl --db
   ~/brain/feed/eval/autoresearch_fixture.db`, and the same with
   `first_contact_cases.jsonl` (a change that helps "last" can cost "first",
-  wiki P7). Era 3 baselines: last 0.955, first 1.0 hit@1.
+  wiki P7). Answer keys use `conversation_items`, the same rule retrieval
+  uses, and `identity.self` from the live config; rebuild them
+  (`build --kind last|first`) when either changes. Baselines: 1.0 hit@1 for
+  both, with the LLM parse and with `--fallback-parse`. First/last questions
+  replay the corpus as of the ask time.
 - **Replays match production by default.** Production promotes names in
   `parse_query`; the stored parses predate that, so the harness promotes on
   replay (`--no-promote-entities` to switch it off), and route turns the

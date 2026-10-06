@@ -227,14 +227,27 @@ def _parse_llm(
   return _coerce(raw, payload, validation_resolver)
 
 
+# Without an LLM every query used to be factual, so "when did I last speak with X"
+# lost the whole occurrence path (lane, participant filter). Only the unambiguous
+# question forms: "what did I do last week" is a date range, not an occurrence.
+# ponytail: two regexes; widen when a logged fallback query shows a missed form
+_FALLBACK_OCCURRENCE = (
+  (re.compile(r"\bwhen did i (?:\w+ )?first\b|\bnår\b.*\b(?:første gang|først)\b", re.I),
+   "first_occurrence", "asc"),
+  (re.compile(r"\bwhen did i (?:\w+ )?last\b|\bwhen was the last time\b|\bnår\b.*\bsist\b", re.I),
+   "last_occurrence", "desc"),
+)
+
+
 def _fallback(raw: str) -> ParsedQuery:
+  shape, sort = next(((s, o) for rx, s, o in _FALLBACK_OCCURRENCE if rx.search(raw)), ("factual", "relevance"))
   return ParsedQuery(
     raw=raw,
-    shape="factual",
+    shape=shape,
     entities=[],
     date_range=(None, None),
     topic_terms=[raw] if raw else [],
-    sort="relevance",
+    sort=sort,
     prefer_tier=None,
     high_quality=False,
     fallback_used=True,

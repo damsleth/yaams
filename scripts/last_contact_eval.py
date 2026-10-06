@@ -24,6 +24,7 @@ import autoresearch_retrieval as ar  # noqa: E402
 from yaams.cli._shared import _embed_config, _self_identities  # noqa: E402
 from yaams.config import load_config  # noqa: E402
 from yaams.db import open_db  # noqa: E402
+from yaams.enrich.participants import conversation_items  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
 TEMPLATES = {
@@ -47,19 +48,22 @@ def build(a):
   pick = random.Random(20261006).sample(people, min(a.n, len(people)))
   llm = llm_adapter_from_config(cfg)
   cases = []
-  def with_owner(item_id):  # "spoke with" = the owner is a participant too (route's participant_filter)
-    s, r = conn.execute("SELECT sender, recipients FROM items WHERE id=?", (item_id,)).fetchone()
-    people = [s or ""] + (json.loads(r) if r and r.startswith("[") else [])
-    return any(str(p).strip().lower() in selfs_all for p in people)
+  def person_names(eid):
+    canon, aliases = conn.execute("SELECT canonical_name, aliases FROM entities WHERE id=?", (eid,)).fetchone()
+    al = json.loads(aliases or "[]")
+    return [canon, *(x for x in (al if isinstance(al, list) else []) if isinstance(x, str))]
 
   selfs_all = selfs | {"me"}
   corpus_end = parse_iso_datetime(conn.execute("SELECT max(timestamp) FROM items").fetchone()[0])
   first = a.kind == "first"
   for eid, name, n in pick:
-    direct = [r for r in conn.execute(
+    linked = conn.execute(
       "SELECT i.id, i.thread_id, i.timestamp FROM item_entities ie JOIN items i ON i.id = ie.item_id "
       "WHERE ie.entity_id = ? AND ie.source = 'participant' ORDER BY i.timestamp " + ("ASC" if first else "DESC"),
-      (eid,)) if with_owner(r[0])]
+      (eid,)).fetchall()
+    # the answer is a conversation, by the same rule retrieval uses
+    talk = conversation_items(conn, [r[0] for r in linked], person_names(eid), selfs_all)
+    direct = [r for r in linked if r[0] in talk]
     if not direct:
       print(f"{name!r}: no direct conversation with the owner, skipped")
       continue
@@ -106,7 +110,9 @@ def run(a):
   cases = [json.loads(line) for line in open(a.cases)]
   rows = []
   for c in cases:
-    row = {"query_id": c["query_id"], "text": c["text"], "parsed_query": c["parsed_query"],
+    parsed_query = (json.dumps({"raw": c["text"], "fallback_used": True}) if a.fallback_parse
+                    else c["parsed_query"])
+    row = {"query_id": c["query_id"], "text": c["text"], "parsed_query": parsed_query,
            "source_filter": None, "since": None, "until": c["ts"], "ts": c["ts"], "result_id": c["latest"]}
     ar._replay_one(conn, emb, _self_identities(cfg), row, syn, exclude_junk=a.exclude_junk)
     # a consolidated conversation is retrieved as its consolidation, so that counts too
@@ -154,6 +160,7 @@ def main():
   r.add_argument("--cases", required=True)
   r.add_argument("--db", required=True)
   r.add_argument("--no-promote-entities", action="store_true")
+  r.add_argument("--fallback-parse", action="store_true", help="replay as if the LLM parser were down")
   r.add_argument("--exclude-junk", action="store_true")
   r.add_argument("--ranks-out")
   r.add_argument("--no-occurrence-browse", action="store_true")

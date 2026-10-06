@@ -396,7 +396,7 @@ def query(
       if cfg.occurrence_contact else (set(), set())
     )
     if p_items:
-      items, cons = p_items, p_cons
+      items, cons = _exchanges(conn, cfg, p_items)
       hydrated = [r for r in hydrated if r.id in items or r.id in cons]
     if part_item_allow is not None:
       items, cons = items & part_item_allow, cons & (part_cons_allow or set())
@@ -563,6 +563,34 @@ def _resolve_entity_allowlist(
       r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
     )
   return item_ids, cons_ids
+
+
+def _exchanges(
+  conn: sqlite3.Connection, cfg: HybridQueryConfig, item_ids: set[str],
+) -> tuple[set[str], set[str]]:
+  """The participant-linked items that are a conversation between the user and the
+  person (yaams.enrich.participants.conversation_items): a third party's message to
+  a big group both are in, or the person's broadcast the user never answered, is not
+  "speaking with" them, and on a newest-first sort it would beat the last real
+  conversation. Consolidations count when any member item does."""
+  from yaams.enrich.participants import conversation_items
+
+  names = [n.lower() for n in cfg.entity_filter or []]
+  person: list[str] = []
+  if names:
+    for canon, aliases in conn.execute(
+      f"SELECT canonical_name, aliases FROM entities WHERE lower(canonical_name) IN ({','.join('?' * len(names))})",
+      names,
+    ):
+      try:
+        alias_list = json.loads(aliases or "[]")
+      except (TypeError, ValueError):
+        alias_list = []
+      person += [canon, *(a for a in (alias_list if isinstance(alias_list, list) else []) if isinstance(a, str))]
+  keep = conversation_items(conn, item_ids, person, cfg.participant_filter or [])
+  cons = {cid for cid, raw in conn.execute("SELECT id, raw_item_ids FROM consolidations")
+          if any(i in keep for i in json.loads(raw or "[]"))}
+  return keep, cons
 
 
 def _resolve_participant_allowlist(

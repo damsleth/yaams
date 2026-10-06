@@ -107,3 +107,21 @@ Several "retrieval failures" were the harness.
   re-anchor and bump `CURRENT_ERA`. The strict best-of-3 verify gate is doing
   real work (it also rejects BAD_LABEL false positives); do not weaken
   `--votes` to force a flaky gold through.
+
+## P7. Person recall is a pipeline, not a knob; the gold set cannot see it
+
+"When did I last speak with X" fails at three independent stages, and fixing
+any one alone measures as zero.
+
+- Evidence (oct06, `scripts/last_contact_eval.py`, 44 cases / 22 people,
+  EN+NB): the parse prompt lists only the top-40 entities, so long-tail names
+  become topic terms (fix: name promotion); `item_entities` is content-NER
+  only, so messages from/to a person are unlinked (fix: participant links);
+  entity/participant allowlists only post-filter a text-retrieved pool, so the
+  newest items, which share no words with the question, are never candidates
+  (fix: `occurrence_browse` lane). hit@1: each alone <= 0.14, all three 0.59
+  (+0.14 newer person-linked top-1). Gold dev +0.0013, test unchanged: the
+  gold set has 4 person-name queries of 38.
+- Implication: judge entity/person work on the last-contact eval, not the
+  gold-set quality scalar; a neutral gold delta is the non-regression check,
+  not the verdict.

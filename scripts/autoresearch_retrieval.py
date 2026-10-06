@@ -107,6 +107,7 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
 _PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
+_OCCURRENCE_BROWSE = False  # --occurrence-browse: HybridQueryConfig.occurrence_browse
 
 
 def _load_promotions(conn) -> None:
@@ -270,6 +271,7 @@ def _replay_one(
     else:
         qcfg = base
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
+    qcfg.occurrence_browse = _OCCURRENCE_BROWSE
     if feedback_boost:
         qcfg.feedback_boost = True
         # Leave-one-out: this gold query must not boost its own gold doc via its
@@ -328,6 +330,8 @@ def _mode_label(args) -> str:
         base = f"{base}+reparse"
     if getattr(args, "promote_entities", False):
         base = f"{base}+promote"
+    if getattr(args, "occurrence_browse", False):
+        base = f"{base}+occbrowse"
     return base
 
 
@@ -369,7 +373,11 @@ def main() -> int:
                     help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
     ap.add_argument("--promote-entities", action="store_true",
                     help="Promote exact multi-word dictionary names in the query text to entities")
+    ap.add_argument("--occurrence-browse", action="store_true",
+                    help="Enable the occurrence lane for timestamp-sorted queries with an allowlist")
     args = ap.parse_args()
+    global _OCCURRENCE_BROWSE
+    _OCCURRENCE_BROWSE = args.occurrence_browse
     if args.parse_override:
         _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
 

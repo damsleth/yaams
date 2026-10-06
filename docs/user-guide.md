@@ -461,6 +461,19 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   Start at `days: 60, weight: 0.5` (weight scales the lane's contribution;
   1.0 lets a lone recent hit tie an established top result), and do not run
   it together with `recency_decay`.
+- **"When did I last speak with X?"** works through three pieces, all on by
+  default. Every ingest links each new message to the people who sent or
+  received it (`item_entities.source = 'participant'`, matched exactly on
+  person names and aliases, incl. emails and phone numbers; the ingest
+  envelope reports `stats.participant_links`). The parser promotes an exact
+  2-4 word person/org/place name or alias in the question to an entity, even
+  when it is outside the top-40 entities the LLM sees. And for a first/last
+  query with an entity filter, the *occurrence lane* lists that entity's
+  newest (or oldest) items and consolidations directly by time, since the
+  newest messages with someone rarely share words with the question. History
+  from before participant linking needs a one-off
+  `python scripts/link_participants.py --live` (idempotent; rerun it after
+  adding people or aliases to the dictionary).
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

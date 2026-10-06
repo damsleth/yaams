@@ -556,10 +556,26 @@ def test_occurrence_browse_surfaces_newest_linked_item_without_text_match():
   cfg = HybridQueryConfig(
     top_k=5, sort="desc", include_consolidations=False, entity_filter=["Bob Smith"]
   )
-  assert newest.id not in {r.id for r in query(conn, "speak with Bob Smith", config=cfg)}
-  results = query(conn, "speak with Bob Smith", config=replace(cfg, occurrence_browse=True))
+  off = replace(cfg, occurrence_browse=False)
+  assert newest.id not in {r.id for r in query(conn, "speak with Bob Smith", config=off)}
+  results = query(conn, "speak with Bob Smith", config=cfg)
   assert results[0].id == newest.id
   assert other.id not in {r.id for r in results}
+
+
+def test_occurrence_browse_needs_an_entity_filter():
+  # Participant filter alone ("when did I last talk about the budget"): the lane
+  # must not list the owner's newest messages on unrelated topics.
+  conn = _open_db()
+  base = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+  hit = _make_item(sender="me", content="the budget is approved", ts=base, msg_id="hit")
+  newest = _make_item(sender="me", content="ok, ses i morgen", ts=base + timedelta(days=9), msg_id="new")
+  store_items(conn, [hit, newest], [b"\x00" * 16] * 2, [[]] * 2)
+  cfg = HybridQueryConfig(
+    top_k=5, sort="desc", include_consolidations=False, participant_filter=["me"]
+  )
+  ids = [r.id for r in query(conn, "budget", config=cfg)]
+  assert ids == [hit.id]
 
 
 def test_entity_filter_drops_unrelated_consolidation():

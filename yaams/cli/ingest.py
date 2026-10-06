@@ -20,6 +20,7 @@ from yaams.cli._shared import (
   _embedding_dim,
   _entity_dictionary,
   _format_duration,
+  _self_identities,
   _size_mb,
   config_option,
 )
@@ -309,6 +310,13 @@ def ingest(
     # `entities discover` / `import-people`) and de-dupes aliases. Skipped on
     # dry runs and when there is no JSON store (legacy inline dictionaries).
     entity_cleanup = None if dry_run else _cleanup_entity_dictionary(cfg)
+    # Participant links: NER only tags content, so link this run's items to the
+    # people who sent or received them (last-contact queries filter on these).
+    participant_links = None
+    if not dry_run:
+      from yaams.enrich.participants import link_participants
+
+      participant_links = link_participants(conn, _self_identities(cfg), since=run_started_at)
     # Junk annotation (quality.annotate_on_ingest): mechanical rules, then the
     # optional junk model. Off by default; never fails the ingest.
     junk_stats = None
@@ -330,6 +338,8 @@ def ingest(
       )
       if junk_stats is not None:
         envelope["stats"]["junk"] = junk_stats
+      if participant_links is not None:
+        envelope["stats"]["participant_links"] = participant_links
       summary = _post_ingest_summary(conn, cfg, run_started_at, run_stats, dry_run)
       if summary is not None:
         envelope["stats"]["summary"] = {
@@ -350,6 +360,8 @@ def ingest(
       total_duration_ms=total_duration_ms,
       entity_cleanup=entity_cleanup,
     )
+    if participant_links and participant_links["linked"]:
+      click.echo(f"  Participant links: {participant_links['linked']:,} new")
     if junk_stats is not None:
       model = junk_stats.get("model") or {}
       counts = {k: v for k, v in {**junk_stats, **model}.items() if k.startswith(("mech:", "llm:"))}

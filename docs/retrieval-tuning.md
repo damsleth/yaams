@@ -184,9 +184,12 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
 - **Person/entity work** is invisible to the gold set (4 person-name queries
   of 38, wiki P7). Use the gold run only as the non-regression check, and
   judge it on `scripts/last_contact_eval.py run --cases <cases.jsonl> --db
-  <copy>` with the same flags (`--promote-entities`, `--occurrence-browse`).
-  Participant links (`scripts/link_participants.py`) mutate the corpus, so
-  they go on a copy.
+  <copy> --promote-entities`. Production promotes names in the parser, but
+  stored parses predate that, so replays need `--promote-entities` to match
+  production; the occurrence lane is on by default (`--no-occurrence-browse`
+  for the anchor). The frozen fixture has no participant links, so a
+  production-faithful run uses a copy linked with
+  `scripts/link_participants.py --db <copy>`.
 
 ## 5. Recording: win or lose
 

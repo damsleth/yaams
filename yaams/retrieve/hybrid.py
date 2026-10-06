@@ -97,12 +97,13 @@ class HybridQueryConfig:
   # tangential match can't win first/last just by being the oldest/newest.
   # 0 disables. Set by route() for first/last_occurrence, not by explicit sort.
   relevance_floor: float = 0.0
-  # Occurrence lane: a timestamp-sorted query with an entity filter also lists
-  # the allowlisted items (and consolidations) directly by time, so "when did I last speak
+  # Occurrence lane (route sets it for topic-free first/last entity questions):
+  # a timestamp-sorted query with an entity filter also lists the allowlisted
+  # items (and consolidations) directly by time, so "when did I last speak
   # with X" sees X's newest messages even when they share no words with the
   # question (the index lanes are text matches, filtered after the fact). Lane
   # items are exempt from relevance_floor: the allowlist is their relevance.
-  occurrence_browse: bool = True
+  occurrence_browse: bool = False
   # Query shape forwarded from ParsedQuery so _hydrate_item can gate
   # shape-specific credits (e.g. tier2_factual_coverage_recovery).
   query_shape: str = "factual"
@@ -826,10 +827,13 @@ def _browse_allowlist(
         AND (? = '' OR source IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR end_timestamp >= ?)
         AND (? IS NULL OR start_timestamp <= ?)
+        AND (? = '' OR EXISTS (SELECT 1 FROM json_each(participants) p
+                               WHERE p.value IN (SELECT value FROM json_each(?))))
       ORDER BY start_timestamp {order}
       LIMIT ?
       """,
-      (json.dumps(sorted(allowed_cons)),) + _filter_params(cfg, repo=False) + (cap,),
+      (json.dumps(sorted(allowed_cons)),) + _filter_params(cfg, repo=False)
+      + _sender_params(cfg) + (cap,),
     ).fetchall()
     out += [r for r in (_hydrate_consolidation(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
   out.sort(key=lambda r: r.timestamp, reverse=order == "DESC")
@@ -852,14 +856,21 @@ def _browse_allowlist_items(
       AND (? IS NULL OR lang = ?)
       AND (? = 0 OR timestamp_inferred = 0)
       AND (? = 0 OR junk_reason IS NULL)
+      AND (? = '' OR sender IN (SELECT value FROM json_each(?)))
       AND consolidated_into IS NULL
     ORDER BY timestamp {order}
     LIMIT ?
     """,
     (json.dumps(sorted(allowed)),) + _filter_params(cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg), cap),
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg))
+    + _sender_params(cfg) + (cap,),
   ).fetchall()
   return [r for r in (_hydrate_item(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
+
+
+def _sender_params(cfg: HybridQueryConfig) -> tuple[str, str]:
+  """sender_filter in SQL, so the lane's LIMIT counts only rows hydration keeps."""
+  return ("" if not cfg.sender_filter else "filter", json.dumps(cfg.sender_filter or []))
 
 
 def _exclude_junk(cfg: HybridQueryConfig) -> int:

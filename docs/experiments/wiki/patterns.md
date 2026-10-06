@@ -126,6 +126,12 @@ any one alone measures as zero.
 - Eval trap: replay as of the ask (`until` = ask time). Without it, items after
   the question fill a newest-first lane, and a first run reported 0.59 with
   0.14 "newer mention" top-1s that were really leakage (seq 135 -> 136).
+- Scope each piece to where it is safe (seq 138): the lane only for
+  topic-free first/last entity questions (a topic word must keep relevance in
+  charge), promotion only for curated entities and participant-linked people
+  (NER orgs/places are phrases, and promotion is a hard filter). Duplicate
+  person entities now cost recall directly; merge them rather than relaxing
+  the canonical-first linking.
 - Implication: judge entity/person work on the last-contact eval, not the
   gold-set quality scalar; a neutral gold delta is the non-regression check,
   not the verdict.

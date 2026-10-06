@@ -186,10 +186,13 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
   judge it on `scripts/last_contact_eval.py run --cases <cases.jsonl> --db
   <copy> --promote-entities`. Production promotes names in the parser, but
   stored parses predate that, so replays need `--promote-entities` to match
-  production; the occurrence lane is on by default (`--no-occurrence-browse`
-  for the anchor). The frozen fixture has no participant links, so a
-  production-faithful run uses a copy linked with
-  `scripts/link_participants.py --db <copy>`.
+  production; route turns the occurrence lane on as in production
+  (`--no-occurrence-browse` for the anchor). The frozen fixture has no
+  participant links and an older entity dictionary, so a production-faithful
+  run uses a copy that is first seeded with the current dictionary
+  (`yaams.store.seed_entities`, as every ingest does) and then linked with
+  `scripts/link_participants.py --db <copy>`; linking without the seed finds
+  about a quarter of the links.
 
 ## 5. Recording: win or lose
 

@@ -649,7 +649,11 @@ def _replace_entity_links(
   tags: Sequence[EntityTag],
 ) -> int:
   inserted = 0
-  conn.execute("DELETE FROM item_entities WHERE item_id = ?", (item_id,))
+  # Participant links come from sender/recipients, not content tags: a retag or
+  # reindex must not drop them (yaams.enrich.participants only links new items).
+  conn.execute(
+    "DELETE FROM item_entities WHERE item_id = ? AND source IS NOT 'participant'", (item_id,)
+  )
   for canonical, entity_type, confidence, source in tags:
     entity_id = upsert_entity(conn, canonical, entity_type, source)
     cursor = conn.execute(

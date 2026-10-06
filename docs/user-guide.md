@@ -296,8 +296,12 @@ the owner's own junk/keep labels (`scripts/jeff_junk_ftdata.py`), served on
 MLX. It labels rows `llm:junk-jeff`. If nothing answers at `url`, `serve_cmd`
 starts a server for the pass and stops it afterwards, so nothing stays
 resident; with neither, the pass is skipped with a note and the ingest still
-succeeds. An item that was ever a hit or correction answer is never hidden.
-Scores are cached, so a row kept on one run costs a cache lookup on the next.
+succeeds. An item that was ever a hit or correction answer is never hidden,
+by the model or the mechanical rules. Scores are cached, so a row kept on one
+run costs a cache lookup on the next. `timeout_s` (120) bounds one request and
+`deadline_s` (900) the pass: after it, or after a failed batch, no new batch
+starts and the rest waits for the next run, so a stalled server cannot hold up
+the schedule. A failure in this pass is reported, never fatal to the ingest.
 
 The prompt the model sees (`yaams.quality.junk_block`) is the training
 contract: changing it means retraining.
@@ -465,15 +469,18 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   default. Every ingest links each new message to the people who sent or
   received it (`item_entities.source = 'participant'`, matched exactly on
   person names and aliases, incl. emails and phone numbers; the ingest
-  envelope reports `stats.participant_links`). The parser promotes an exact
-  2-4 word person/org/place name or alias in the question to an entity, even
-  when it is outside the top-40 entities the LLM sees. And for a first/last
-  query with an entity filter, the *occurrence lane* lists that entity's
-  newest (or oldest) items and consolidations directly by time, since the
-  newest messages with someone rarely share words with the question. History
-  from before participant linking needs a one-off
-  `python scripts/link_participants.py --live` (idempotent; rerun it after
-  adding people or aliases to the dictionary).
+  envelope reports `stats.participant_links`). An alias two people share
+  links neither, so give people distinct aliases and merge duplicates
+  (`yaams entities merge`). The parser promotes an exact 2-4 word name or
+  alias in the question to an entity, even when it is outside the top-40
+  entities the LLM sees, for curated entities and people with participant
+  links. And for a first/last question about an entity with no other topic
+  words, the *occurrence lane* lists that entity's newest (or oldest) items
+  and consolidations directly by time, since the newest messages with
+  someone rarely share words with the question. Add a topic ("... about the
+  budget") and relevance ranks as before. History from before participant
+  linking needs a one-off `python scripts/link_participants.py --live`
+  (idempotent; rerun it after adding people or aliases to the dictionary).
 - **`--assoc`** widens entity-filtered results to co-occurring entities,
   ranked below exact matches. Requires a resolved query entity and a built
   association table (`yaams assoc build`).

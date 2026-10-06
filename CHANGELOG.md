@@ -35,10 +35,11 @@ surface; pin to a specific version if you need stability.
     the relevance floor. Allowlists only post-filtered the text-retrieved
     pool, so X's newest messages, which share no words with the question,
     never became candidates. "When did I last discuss the budget with X"
-    keeps relevance in charge. For someone with participant links, contact
-    means a message they sent or received: the result set is limited to
-    those links, so a note that mentions them (or a one-word alias like
-    "Jan") does not count. Orgs and projects keep every link.
+    keeps relevance in charge. For a "last" question about someone with
+    participant links, contact means a message they sent or received: the
+    result set is limited to those links, so a note that mentions them (or a
+    one-word alias like "Jan") does not count. "First" questions ("when did I
+    first hear about X") and orgs/projects keep every link.
   Last-contact hit@1 0.07 -> 0.77 (44 cases, 22 people, EN+NB, on a fixture
   copy seeded and linked like live ingest); gold dev +0.0013 with 0 rank-1
   regressions, test unchanged (experiments 134-138, wiki P7).

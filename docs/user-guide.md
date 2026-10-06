@@ -487,9 +487,10 @@ yaams query --tag customer --tag-mode boost "..."   # lift, don't restrict
   links. And for a first/last question about an entity with no other topic
   words, the *occurrence lane* lists that entity's newest (or oldest) items
   and consolidations directly by time, since the newest messages with
-  someone rarely share words with the question. For a person you have
-  exchanged messages with, only messages they sent or received count, not
-  notes that mention them. Add a topic ("... about the budget") and relevance
+  someone rarely share words with the question. Asking when you *last* spoke
+  with a person you have exchanged messages with, only messages they sent or
+  received count, not notes that mention them; "when did I first hear about
+  X" still counts mentions. Add a topic ("... about the budget") and relevance
   ranks as before. History from before participant
   linking needs a one-off `python scripts/link_participants.py --live`
   (idempotent; rerun it after adding people or aliases to the dictionary).

@@ -181,6 +181,12 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
 - Before believing a miss, check the query row's `parsed_query` and
   `parser_fallback` (wiki P6); a degraded parse is a measurement gap, not a
   retrieval gap.
+- **Person/entity work** is invisible to the gold set (4 person-name queries
+  of 38, wiki P7). Use the gold run only as the non-regression check, and
+  judge it on `scripts/last_contact_eval.py run --cases <cases.jsonl> --db
+  <copy>` with the same flags (`--promote-entities`, `--occurrence-browse`).
+  Participant links (`scripts/link_participants.py`) mutate the corpus, so
+  they go on a copy.
 
 ## 5. Recording: win or lose
 

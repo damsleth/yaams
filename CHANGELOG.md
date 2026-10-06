@@ -160,6 +160,10 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- The ingest junk pass no longer starts the model server when the score
+  cache already covers every candidate. Kept rows stay candidates and come
+  back each run, so every scheduled ingest paid about 17 s of server start
+  for cache hits; it now takes about 0.01 s (`stats.junk.model.cached`).
 - First/last questions ("when did I last ...") count a consolidated thread the
   user only received, not just ones they posted in: `consolidations.participants`
   lists senders only, so the participant filter dropped group chats the user

@@ -240,17 +240,23 @@ def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bo
   texts = {r["id"]: junk_block(conn, r) for r in rows}
   t_render = time.perf_counter()
   proc = None
+  kw = dict(criterion_version=cfg.get("criterion_version", "junk-owner-v2"), tag="ingest_junk",
+            workers=1, url=url, model=cfg.get("model", "jeff-latest"),
+            cache_model=cfg.get("cache_model", "jeff-junk-v2"))
+  state = cfg.get("state", MODEL_STATE)
   try:
-    proc = _serve(url, cfg.get("serve_cmd"))
+    # Kept rows stay candidates and come back every run: when the cache already
+    # holds every score, skip starting the model server (~17 s) altogether.
+    scores = jev.noul(state, texts, MODEL_CRITERION, cache_only=True, **kw)
+    stats["cached"] = len(scores)
     t_served = time.perf_counter()
+    if len(scores) < len(texts):
+      proc = _serve(url, cfg.get("serve_cmd"))
+      t_served = time.perf_counter()
+      stats["server_start_s"] = round(t_served - t_render, 2)
+      scores = jev.noul(state, texts, MODEL_CRITERION, timeout=float(cfg.get("timeout_s", 120)),
+                        deadline_s=float(cfg.get("deadline_s", 900)), **kw)
     stats["server_started"] = proc is not None
-    stats["server_start_s"] = round(t_served - t_render, 2)
-    scores = jev.noul(cfg.get("state", MODEL_STATE), texts, MODEL_CRITERION,
-                      criterion_version=cfg.get("criterion_version", "junk-owner-v2"),
-                      tag="ingest_junk", workers=1, url=url, model=cfg.get("model", "jeff-latest"),
-                      cache_model=cfg.get("cache_model", "jeff-junk-v2"),
-                      timeout=float(cfg.get("timeout_s", 120)),
-                      deadline_s=float(cfg.get("deadline_s", 900)))
   except Exception as exc:  # noqa: BLE001 -- the junk pass must never fail an ingest
     stats["note"] = f"skipped: {exc}"
     return stats
@@ -267,7 +273,8 @@ def annotate_model(conn: sqlite3.Connection, cfg: dict[str, Any], *, dry_run: bo
   score_s = t_scored - t_served
   stats.update({"scored": len(scores), "threshold": tau, "render_s": round(t_render - t0, 2),
                 "score_s": round(score_s, 2),
-                "rows_per_s": round(len(scores) / score_s, 1) if score_s > 0 else None,
+                "rows_per_s": (round((len(scores) - stats["cached"]) / score_s, 1)
+                               if score_s > 0 and len(scores) > stats["cached"] else None),
                 "total_s": round(time.perf_counter() - t0, 2)})
   if dry_run:
     stats[MODEL_REASON] = len(junk)

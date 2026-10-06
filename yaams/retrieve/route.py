@@ -45,7 +45,7 @@ CONTACT_WORDS = frozenset("""
   speak spoke spoken talk talked chat chatted meet met hear heard contact contacted
   message messaged mail mailed email emailed call called write wrote text texted
   conversation conversations
-  jeg meg vi med og om til av når sist siste først første gang noen
+  jeg meg vi med og om til av for når sist siste først første gang noen
   snakke snakket snakka prate pratet prata møte møtte møtt høre hørte hørt
   kontakt kontaktet ringe ringte ringt skrive skrev skrevet melding meldinger
   samtale chatte chattet

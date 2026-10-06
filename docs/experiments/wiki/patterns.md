@@ -136,6 +136,10 @@ any one alone measures as zero.
   consolidation the way it reaches an item: `participants` lists senders
   only, and matching it alone made threads the owner only received
   unreachable (seq 141: 0.77 -> 0.95 once matched through member items).
+- The verb, not the direction, decides mentions vs participation: "first
+  spoke with" wants the first message, "first heard about" the first mention
+  (seq 142: first-contact 0.85 -> 1.0). Measure both directions; the
+  last-contact eval alone could not see the first-direction trade-off.
 - Implication: judge entity/person work on the last-contact eval, not the
   gold-set quality scalar; a neutral gold delta is the non-regression check,
   not the verdict.

@@ -303,7 +303,8 @@ starts a server for the pass and stops it afterwards, so nothing stays
 resident; with neither, the pass is skipped with a note and the ingest still
 succeeds. An item that was ever a hit or correction answer is never hidden,
 by the model or the mechanical rules. Scores are cached, so a row kept on one
-run costs a cache lookup on the next. `timeout_s` (120) bounds one request and
+run costs a cache lookup on the next, and when every candidate is cached the
+server is not started at all. `timeout_s` (120) bounds one request and
 `deadline_s` (900) the pass: after it, or after a failed batch, no new batch
 starts and the rest waits for the next run, so a stalled server cannot hold up
 the schedule. A failure in this pass is reported, never fatal to the ingest.

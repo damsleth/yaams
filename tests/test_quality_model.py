@@ -64,5 +64,26 @@ def test_missing_server_is_a_note_not_a_failure():
   assert out["ran"] and "skipped" in out["model"]["note"]
 
 
+def test_server_starts_only_for_uncached_rows(monkeypatch):
+  conn = _open_db()
+  _rows(conn)
+  served = []
+  cache: dict[str, float] = {}
+
+  def fake_noul(state, texts, criterion, cache_only=False, **kw):
+    if cache_only:
+      return {i: cache[i] for i in texts if i in cache}
+    cache.update({i: 0.1 for i in texts})
+    return dict(cache)
+
+  monkeypatch.setattr(quality, "_serve", lambda url, cmd: served.append(1))
+  monkeypatch.setattr(jev, "noul", fake_noul)
+  first = annotate_model(conn, {"threshold": 0.73})
+  second = annotate_model(conn, {"threshold": 0.73})
+  assert len(served) == 1  # the second run is all cache hits: no server
+  assert first["cached"] == 0 and second["cached"] == second["scored"] == 2
+  assert second["server_started"] is False
+
+
 def test_off_by_default():
   assert annotate_on_ingest(_open_db(), {}) is None

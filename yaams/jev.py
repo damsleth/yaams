@@ -188,7 +188,7 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
          max_tokens: int = MAX_TOKENS, use_cache: bool = True,
          stats: dict | None = None, url: str | None = None, model: str | None = None,
          cache_model: str | None = None, timeout: float = 300,
-         deadline_s: float | None = None) -> dict[str, float]:
+         deadline_s: float | None = None, cache_only: bool = False) -> dict[str, float]:
   """Score each item text against `criterion` given `state`. A failed id is
   missing from the result, never 0.0. `stats` accumulates requests/input_tokens.
   criterion=None sends no per-question `criteria`: put it in `state` once instead.
@@ -206,7 +206,7 @@ def noul(state: dict, items: dict[str, str], criterion: str | None, *, criterion
     hit = _get_cache().get(list(keys.values()))
     out = {k: hit[ck] for k, ck in keys.items() if ck in hit}
   todo = [(k, t) for k, t in texts.items() if k not in out]
-  if os.environ.get("YAAMS_JEV_CACHE_ONLY") == "1":  # no network: uncached ids stay missing
+  if cache_only or os.environ.get("YAAMS_JEV_CACHE_ONLY") == "1":  # no network: uncached ids stay missing
     return out
   state_tok = est_tokens(json.dumps(state, ensure_ascii=False))
   batches = pack(todo, state_tok, criterion, max_questions, max_tokens)

@@ -1,7 +1,7 @@
 """Mechanical "last contact" eval: does retrieval find the latest conversation with a person?
 
   .venv/bin/python scripts/last_contact_eval.py build --db <participants fixture copy> --out lc.jsonl
-  .venv/bin/python scripts/last_contact_eval.py run --cases lc.jsonl --db <fixture> [--promote-entities]
+  .venv/bin/python scripts/last_contact_eval.py run --cases lc.jsonl --db <fixture> [--no-promote-entities]
 
 build: picks people (person entities with >= --min-msgs participant links and a multi-word
 name, not the owner), dates each question one day after their latest message, parses
@@ -87,7 +87,7 @@ def run(a):
 
   cfg = load_config()
   conn = open_db(a.db, readonly=True)
-  if a.promote_entities:
+  if not a.no_promote_entities:
     ar._load_promotions(conn)
   ar._OCCURRENCE_BROWSE = not a.no_occurrence_browse
   rc = cfg.get("retrieve")
@@ -153,7 +153,7 @@ def main():
   r = sub.add_parser("run")
   r.add_argument("--cases", required=True)
   r.add_argument("--db", required=True)
-  r.add_argument("--promote-entities", action="store_true")
+  r.add_argument("--no-promote-entities", action="store_true")
   r.add_argument("--exclude-junk", action="store_true")
   r.add_argument("--ranks-out")
   r.add_argument("--no-occurrence-browse", action="store_true")

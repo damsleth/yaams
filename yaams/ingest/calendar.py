@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterator
 
-from yaams.ingest.base import Item, hash_id
+from yaams.ingest.base import Item, check_profile_alive, hash_id, raise_if_auth_dead
 from yaams.time import ensure_utc, parse_iso_datetime
 
 
@@ -31,11 +31,13 @@ class CalendarAdapter:
       chunk_start = chunk_end + timedelta(days=1)
 
   def _fetch(self, start: date, end: date) -> list[dict]:
+    check_profile_alive(self.profile)
     result = subprocess.run(
       ["owa-cal", "events", "--profile", self.profile,
        "--from", str(start), "--to", str(end)],
       capture_output=True, text=True,
     )
+    raise_if_auth_dead(self.profile, "owa-cal", result.returncode, result.stderr or "")
     if result.returncode != 0 or not result.stdout.strip():
       return []
     try:

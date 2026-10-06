@@ -39,7 +39,7 @@ def test_claude_adapter_adds_safe_mode_flag():
   plain = ClaudeCliAdapter()
   assert plain.safe_mode is False
   built = llm_adapter_from_config({"synth": {"backend": "claude", "safe_mode": True}})
-  assert built.safe_mode is True
+  assert isinstance(built, ClaudeCliAdapter) and built.safe_mode is True
 
 
 def test_summary_config_synth_sentinel_reuses_synth_backend():

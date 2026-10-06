@@ -10,6 +10,7 @@ from yaams.migrations import apply_pending
 from yaams.retrieve import HybridResult, attach_trust_verdicts
 from yaams.schema import init_schema
 from yaams.store import store_items
+from yaams.trust import TrustVerdict
 
 
 def _cols(conn, table) -> set[str]:
@@ -90,4 +91,5 @@ def test_legacy_null_provenance_derives_at_query_time():
   # github -> structured (0.90) clears the high band when weighting is on,
   # proving provenance was derived from source despite the NULL column.
   attach_trust_verdicts(results, conn, provenance_weighting_enabled=True)
+  assert isinstance(results[0].trust, TrustVerdict)
   assert results[0].trust.level == "high"

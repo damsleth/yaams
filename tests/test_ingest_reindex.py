@@ -77,3 +77,22 @@ def test_reindex_refreshes_derived_fields():
   ts, inferred = _stored_ts(conn)
   assert ts.startswith("2026-01-03")
   assert inferred == 0
+
+
+def test_ingest_source_reindex_reaches_the_tail_batch():
+  # A run smaller than batch_size is all tail batch; --reindex must reach it.
+  from yaams.cli.ingest import ingest_source
+
+  conn = _conn()
+  procs = _processors()
+  process_batch(conn, [_item(datetime(2026, 5, 22, tzinfo=UTC), inferred=True)], procs, dry_run=False)
+
+  new = datetime(2026, 1, 3, tzinfo=UTC)
+  ingest_source(
+    conn, "notes", SimpleNamespace(), [_item(new, inferred=False)], new,
+    batch_size=64, dry_run=False, processors=procs,
+    started_at=datetime.now(UTC), fetch_ms=0.0, reindex=True,
+  )
+  ts, inferred = _stored_ts(conn)
+  assert ts.startswith("2026-01-03")
+  assert inferred == 0

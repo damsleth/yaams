@@ -313,3 +313,35 @@ def test_build_envelope_partial_with_strict_exits_1():
   assert env["ok"] is False
   assert env["error"]["code"] == "partial_failure_strict"
   assert code == 1
+
+
+def test_ingest_reports_dead_auth_profile_as_failed_and_resets_per_run(tmp_path, monkeypatch):
+  """A ProfileAuthDead source is a failed source (not a quiet 0-item fetch),
+  a healthy one still succeeds, and a profile marked dead by an earlier run in
+  this process gets a fresh chance."""
+  import yaams.ingest.base as base
+  ingest_mod = importlib.import_module("yaams.cli.ingest")
+
+  class _Dead:
+    def extract(self, since):  # noqa: ARG002
+      base.raise_if_auth_dead("nc", "owa-mail", 11, "auth expired")
+      yield  # pragma: no cover
+
+  class _Empty:
+    def extract(self, since):  # noqa: ARG002
+      return iter(())
+
+  base._dead_profiles.add("stale")
+  monkeypatch.setattr(ingest_mod, "_sources_to_run", lambda s, c=None: ["mail_nc", "notes"])
+  monkeypatch.setattr(ingest_mod, "_source_enabled", lambda cfg, s: True)
+  monkeypatch.setattr(
+    ingest_mod, "get_adapter", lambda src, cfg: _Dead() if src == "mail_nc" else _Empty(),
+  )
+  cfg = _config(tmp_path)
+  cfg.write_text(cfg.read_text().replace("  github:", "  mail:\n    enabled: false\n  github:"))
+  result = CliRunner().invoke(cli, ["ingest", "--config", str(cfg), "--json", "--dry-run"])
+  final = next(e for e in _parse_ndjson(result.output) if e.get("type") == "result")
+  assert result.exit_code == 5, result.output
+  assert final["error"]["failed_sources"] == ["mail_nc"]
+  assert "owa-piggy setup --profile nc" in final["stats"]["sources"]["mail_nc"]["failed"]
+  assert base._dead_profiles == {"nc"}

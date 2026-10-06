@@ -997,15 +997,15 @@ def _review_loop(stdscr, queue, entries, conn):  # pragma: no cover - curses UI
       _reset_card_state(queue[idx] if idx < len(queue) else None)
       continue
 
-    entry = verdict_signal(item, key)
-    if entry is None:
+    signal = verdict_signal(item, key)
+    if signal is None:
       answer_shaped = is_answer_shaped(item.shape, item.parser_fallback)
       keys = "h/m/n, 1-9" if answer_shaped else "r/t/n"
       flash = f"'{key}' — no verdict ({keys}, tab=expand, H=help)"
       continue
-    entries.append(entry)
+    entries.append(signal)
     history.append((idx, 1))
-    flash = "deferred — revisit with: yaams review --deferred" if entry.get("kind") == "deferred" else flash
+    flash = "deferred — revisit with: yaams review --deferred" if signal.get("kind") == "deferred" else flash
     idx += 1
     _reset_card_state(queue[idx] if idx < len(queue) else None)
 

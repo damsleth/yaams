@@ -48,6 +48,20 @@ def _seed_db_with_entity(canonical: str, aliases: list[str]) -> sqlite3.Connecti
   return conn
 
 
+def test_parse_query_promotes_long_tail_multiword_name():
+  # The LLM only sees the top-N entities, so it leaves a long-tail name as a topic term.
+  conn = _seed_db_with_entity("Anne Hjort", ["anne.hjort@example.no"])
+  adapter = _ScriptedAdapter([json.dumps({
+    "shape": "last_occurrence", "entities": [], "topic_terms": ["Anne Hjort"], "sort": "desc",
+  })])
+  parsed = parse_query("når snakket jeg sist med anne hjort?", adapter, conn)
+  assert parsed.entities == ["Anne Hjort"]
+  assert parsed.topic_terms == []
+  # the fallback path promotes too; a single first name never does
+  assert parse_query("anne hjort budget", _FailingAdapter(), conn).entities == ["Anne Hjort"]
+  assert parse_query("anne budget", _FailingAdapter(), conn).entities == []
+
+
 def test_extract_json_handles_fenced_output():
   raw = "```json\n{\"shape\": \"factual\"}\n```"
   assert _extract_json(raw) == {"shape": "factual"}

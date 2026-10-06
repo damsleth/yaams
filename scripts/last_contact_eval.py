@@ -82,7 +82,7 @@ def run(a):
   conn = open_db(a.db, readonly=True)
   if a.promote_entities:
     ar._load_promotions(conn)
-  ar._OCCURRENCE_BROWSE = a.occurrence_browse
+  ar._OCCURRENCE_BROWSE = not a.no_occurrence_browse
   rc = cfg.get("retrieve")
   syn = normalize_synonym_groups(rc.get("synonyms") if isinstance(rc, dict) else None)
   emb = Embedder(**_embed_config(cfg), quiet=True)
@@ -147,7 +147,7 @@ def main():
   r.add_argument("--promote-entities", action="store_true")
   r.add_argument("--exclude-junk", action="store_true")
   r.add_argument("--ranks-out")
-  r.add_argument("--occurrence-browse", action="store_true")
+  r.add_argument("--no-occurrence-browse", action="store_true")
   a = ap.parse_args()
   build(a) if a.cmd == "build" else run(a)
 

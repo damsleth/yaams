@@ -84,6 +84,7 @@ from yaams.retrieve import (  # noqa: E402
     route,
 )
 from yaams.retrieve import query as run_query  # noqa: E402
+from yaams.retrieve.parse import promote_entities, promotion_map  # noqa: E402
 from yaams.retrieve.synonyms import normalize_synonym_groups  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
@@ -107,34 +108,11 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
 _PROMOTE: dict[str, str] = {}  # --promote-entities: lowercased multi-word name/alias -> canonical
-_OCCURRENCE_BROWSE = False  # --occurrence-browse: HybridQueryConfig.occurrence_browse
+_OCCURRENCE_BROWSE = True  # --no-occurrence-browse turns HybridQueryConfig.occurrence_browse off
 
 
 def _load_promotions(conn) -> None:
-    """Multi-word person/org/place names and aliases from the db (the parse prompt only
-    shows the top 40 entities, so the LLM demotes every long-tail name to a topic term)."""
-    # ponytail: exact 2-4 word matches only; single names ("Fredrik") are too ambiguous
-    for name, aliases in conn.execute(
-        "SELECT canonical_name, aliases FROM entities WHERE entity_type IN ('person', 'org', 'place')"
-    ):
-        for key in [name, *json.loads(aliases or "[]")]:
-            k = " ".join(str(key).lower().split())
-            if 2 <= len(k.split()) <= 4:
-                _PROMOTE.setdefault(k, name)
-
-
-def _promote_entities(parsed: ParsedQuery, text: str) -> None:
-    words = text.lower().replace("?", " ").replace(",", " ").split()
-    found = []
-    for n in (4, 3, 2):
-        for i in range(len(words) - n + 1):
-            canon = _PROMOTE.get(" ".join(words[i:i + n]))
-            if canon and canon not in found and canon not in parsed.entities:
-                found.append(canon)
-    if found:
-        lowered = {f.lower() for f in found}
-        parsed.entities = [*parsed.entities, *found]
-        parsed.topic_terms = [t for t in parsed.topic_terms if t.lower() not in lowered]
+    _PROMOTE.update(promotion_map(conn))
 
 
 def _split_bucket(query_id: str) -> str:
@@ -251,7 +229,7 @@ def _replay_one(
     elif parsed is not None and parse_mode == "notopics":
         parsed.topic_terms = []
     if parsed is not None and _PROMOTE:
-        _promote_entities(parsed, text)
+        promote_entities(parsed, _PROMOTE)
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
         top_k=_EVAL_TOP_K,
@@ -330,8 +308,8 @@ def _mode_label(args) -> str:
         base = f"{base}+reparse"
     if getattr(args, "promote_entities", False):
         base = f"{base}+promote"
-    if getattr(args, "occurrence_browse", False):
-        base = f"{base}+occbrowse"
+    if getattr(args, "no_occurrence_browse", False):
+        base = f"{base}+no-occbrowse"
     return base
 
 
@@ -373,11 +351,11 @@ def main() -> int:
                     help="JSON {query_id: parse} replacing stored parses (scripts/reparse_fallback_golds.py)")
     ap.add_argument("--promote-entities", action="store_true",
                     help="Promote exact multi-word dictionary names in the query text to entities")
-    ap.add_argument("--occurrence-browse", action="store_true",
-                    help="Enable the occurrence lane for timestamp-sorted queries with an allowlist")
+    ap.add_argument("--no-occurrence-browse", action="store_true",
+                    help="Disable the occurrence lane (on by default, as in production)")
     args = ap.parse_args()
     global _OCCURRENCE_BROWSE
-    _OCCURRENCE_BROWSE = args.occurrence_browse
+    _OCCURRENCE_BROWSE = not args.no_occurrence_browse
     if args.parse_override:
         _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
 

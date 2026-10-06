@@ -97,12 +97,12 @@ class HybridQueryConfig:
   # tangential match can't win first/last just by being the oldest/newest.
   # 0 disables. Set by route() for first/last_occurrence, not by explicit sort.
   relevance_floor: float = 0.0
-  # Occurrence lane: a timestamp-sorted query with an entity/participant allowlist
-  # also lists the allowlisted items directly by time, so "when did I last speak
+  # Occurrence lane: a timestamp-sorted query with an entity filter also lists
+  # the allowlisted items (and consolidations) directly by time, so "when did I last speak
   # with X" sees X's newest messages even when they share no words with the
   # question (the index lanes are text matches, filtered after the fact). Lane
   # items are exempt from relevance_floor: the allowlist is their relevance.
-  occurrence_browse: bool = False
+  occurrence_browse: bool = True
   # Query shape forwarded from ParsedQuery so _hydrate_item can gate
   # shape-specific credits (e.g. tier2_factual_coverage_recovery).
   query_shape: str = "factual"
@@ -375,17 +375,13 @@ def query(
     # a real match. Skipped when an entity/participant filter is set: there the
     # user asked for a specific thing, and a whole-window dump would be noise.
     hydrated = _browse_window(conn, cfg, cap=hydrate_cap)
-  if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and (
-    item_allow is not None or part_item_allow is not None
-  ):
-    def both(a: set[str] | None, b: set[str] | None) -> set[str]:
-      return (a or set()) if b is None else (b if a is None else a & b)
+  # Entity filter required: a participant filter alone ("when did I last talk
+  # about the budget") would list the owner's newest messages on any topic.
+  if cfg.occurrence_browse and cfg.sort in ("asc", "desc") and item_allow is not None:
+    items = item_allow if part_item_allow is None else item_allow & part_item_allow
+    cons = (cons_allow or set()) if part_cons_allow is None else (cons_allow or set()) & part_cons_allow
     seen = {r.id for r in hydrated}
-    hydrated += [
-      r for r in _browse_allowlist(
-        conn, cfg, both(item_allow, part_item_allow), both(cons_allow, part_cons_allow), cap=cfg.top_k)
-      if r.id not in seen
-    ]
+    hydrated += [r for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k) if r.id not in seen]
   if cfg.rerank_enabled and hydrated:
     # Opt-in cross-encoder rerank: re-score the top `rerank_k` candidates and
     # let the cross-encoder score replace the RRF score. The pool becomes the

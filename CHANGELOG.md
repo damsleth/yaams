@@ -12,23 +12,31 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
-- Occurrence lane, opt-in `HybridQueryConfig.occurrence_browse` (off by
-  default): for timestamp-sorted queries with an entity or participant
-  allowlist, append the `top_k` allowlisted items and consolidations nearest
-  the sort end (newest for "last", oldest for "first") and exempt them from
-  the relevance floor.
-  Allowlists only post-filter the text-retrieved pool, so "when did I last
-  speak with X" never saw X's newest messages, which share no words with the
-  question.
+- Last-contact retrieval ("when did I last speak with X?"), three pieces, all
+  on by default:
+  - Participant links: every ingest links its new items to the people who
+    sent or received them (`yaams.enrich.participants`, `item_entities.source
+    = 'participant'`, exact match on person names and aliases; envelope
+    `stats.participant_links`). NER only tags content, so a message from or to
+    someone was never linked to them. One-off history backfill:
+    `scripts/link_participants.py --live`.
+  - Name promotion in `parse_query`: an exact 2-4 word person/org/place name
+    or alias in the question becomes an entity even when it is outside the
+    top-40 the LLM is shown (it used to fall through as a topic term).
+  - Occurrence lane (`HybridQueryConfig.occurrence_browse`, default on): a
+    first/last query with an entity filter also lists the allowlisted items
+    and consolidations nearest the sort end, exempt from the relevance floor.
+    Allowlists only post-filtered the text-retrieved pool, so X's newest
+    messages, which share no words with the question, never became
+    candidates. A participant filter alone does not trigger it.
+  Last-contact hit@1 0.07 -> 0.82 (44 cases, 22 people, EN+NB); gold dev
+  +0.0013 with 0 rank-1 regressions, test unchanged (experiments 134-137,
+  wiki P7).
 - Person-recall tooling: `scripts/last_contact_eval.py` (mechanical
-  last-contact eval, `build` / `run`, hit@1/hit@5/MRR plus `newer_link@1`),
-  `scripts/link_participants.py` (participant `item_entities` links on a
-  fixture copy), `scripts/reparse_fallback_golds.py`. Harness flags
-  `--promote-entities`, `--occurrence-browse`, `--parse-mode` and
-  `--parse-override`. The eval replays as of the ask time and counts the
-  consolidation that holds the answer. With participant links, name promotion
-  and the lane, last-contact hit@1 goes from 0.11 to 0.82; gold dev +0.0013,
-  test unchanged (experiments 134-136, wiki P7).
+  last-contact eval, `build` / `run`, replayed as of the ask time; the
+  consolidation holding the answer counts), `scripts/reparse_fallback_golds.py`.
+  Harness flags `--promote-entities` (stored parses predate promotion),
+  `--no-occurrence-browse`, `--parse-mode` and `--parse-override`.
 - Junk annotation on ingest (`quality.annotate_on_ingest`, off by default):
   after every `yaams ingest`, the mechanical junk rules run, and with
   `quality.junk_model.enabled` a fine-tuned local Jeff classifier labels the

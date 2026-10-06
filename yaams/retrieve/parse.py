@@ -121,6 +121,66 @@ def parse_query(
   max_tokens: int = 400,
   temperature: float = 0.0,
 ) -> ParsedQuery:
+  parsed = _parse_llm(
+    text, adapter, conn, now=now, top_entities=top_entities,
+    max_tokens=max_tokens, temperature=temperature,
+  )
+  if conn is not None:
+    promote_entities(parsed, promotion_map(conn))
+  return parsed
+
+
+def promotion_map(conn: sqlite3.Connection) -> dict[str, str]:
+  """Lowercased 2-4 word person/org/place names and aliases -> canonical name."""
+  # ponytail: exact multi-word matches only; single names ("Fredrik") are too ambiguous
+  out: dict[str, str] = {}
+  try:
+    rows = conn.execute(
+      "SELECT canonical_name, aliases FROM entities WHERE entity_type IN ('person', 'org', 'place')"
+    ).fetchall()
+  except sqlite3.DatabaseError:
+    return out
+  for name, aliases in rows:
+    try:
+      alias_list = json.loads(aliases or "[]")
+    except (TypeError, ValueError):
+      alias_list = []
+    for key in (name, *alias_list):
+      k = " ".join(str(key).lower().split())
+      if 2 <= len(k.split()) <= 4:
+        out.setdefault(k, name)
+  return out
+
+
+def promote_entities(parsed: ParsedQuery, names: dict[str, str]) -> None:
+  """Add exact multi-word names from the query text that the parse left out.
+
+  The prompt lists only the top-N entities, so the LLM turns every long-tail name
+  into a topic term; a promoted name becomes an entity (and leaves topic_terms),
+  which route turns into an entity filter."""
+  words = parsed.raw.lower().replace("?", " ").replace(",", " ").split()
+  found: list[str] = []
+  for n in (4, 3, 2):
+    for i in range(len(words) - n + 1):
+      canon = names.get(" ".join(words[i:i + n]))
+      if canon and canon not in found and canon not in parsed.entities:
+        found.append(canon)
+  if found:
+    lowered = {f.lower() for f in found}
+    parsed.entities = [*parsed.entities, *found]
+    parsed.topic_terms = [t for t in parsed.topic_terms if t.lower() not in lowered]
+
+
+def _parse_llm(
+  text: str,
+  adapter: LLMAdapter,
+  conn: sqlite3.Connection | None,
+  *,
+  now: datetime | None,
+  top_entities: int,
+  max_tokens: int,
+  temperature: float,
+) -> ParsedQuery:
   raw = (text or "").strip()
   if not raw:
     return _fallback(raw)

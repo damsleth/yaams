@@ -98,6 +98,21 @@ def test_occurrence_lane_prefers_participation_over_mentions():
   assert query(conn, "zzz", config=replace(cfg, sort="asc"))[0].id == older.id
 
 
+def test_received_only_consolidation_counts_as_participation():
+  from yaams.retrieve.hybrid import _resolve_participant_allowlist
+
+  conn = _open_db()
+  conn.execute(
+    "INSERT INTO consolidations (id, source, thread_id, start_timestamp, end_timestamp, participants,"
+    " item_count, summary, raw_item_ids, consolidator_version, created_at)"
+    " VALUES ('cons:x', 'teams', 't', '2026-01-01', '2026-01-01', '[\"bob\"]', 1, 's', ?, 'v', '2026-01-01')",
+    (json.dumps(["read-only-item"]),),
+  )
+  conn.execute("INSERT INTO items (id, source, source_id, timestamp, sender, recipients, content, ingested_at)"
+               " VALUES ('read-only-item', 'teams', 'x', '2026-01-01', 'bob', '[\"me\"]', 'hi', '2026-01-01')")
+  assert "cons:x" in _resolve_participant_allowlist(conn, ["me"])[1]
+
+
 def test_mechanical_rules_never_hide_a_gold_answer():
   conn = _quality_db()
   gold, other = _item("imessage", 1, "ok", ts=T0), _item("imessage", 2, "ja", ts=T0.replace(minute=1))

@@ -51,6 +51,10 @@ def _gold_hash(conn) -> tuple[str, int, int]:
     return h, len(tuples), n_corr
 
 
+def _participant_links(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM item_entities WHERE source = 'participant'").fetchone()[0]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="verify fixture matches manifest, don't re-freeze")
@@ -67,9 +71,12 @@ def main() -> int:
         manifest = json.loads(MANIFEST.read_text())
         with open_db(str(FIXTURE), readonly=True) as conn:
             h, n, nc = _gold_hash(conn)
-        ok = h == manifest["gold_hash"]
+            links = _participant_links(conn)
+        # era 3 changed the corpus, not the labels: the link count tells the eras apart
+        ok = h == manifest["gold_hash"] and links == manifest.get("participant_links", 0)
         print(f"{'OK' if ok else 'MISMATCH'}: fixture gold_hash={h[:12]} "
-              f"manifest={manifest['gold_hash'][:12]} gold={n} corr={nc}")
+              f"manifest={manifest['gold_hash'][:12]} gold={n} corr={nc} "
+              f"participant_links={links} (manifest {manifest.get('participant_links', 0)})")
         return 0 if ok else 2
 
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +85,7 @@ def main() -> int:
     with open_db(str(FIXTURE), readonly=True) as conn:
         h, n, nc = _gold_hash(conn)
         n_queries = conn.execute("SELECT COUNT(*) FROM queries").fetchone()[0]
+        links = _participant_links(conn)
     MANIFEST.write_text(json.dumps({
         "fixture": str(FIXTURE),
         "source_db": live,
@@ -85,6 +93,7 @@ def main() -> int:
         "gold_queries": n,
         "corrections": nc,
         "total_queries": n_queries,
+        "participant_links": links,
     }, indent=2) + "\n")
     print(f"{'promoted' if args.promote else 'froze'} {live}\n  -> {FIXTURE}")
     print(f"  gold={n} corrections={nc} total_queries={n_queries} hash={h[:12]}")

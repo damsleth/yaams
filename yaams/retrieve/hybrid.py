@@ -452,6 +452,14 @@ def query(
         r.score *= weight
         r.boosts["assoc"] = weight
   if cfg.sort in ("asc", "desc"):
+    # "When did I first hear about NOCOS": an occurrence needs the words. A
+    # vector-only neighbour (a 2025 chat that never says NOCOS) wins a
+    # timestamp sort on age alone, so once the text matched anything, drop the
+    # pure vector hits. With no text match at all (another language, a
+    # paraphrase) the vector pool is all there is and stays. Lane items stay.
+    if any(r.components.fts_rank is not None for r in hydrated):
+      hydrated = [r for r in hydrated
+                  if r.components.fts_rank is not None or "occurrence_browse" in r.boosts]
     hydrated = _apply_relevance_floor(hydrated, cfg.relevance_floor)
     # Sort on the primary key alone and reverse it, then break ties by score
     # descending in a second stable pass. Folding -score into the key breaks

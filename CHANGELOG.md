@@ -160,6 +160,13 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Timestamp-sorted queries ("when did I first hear about NOCOS") drop
+  vector-only candidates once the text search matched anything: a 2025 chat
+  that never says NOCOS outranked every real mention on age alone. With no
+  text match the vector pool stays; occurrence-lane items stay. Era 4: NOCOS
+  first-hear 42 -> 2 (rank 1 is the owner's own 2026-01-26 "NC NOCOS"
+  project link), "did v0.21 release april 2026" 19 -> 7, recall@10 dev
+  0.929 -> 0.952 / test 0.8 -> 1.0, 0 rank-1 regressions (experiment 154).
 - Name promotion drops an LLM entity that is a near-spelling of a promoted
   name's word but does not occur in the question: the parser snapped "Øystein
   Røvde" to "Øistein" (another person) and the first-contact answer went to

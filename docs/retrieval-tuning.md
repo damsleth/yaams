@@ -19,9 +19,9 @@ a worktree is silently lost.
 
 | Thing | Where | Set by |
 |---|---|---|
-| Frozen fixture (SQLite copy of the store, 42 gold; era 3: current dictionary seeded + 133,221 participant links) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
-| Era 2 fixture backup (same gold, no participant links, older dictionary) | `~/brain/feed/eval/autoresearch_fixture_era2-2026-10-06.db` | this page, section 1 |
-| Person-recall cases (last/first contact, 18 + 18 conversations; looser v1 keys in `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
+| Frozen fixture (era 4: SQLite backup of the live store 2026-10-07, 47 gold, 93,889 items, 142,532 participant links, junk-annotated) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
+| Era 3 / era 2 fixture backups (42 gold; era 2 has no participant links) | `~/brain/feed/eval/autoresearch_fixture_era{3-2026-10-07,2-2026-10-06}.db` | this page, section 1 |
+| Person-recall cases (last/first contact, 14 + 14 conversations on the era-4 fixture; older keys in `*_era3.jsonl`, `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
 | Manifest (fixture path, `source_db`, `gold_hash`, `gold_queries`, `corrections`, `total_queries`) | `scripts/autoresearch_scenario.json` | `scripts/autoresearch_freeze.py:33,81-88` |
 | Era label new experiment rows are tagged with | `docs/experiments/CURRENT_ERA` | you, by hand |
 | Era 1 fixture backup (79 gold, pre-curation) | `~/brain/feed/eval/autoresearch_fixture_pre-curation-2026-09-17.db` | `.plans/done/data-quality.md` "Promotion 2026-09-17" |
@@ -111,8 +111,8 @@ live setting):
 cd /Users/damsleth/code/yaams
 .venv/bin/python scripts/autoresearch_freeze.py --check
 rm -f scripts/.autoresearch_state.json
-.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era3-anchor-nojunk
-.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era3-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era4-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era4-anchor-nojunk
 ```
 
 Recorded runs (no `--no-write`) append to `scripts/autoresearch_results.tsv`,
@@ -197,14 +197,17 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
 - **Replays match production by default.** Production promotes names in
   `parse_query`; the stored parses predate that, so the harness promotes on
   replay (`--no-promote-entities` to switch it off), and route turns the
-  occurrence lane on as in production (`--no-occurrence-browse`). The era-3
-  fixture carries what live ingest adds: the current dictionary seeded
-  (`yaams.store.seed_entities`) and participant links
-  (`scripts/link_participants.py`). To refresh it, seed and link a copy in
-  that order (linking without the seed finds about a quarter of the links),
-  then `autoresearch_freeze.py --promote <copy>`; the manifest records
-  `participant_links`, which `--check` compares, since the gold hash alone
-  cannot tell era 2 from era 3.
+  occurrence lane on as in production (`--no-occurrence-browse`). The fixture
+  must carry what live ingest adds: the current dictionary
+  (`yaams.store.seed_entities`), participant links and junk annotations. The
+  simplest refresh is a consistent snapshot of the live store, taken with
+  SQLite's backup API because the cron may be writing (era 4: `sqlite3`
+  `src.backup(dst)` into a prep file, then `autoresearch_freeze.py --promote
+  <prep>`). Plain `autoresearch_freeze.py` copies the file and can miss WAL
+  pages. A copy of an older fixture needs seeding and linking first, in that
+  order (linking without the seed finds about a quarter of the links). The
+  manifest records `participant_links`, which `--check` compares, since the
+  gold hash alone cannot tell a corpus-only change apart.
 
 ## 5. Recording: win or lose
 

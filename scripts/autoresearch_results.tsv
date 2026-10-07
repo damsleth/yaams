@@ -91,3 +91,5 @@ era3-anchor-nojunk-askcutoff	hybrid+nojunk	test	0.5083	0.5	0.5278	1055.0	0	ok
 era3-anchor-nojunk-askcutoff	hybrid+nojunk	test	0.5083	0.5	0.5278	943.8	0	ok
 era4-anchor-nojunk	hybrid+nojunk	dev	0.5473	0.5476	0.5466	356.8	0	ok
 era4-anchor-nojunk	hybrid+nojunk	test	0.1854	0.2	0.1513	376.5	0	ok
+era4r-anchor-nojunk	hybrid+nojunk	dev	0.5745	0.5714	0.5815	359.5	0	ok
+era4r-anchor-nojunk	hybrid+nojunk	test	0.1989	0.2	0.1964	277.4	0	ok

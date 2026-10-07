@@ -160,6 +160,11 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Gold relabel (owner, 2026-10-07): "when did I first hear about NOCOS" ->
+  the owner's own 2026-01-26 Crayon Teams message linking the DID project
+  "NC NOCOS" (live feedback 211, copied into the fixture). Era label
+  `47 gold live freeze (oct07), NOCOS relabel`; anchors
+  `era4r-anchor-nojunk` dev 0.5745 / test 0.1989.
 - Timestamp-sorted queries ("when did I first hear about NOCOS") drop
   vector-only candidates once the text search matched anything: a 2025 chat
   that never says NOCOS outranked every real mention on age alone. With no

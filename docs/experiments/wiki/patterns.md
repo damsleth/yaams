@@ -131,7 +131,10 @@ any one alone measures as zero.
   charge), promotion only for curated entities and participant-linked people
   (NER orgs/places are phrases, and promotion is a hard filter). Duplicate
   person entities now cost recall directly; merge them rather than relaxing
-  the canonical-first linking.
+  the canonical-first linking. DEAD: single-word promotion, even curated
+  projects/acronyms (seq 152: NOCOS first-hear 42 -> 1, but 4 rank-1 golds
+  lost; a one-word project name appears in many untagged documents, and a
+  hard filter drops them).
 - "Spoke with" is a conversation, not co-membership (seq 148): the owner's
   own labels are 1:1 chats, and a 24-person duty group or an unanswered
   broadcast beat them on a newest-first sort. Build eval answer keys with the

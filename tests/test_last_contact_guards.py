@@ -130,6 +130,22 @@ def test_promotion_drops_the_llms_near_miss_entity():
   assert p.entities == ["Norconsult", "Anne", "Bob Smith"]  # unrelated entities stay
 
 
+def test_first_occurrence_needs_the_words_once_text_matched(monkeypatch):
+  from yaams.retrieve import hybrid
+
+  conn = _open_db()
+  t = datetime(2026, 1, 1, tzinfo=UTC)
+  old = _make_item(content="dinner plans with the family", ts=t, msg_id="old")
+  hit = _make_item(content="kickoff for the nocos project", ts=t + timedelta(days=90), msg_id="hit")
+  store_items(conn, [old, hit], [b"\x00" * 16] * 2, [[]] * 2)
+  # a vector neighbour that never says "nocos" (the 2025 chats in the real case)
+  monkeypatch.setattr(hybrid, "_vec_search_items", lambda *a, **k: [("item", old.id, 0, 0.1)])
+  cfg = HybridQueryConfig(top_k=5, sort="asc", include_consolidations=False)
+  assert [r.id for r in query(conn, "nocos", embedding=[0.0] * 4, config=cfg)] == [hit.id]
+  # with no text match at all, the vector pool is all there is and stays
+  assert [r.id for r in query(conn, "zzzz", embedding=[0.0] * 4, config=cfg)] == [old.id]
+
+
 def test_fallback_parse_keeps_first_and_last_questions():
   from yaams.retrieve.parse import _fallback
 

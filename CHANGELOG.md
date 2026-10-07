@@ -160,6 +160,19 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Name promotion drops an LLM entity that is a near-spelling of a promoted
+  name's word but does not occur in the question: the parser snapped "Øystein
+  Røvde" to "Øistein" (another person) and the first-contact answer went to
+  Øistein's chats. First-contact (era 4, LLM parse) 0.86 -> 1.0.
+- Eval era 4 (`47 gold live freeze (oct07)`): the fixture is a backup-API
+  snapshot of the live store, 93,889 items, 47 gold, carrying the owner's
+  corrections (feedback 208-210) for "when did i last speak with Fredrik
+  Nordmoen?": the answer is the 16 May 1:1 Teams chat, which was missing from
+  the era-3 fixture; the earlier 2026-04-25 / 2026-02-07 labels were stale.
+  Anchors `era4-anchor-nojunk`: dev 0.5473 (42 gold), test 0.1854 (5 gold).
+  Contact eval rebuilt on it: 14 + 14 cases, 1.0 hit@1 for last and first
+  with the LLM and the fallback parse. Era 3 fixture kept at
+  `autoresearch_fixture_era3-2026-10-07.db`.
 - "Speaking with" someone now means a conversation
   (`yaams.enrich.participants.conversation_items`): a message the person or
   the user sent that either went 1:1 to the other, or that the other answered

@@ -16,6 +16,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Any
 
 from yaams.synthesize.llm import LLMAdapter
@@ -186,7 +187,14 @@ def promote_entities(parsed: ParsedQuery, names: dict[str, str]) -> None:
         found.append(canon)
         drop |= {phrase, _norm_phrase(canon)}
   if found:
-    parsed.entities = [*parsed.entities, *found]
+    # The LLM snaps a long-tail name to a nearby known entity ("Øystein Røvde" ->
+    # "Øistein", someone else); the exact name in the text beats that guess.
+    raw = parsed.raw.lower()
+    tokens = {w for f in found for w in f.lower().split()}
+    def snapped(e: str) -> bool:
+      e = e.lower()
+      return e not in raw and any(SequenceMatcher(None, e, t).ratio() >= 0.8 for t in tokens)
+    parsed.entities = [*(e for e in parsed.entities if not snapped(e)), *found]
     parsed.topic_terms = [t for t in parsed.topic_terms if _norm_phrase(t) not in drop]
 
 

@@ -119,6 +119,17 @@ def test_conversation_items_is_an_exchange_not_a_group_broadcast():
   assert kept == {items[0].id, items[3].id, items[4].id}
 
 
+def test_promotion_drops_the_llms_near_miss_entity():
+  from yaams.retrieve.parse import ParsedQuery, promote_entities
+
+  p = ParsedQuery(raw="when did I first speak with Øystein Røvde?", entities=["Øistein"])
+  promote_entities(p, {"øystein røvde": "Øystein Røvde"})
+  assert p.entities == ["Øystein Røvde"]  # the LLM snapped Øystein to another person
+  p = ParsedQuery(raw="did Anne talk to Bob Smith about nc", entities=["Norconsult", "Anne"])
+  promote_entities(p, {"bob smith": "Bob Smith"})
+  assert p.entities == ["Norconsult", "Anne", "Bob Smith"]  # unrelated entities stay
+
+
 def test_fallback_parse_keeps_first_and_last_questions():
   from yaams.retrieve.parse import _fallback
 

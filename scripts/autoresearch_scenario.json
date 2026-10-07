@@ -1,9 +1,9 @@
 {
   "fixture": "/Users/damsleth/brain/feed/eval/autoresearch_fixture.db",
-  "source_db": "/Users/damsleth/brain/feed/eval/autoresearch_fixture_era3_prep.db",
-  "gold_hash": "b0d99ce5ed3a6f617b73b6bacba094e82873079f",
-  "gold_queries": 42,
-  "corrections": 13,
-  "total_queries": 197,
-  "participant_links": 133221
+  "source_db": "/Users/damsleth/brain/feed/eval/autoresearch_fixture_era4_prep.db",
+  "gold_hash": "affece16c7cf4d150cc7323b9262892349fc6977",
+  "gold_queries": 47,
+  "corrections": 14,
+  "total_queries": 975,
+  "participant_links": 142532
 }

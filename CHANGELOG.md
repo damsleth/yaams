@@ -160,6 +160,13 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Gold relabel (owner, 2026-10-07): "what did Emilie say about driving
+  school" is a miss (live feedback 212): the data has nothing Emilie herself
+  said about it, and the old hit pointed at an unrelated Red Cross Teams
+  session. Era `46 gold live freeze (oct07), relabels NOCOS + Emilie`;
+  anchors `era4r2-anchor-nojunk` dev 0.5842 / test 0.1989. On live, the
+  duplicate entity "Nina@Damsleth.No" was merged into Nina Cathrine Damsleth
+  and participants relinked (+4,882 links).
 - Gold relabel (owner, 2026-10-07): "when did I first hear about NOCOS" ->
   the owner's own 2026-01-26 Crayon Teams message linking the DID project
   "NC NOCOS" (live feedback 211, copied into the fixture). Era label

@@ -189,7 +189,10 @@ surface; pin to a specific version if you need stability.
   never drops an alias-supported entity (punctuation-tolerant); the harness
   regenerates only parses matching the exact fallback signature and applies
   ablations after promotion. A second heavy review verified 10 of the 16 and
-  drove these follow-ups. Era label `78 gold live freeze (oct12), participant
+  drove these follow-ups; a third verified all of them and caught two
+  regressions, also fixed: the rare lane's summary search keeps the normal
+  depth (df is counted on items, a word can sit in many summaries), and an
+  email/phone alias protects an entity only as a whole token. Era label `78 gold live freeze (oct12), participant
   upgrade`; anchors `era5u-anchor-nojunk-r2` dev 0.6154 / test 0.3048 (with
   the rare-term lane); contact eval 1.0 for last/first with LLM and fallback
   parse.

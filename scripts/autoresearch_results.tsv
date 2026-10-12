@@ -99,3 +99,5 @@ era5-anchor-nojunk	hybrid+nojunk	dev	0.5714	0.5972	0.5113	356.5	0	ok
 era5-anchor-nojunk	hybrid+nojunk	test	0.2923	0.3333	0.1964	281.8	0	ok
 era5u-anchor-nojunk	hybrid+nojunk	dev	0.6057	0.6389	0.5282	363.4	0	ok
 era5u-anchor-nojunk	hybrid+nojunk	test	0.3048	0.3333	0.2381	249.5	0	ok
+era5u-anchor-nojunk-r2	hybrid+nojunk	dev	0.6154	0.6528	0.5282	628.2	0	ok
+era5u-anchor-nojunk-r2	hybrid+nojunk	test	0.3048	0.3333	0.2381	569.4	0	ok

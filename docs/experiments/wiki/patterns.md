@@ -118,9 +118,11 @@ also length-penalized, so they never reach the per-index top 80.
   one more RRF lane, took two label-sheet misses to rank 1/3 and era-5 dev
   0.5714 -> 0.6057. Larger thresholds kept gaining dev quality but started
   costing recall@10 (df 50); lane weight below 1 did not help.
-- The one stable loss is a query whose rare word is incidental (a hotel name):
-  rare is not the same as important. If more such losses appear, gate on the
-  word being the query's only rare token rather than lowering the weight.
+- Search each rare word alone and literally (seq 166). One OR search over all
+  rare words with synonym expansion let a common alias and the shared cap
+  crowd the rare hits out again; with per-word literal searches the one loss
+  of seq 163 (an incidental hotel name) disappeared: +0.044, 4 rank-1 gained,
+  0 lost. Lowering the lane weight never helped.
 - The misses that found this came from an owner label sheet, not the gold
   set: label sheets of recent real queries are the best miss-finder (P5).
 

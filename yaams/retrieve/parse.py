@@ -202,18 +202,20 @@ def promote_entities(parsed: ParsedQuery, names: dict[str, str], protected: set[
     # cut the name out of each topic term, not just whole-term matches: the
     # fallback's single topic term is the whole question
     pattern = re.compile(r"\b(?:" + "|".join(re.escape(d) for d in sorted(drop, key=len, reverse=True)) + r")\b")
+    # a name the LLM split across terms (["Bob", "Smith"]) goes too: drop a term
+    # made only of the matched name's words
+    name_words = {w for d in drop for w in d.split()}
     kept = []
     for t in parsed.topic_terms:
       rest = " ".join(pattern.sub(" ", _norm_phrase(t)).split())
-      if rest:
+      if rest and not set(rest.split()) <= name_words:
         kept.append(t if rest == _norm_phrase(t) else rest)
     parsed.topic_terms = kept
 
 
 def _alias_supported(conn: sqlite3.Connection, parsed: ParsedQuery) -> set[str]:
   """Parsed entities whose canonical name or an alias occurs in the question."""
-  cleaned = re.sub(r"[^\w@.+ -]", " ", parsed.raw)
-  raw = f" {_norm_phrase(cleaned)} "
+  raw = _norm_phrase(parsed.raw)
   out: set[str] = set()
   for e in parsed.entities:
     row = conn.execute("SELECT aliases FROM entities WHERE canonical_name = ?", (e,)).fetchone()
@@ -222,7 +224,8 @@ def _alias_supported(conn: sqlite3.Connection, parsed: ParsedQuery) -> set[str]:
     except (TypeError, ValueError):
       aliases = []
     for a in [e, *(aliases if isinstance(aliases, list) else [])]:
-      if isinstance(a, str) and len(a) > 1 and f" {_norm_phrase(a)} " in raw:
+      # boundary-aware, punctuation-tolerant ("Tina." / "Tina's"), emails/phones intact
+      if isinstance(a, str) and len(a) > 1 and re.search(rf"(?<!\w){re.escape(_norm_phrase(a))}(?!\w)", raw):
         out.add(e)
         break
   return out

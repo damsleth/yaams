@@ -49,6 +49,7 @@ CONTACT_WORDS = frozenset("""
   snakke snakket snakka prate pratet prata møte møtte møtt høre hørte hørt
   kontakt kontaktet ringe ringte ringt skrive skrev skrevet melding meldinger
   samtale chatte chattet
+  from fra mention mentioned mentions nevne nevnt nevnte
 """.split())
 # ...unless the question is about hearing of them rather than talking to them
 # ("when did I first hear about X"): then a note that mentions X counts too.

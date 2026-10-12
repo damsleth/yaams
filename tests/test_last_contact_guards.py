@@ -140,10 +140,29 @@ def test_first_occurrence_needs_the_words_once_text_matched(monkeypatch):
   store_items(conn, [old, hit], [b"\x00" * 16] * 2, [[]] * 2)
   # a vector neighbour that never says "nocos" (the 2025 chats in the real case)
   monkeypatch.setattr(hybrid, "_vec_search_items", lambda *a, **k: [("item", old.id, 0, 0.1)])
-  cfg = HybridQueryConfig(top_k=5, sort="asc", include_consolidations=False)
+  cfg = HybridQueryConfig(top_k=5, sort="asc", include_consolidations=False, query_shape="first_occurrence")
   assert [r.id for r in query(conn, "nocos", embedding=[0.0] * 4, config=cfg)] == [hit.id]
+  # a plain --sort oldest is not a first-occurrence question: semantic hits stay
+  plain = replace(cfg, query_shape="factual")
+  assert old.id in [r.id for r in query(conn, "nocos", embedding=[0.0] * 4, config=plain)]
   # with no text match at all, the vector pool is all there is and stays
   assert [r.id for r in query(conn, "zzzz", embedding=[0.0] * 4, config=cfg)] == [old.id]
+
+
+def test_rare_term_lane_surfaces_an_identifier_common_words_outvote():
+  conn = _open_db()
+  t = datetime(2026, 1, 1, tzinfo=UTC)
+  # 400 unrelated docs give "app"/"service" real idf; 40 short docs repeat them;
+  # one long note names the rare identifier once (bm25 length-normalizes it away)
+  filler = [_make_item(content=f"unrelated filler {i}", ts=t, msg_id=f"f{i}") for i in range(400)]
+  items = [_make_item(content="app service app service note", ts=t, msg_id=f"c{i}") for i in range(40)]
+  rare = _make_item(content="long incident writeup " * 60 + " use32bitworkerprocess was false", ts=t, msg_id="rare")
+  docs = [*filler, *items, rare]
+  store_items(conn, docs, [b"\x00" * 16] * len(docs), [[]] * len(docs))
+  base = HybridQueryConfig(top_k=5, per_index_k=10, include_consolidations=False)
+  q = "use32bitworkerprocess app service"
+  assert rare.id not in [r.id for r in query(conn, q, config=replace(base, rare_term_df=0))]
+  assert rare.id in [r.id for r in query(conn, q, config=base)][:3]
 
 
 def test_fallback_parse_keeps_first_and_last_questions():
@@ -169,6 +188,9 @@ def test_contact_verbs_vs_hearsay():
   assert contact("når snakket jeg sist med Anne Hjort?", "last_occurrence")
   assert not contact("when did I first hear about Anne Hjort?")
   assert not contact("når hørte jeg første gang om Anne Hjort?")
+  # "hear from" is contact, "hear about" is hearsay
+  assert contact("when did I last hear from Anne Hjort?", "last_occurrence")
+  assert contact("når hørte jeg sist fra Anne Hjort?", "last_occurrence")
 
 
 def test_received_only_consolidation_counts_as_participation():
@@ -181,8 +203,9 @@ def test_received_only_consolidation_counts_as_participation():
     " VALUES ('cons:x', 'teams', 't', '2026-01-01', '2026-01-01', '[\"bob\"]', 1, 's', ?, 'v', '2026-01-01')",
     (json.dumps(["read-only-item"]),),
   )
-  conn.execute("INSERT INTO items (id, source, source_id, timestamp, sender, recipients, content, ingested_at)"
-               " VALUES ('read-only-item', 'teams', 'x', '2026-01-01', 'bob', '[\"me\"]', 'hi', '2026-01-01')")
+  conn.execute("INSERT INTO items (id, source, source_id, timestamp, sender, recipients, content, ingested_at,"
+               " consolidated_into) VALUES ('read-only-item', 'teams', 'x', '2026-01-01', 'bob', '[\"me\"]', 'hi',"
+               " '2026-01-01', 'cons:x')")
   assert "cons:x" in _resolve_participant_allowlist(conn, ["me"])[1]
 
 

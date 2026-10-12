@@ -9,6 +9,7 @@ identities are skipped. Insert-or-ignore: an existing content link is kept as is
 """
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import sqlite3
@@ -31,6 +32,7 @@ def conversation_items(
   person: Iterable[str],
   owner: Iterable[str],
   window_hours: float = 2,
+  until: datetime | None = None,
 ) -> set[str]:
   """The items among `item_ids` that are a conversation between the user and a person.
 
@@ -39,9 +41,11 @@ def conversation_items(
   thread within `window_hours`. A third party's message to a group both are in, or
   the person's broadcast to a group the user never answered, is not "speaking with"
   them (the owner's gold labels for "when did I last speak with X" are 1:1 chats).
-  `person` and `owner` are identities (names, aliases, emails, phones)."""
+  `person` and `owner` are identities (names, aliases, emails, phones). With
+  `until`, later messages neither count nor make an earlier one a reply (as-of)."""
   p_keys = {norm_identity(x) for x in person}
   o_keys = {norm_identity(x) for x in owner} | {"me"}
+  cutoff = None if until is None else ensure_utc(until)
   by_thread: dict[str, list[tuple[str, datetime, str, bool]]] = {}
   ids = list(item_ids)
   for start in range(0, len(ids), 900):
@@ -61,12 +65,20 @@ def conversation_items(
       to = parsed if isinstance(parsed, list) else []
       # direct: exactly one recipient, and it is the other party
       direct = len(to) == 1 and norm_identity(to[0]) in (p_keys if role == "o" else o_keys)
-      by_thread.setdefault(thread or iid, []).append((iid, ensure_utc(datetime.fromisoformat(ts)), role, direct))
+      when = ensure_utc(datetime.fromisoformat(ts))
+      if cutoff is not None and when > cutoff:
+        continue
+      by_thread.setdefault(thread or iid, []).append((iid, when, role, direct))
   window = timedelta(hours=window_hours)
   keep: set[str] = set()
   for msgs in by_thread.values():
+    # per role, sorted timestamps: "did the other party write within the window"
+    # is one bisect, not a scan of the thread (a big group thread has thousands)
+    times = {r: sorted(t for _, t, rr, _ in msgs if rr == r) for r in ("o", "p")}
     for iid, ts, role, is_direct in msgs:
-      if is_direct or any(r != role and abs(t - ts) <= window for _, t, r, _ in msgs):
+      other = times["p" if role == "o" else "o"]
+      i = bisect.bisect_left(other, ts - window)
+      if is_direct or (i < len(other) and other[i] <= ts + window):
         keep.add(iid)
   return keep
 
@@ -120,5 +132,14 @@ def link_participants(
       sorted(pairs),
     )
     added = conn.total_changes - before
-  return {"person_keys": len(lookup), "matched": len(pairs), "linked": added}
+    # A message that also names the person in its text already has a content link
+    # for the pair; participation outranks a mention, and contact retrieval reads
+    # source = 'participant', so upgrade it rather than leave the message out.
+    conn.executemany(
+      "UPDATE item_entities SET source = 'participant', confidence = 1.0 "
+      "WHERE item_id = ? AND entity_id = ? AND source IS NOT 'participant'",
+      sorted(pairs),
+    )
+    upgraded = conn.total_changes - before - added
+  return {"person_keys": len(lookup), "matched": len(pairs), "linked": added, "upgraded": upgraded}
 

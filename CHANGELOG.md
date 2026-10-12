@@ -12,6 +12,15 @@ surface; pin to a specific version if you need stability.
 
 ### Added
 
+- Rare-term lane (`HybridQueryConfig.rare_term_df`, default 25; `rare_term_weight`
+  1.0): a query word that matches 1-25 items gets its own FTS search, fused as an
+  extra RRF lane. In the main OR query common words outvote it: for
+  "use32BitWorkerProcess nc-nocos-la-prod" the 12 items naming the identifier sat
+  at bm25 ranks 22-1526 behind "App"/"Service" and none reached the top 50; now
+  one is rank 1. Era 5 dev 0.5714 -> 0.6057 (rank-1 golds 43 -> 46), test
+  0.2923 -> 0.3048. One rank-1 gold moved to rank 2 (a near tie: "Scandic Hell"
+  pulls in a hotel message), accepted over the keep rule's zero-loss bar
+  (experiment 163). Harness `--rare-term-df`, `--rare-term-weight`.
 - Last-contact retrieval ("when did I last speak with X?"), three pieces, all
   on by default:
   - Participant links: every ingest links its new items to the people who
@@ -160,6 +169,25 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Heavy Copilot review of the last-contact work (2026-10-12), 15 of 17
+  findings fixed: participant matches upgrade an existing content link (1,586
+  upgraded on live; contact retrieval missed messages that also named the
+  person); occurrence-lane hits already in the pool keep the lane marker;
+  newest-first sorts order a consolidation by its last message (capped at the
+  as-of cutoff); the lane honors `exclude_item_ids` and, for contact
+  questions, keeps short "junk" replies; the vector-only drop is limited to
+  time-shaped questions; an explicit `--sort` keeps the owner identities;
+  reranking keeps lane items; conversation reciprocity is as-of and
+  O(n log n); consolidation membership comes from `items.consolidated_into`
+  instead of scanning every consolidation; "hear from / høre fra" is contact
+  and "hear about / høre om" hearsay; promotion cuts names out of topic terms
+  and never drops an alias-supported entity; the harness regenerates only
+  complete fallback parses and applies ablations after promotion. Era label
+  `78 gold live freeze (oct12), participant upgrade`; anchors
+  `era5u-anchor-nojunk` dev 0.6057 / test 0.3048 (with the rare-term lane).
+  Not fixed by design: the contact eval's answer keys share the retrieval
+  rule (the owner-labelled gold set is the independent check), and
+  call/meeting modality (no call records).
 - Eval era 5 (`78 gold live freeze (oct12)`): the owner labelled 50 recent
   unjudged live queries from a sheet of production top-3 results (live
   feedback #213-#259: 16 hits, 16 corrections, 15 misses, 3 skipped), and 31

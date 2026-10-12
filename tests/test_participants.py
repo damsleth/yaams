@@ -16,7 +16,7 @@ def _db() -> sqlite3.Connection:
   return db
 
 
-def test_link_participants_incremental_and_keeps_content_links():
+def test_link_participants_incremental_and_upgrades_content_links():
   db = _db()
   db.executescript(
     "INSERT INTO entities VALUES (1, 'Bob Smith', 'person', '[\"bob@x.no\", \"+47 900 00 000\"]', 1);"
@@ -26,8 +26,9 @@ def test_link_participants_incremental_and_keeps_content_links():
     "INSERT INTO item_entities VALUES ('a', 1, 0.8, 'ner');"
   )
   stats = link_participants(db, ["me"], since=datetime.fromisoformat("2026-01-01T00:00:00+00:00"))
-  assert stats["matched"] == 2 and stats["linked"] == 1, stats  # 'a' keeps its ner link, 'c' is too old
-  assert db.execute("SELECT source FROM item_entities WHERE item_id='a'").fetchone()[0] == "ner"
+  # 'a' had a content (ner) link: it is upgraded, not skipped; 'c' is too old
+  assert stats["matched"] == 2 and stats["linked"] == 1 and stats["upgraded"] == 1, stats
+  assert db.execute("SELECT source FROM item_entities WHERE item_id='a'").fetchone()[0] == "participant"
   assert link_participants(db, ["me"])["linked"] == 1  # backfill picks up 'c'
 
 

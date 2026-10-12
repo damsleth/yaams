@@ -84,7 +84,12 @@ from yaams.retrieve import (  # noqa: E402
     route,
 )
 from yaams.retrieve import query as run_query  # noqa: E402
-from yaams.retrieve.parse import _fallback, promote_entities, promotion_map  # noqa: E402
+from yaams.retrieve.parse import (  # noqa: E402
+    _alias_supported,
+    _fallback,
+    promote_entities,
+    promotion_map,
+)
 from yaams.retrieve.synonyms import normalize_synonym_groups  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
@@ -109,6 +114,8 @@ _HARD_FAIL_LATENCY_MULT = 2.0
 _PARSE_OVERRIDES: dict[str, dict] = {}  # --parse-override: query_id -> fresh parse (P6 fallback fix)
 _PROMOTE: dict[str, str] = {}  # lowercased multi-word name/alias -> canonical (off: --no-promote-entities)
 _OCCURRENCE_BROWSE = True  # --no-occurrence-browse overrides route() turning the lane on
+_RARE_TERM_DF: int | None = None  # --rare-term-df overrides HybridQueryConfig.rare_term_df (0 = off)
+_RARE_TERM_WEIGHT: float | None = None  # --rare-term-weight overrides HybridQueryConfig.rare_term_weight
 
 
 def _load_promotions(conn) -> None:
@@ -126,9 +133,14 @@ def _parsed_from_json(raw_json: str | None, fallback_raw: str) -> ParsedQuery | 
     if not raw_json:
         return None
     d = json.loads(raw_json)
-    if d.get("fallback_used"):
-        # the fallback is a pure function of the text: replay what production builds today
-        return _fallback(d.get("raw") or fallback_raw)
+    raw = d.get("raw") or fallback_raw
+    whole = (d.get("shape") in (None, "factual") and not d.get("entities")
+             and (d.get("topic_terms") or []) in ([raw], []) and not any(d.get("date_range") or []))
+    if d.get("fallback_used") and whole:
+        # a complete fallback is a pure function of the text: replay what production
+        # builds today. fallback_used also marks a partly repaired LLM parse (one bad
+        # field); that keeps its valid entities and shape.
+        return _fallback(raw)
     dr = d.get("date_range") or [None, None]
     start = parse_iso_datetime(dr[0]) if dr and dr[0] else None
     end = parse_iso_datetime(dr[1]) if dr and len(dr) > 1 and dr[1] else None
@@ -223,6 +235,10 @@ def _replay_one(
     stored = (_PARSE_OVERRIDES.get(row["query_id"]) and json.dumps(_PARSE_OVERRIDES[row["query_id"]])
               or row["parsed_query"])
     parsed = None if parse_mode == "none" else _parsed_from_json(stored, text)
+    # production post-processing first, then the ablation: a noentities run must
+    # not get its entities re-added by promotion
+    if parsed is not None and _PROMOTE:
+        promote_entities(parsed, _PROMOTE, _alias_supported(conn, parsed))
     if parsed is not None and parse_mode == "factual":
         parsed.shape = "factual"
     elif parsed is not None and parse_mode == "noentities":
@@ -231,8 +247,6 @@ def _replay_one(
         parsed.date_range = (None, None)
     elif parsed is not None and parse_mode == "notopics":
         parsed.topic_terms = []
-    if parsed is not None and _PROMOTE:
-        promote_entities(parsed, _PROMOTE)
     sf = json.loads(row["source_filter"] or "[]") or None
     base = HybridQueryConfig(
         top_k=_EVAL_TOP_K,
@@ -254,6 +268,10 @@ def _replay_one(
     qcfg.top_k = _EVAL_TOP_K  # route() may carry/reset top_k; force the eval depth
     if not _OCCURRENCE_BROWSE:
         qcfg.occurrence_browse = False
+    if _RARE_TERM_DF is not None:
+        qcfg.rare_term_df = _RARE_TERM_DF
+    if _RARE_TERM_WEIGHT is not None:
+        qcfg.rare_term_weight = _RARE_TERM_WEIGHT
     if qcfg.sort in ("asc", "desc") and row["ts"]:
         # A first/last answer cannot postdate the question: replay the corpus as of
         # the ask, or a newest-first sort ranks later items above the gold (wiki P7).
@@ -319,6 +337,10 @@ def _mode_label(args) -> str:
         base = f"{base}+no-promote"
     if getattr(args, "no_occurrence_browse", False):
         base = f"{base}+no-occbrowse"
+    if getattr(args, "rare_term_df", None) is not None:
+        base = f"{base}+raredf{args.rare_term_df}"
+    if getattr(args, "rare_term_weight", None) is not None:
+        base = f"{base}+rarew{args.rare_term_weight}"
     return base
 
 
@@ -363,9 +385,15 @@ def main() -> int:
                          "parse_query; the stored parses predate it, so replays promote by default)")
     ap.add_argument("--no-occurrence-browse", action="store_true",
                     help="Disable the occurrence lane (on by default, as in production)")
+    ap.add_argument("--rare-term-df", type=int, default=None,
+                    help="Rare-term lane threshold (HybridQueryConfig.rare_term_df); 0 disables")
+    ap.add_argument("--rare-term-weight", type=float, default=None,
+                    help="Rare-term lane RRF weight (HybridQueryConfig.rare_term_weight)")
     args = ap.parse_args()
-    global _OCCURRENCE_BROWSE
+    global _OCCURRENCE_BROWSE, _RARE_TERM_DF, _RARE_TERM_WEIGHT
     _OCCURRENCE_BROWSE = not args.no_occurrence_browse
+    _RARE_TERM_DF = args.rare_term_df
+    _RARE_TERM_WEIGHT = args.rare_term_weight
     if args.parse_override:
         _PARSE_OVERRIDES.update(json.loads(Path(args.parse_override).read_text()))
 

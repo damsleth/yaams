@@ -108,6 +108,24 @@ Several "retrieval failures" were the harness.
   real work (it also rejects BAD_LABEL false positives); do not weaken
   `--votes` to force a flaky gold through.
 
+## P8. A rare exact word needs its own lane; OR-bm25 lets common words outvote it
+
+Identifiers and rare names (`use32BitWorkerProcess`, df 12) lose inside an OR
+query to common co-terms ("App" df 1525): the long notes that name them are
+also length-penalized, so they never reach the per-index top 80.
+
+- Evidence (seq 163): a dedicated FTS search for words with df 1-25, fused as
+  one more RRF lane, took two label-sheet misses to rank 1/3 and era-5 dev
+  0.5714 -> 0.6057. Larger thresholds kept gaining dev quality but started
+  costing recall@10 (df 50); lane weight below 1 did not help.
+- Search each rare word alone and literally (seq 166). One OR search over all
+  rare words with synonym expansion let a common alias and the shared cap
+  crowd the rare hits out again; with per-word literal searches the one loss
+  of seq 163 (an incidental hotel name) disappeared: +0.044, 4 rank-1 gained,
+  0 lost. Lowering the lane weight never helped.
+- The misses that found this came from an owner label sheet, not the gold
+  set: label sheets of recent real queries are the best miss-finder (P5).
+
 ## P7. Person recall is a pipeline, not a knob; the gold set cannot see it
 
 "When did I last speak with X" fails at three independent stages, and fixing

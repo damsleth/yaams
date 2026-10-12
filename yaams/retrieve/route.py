@@ -49,10 +49,33 @@ CONTACT_WORDS = frozenset("""
   snakke snakket snakka prate pratet prata møte møtte møtt høre hørte hørt
   kontakt kontaktet ringe ringte ringt skrive skrev skrevet melding meldinger
   samtale chatte chattet
+  from fra mention mentioned mentions nevne nevnt nevnte
 """.split())
 # ...unless the question is about hearing of them rather than talking to them
 # ("when did I first hear about X"): then a note that mentions X counts too.
-HEARSAY_WORDS = frozenset("hear heard mention mentioned høre hørte hørt nevne nevnt nevnte".split())
+HEARSAY_WORDS = frozenset("mention mentioned mentions nevne nevnt nevnte".split())
+# "hear about X" / "høre om X" is hearsay; "hear from X" / "høre fra X" is contact
+_HEAR = frozenset("hear heard høre hørte hørt".split())
+_ABOUT = frozenset("about of om".split())
+
+
+_FROM = frozenset("from fra".split())
+
+
+def _hearsay(raw: str) -> bool:
+  # a hear-word with "about/om" later in the clause, before any "from/fra"
+  # ("når hørte jeg første gang om X" puts words between them)
+  words = re.findall(r"\w+", raw.lower())
+  for i, w in enumerate(words):
+    if w in HEARSAY_WORDS:
+      return True
+    if w in _HEAR:
+      for nxt in words[i + 1:]:
+        if nxt in _FROM:
+          break
+        if nxt in _ABOUT:
+          return True
+  return False
 
 
 def route(
@@ -83,14 +106,12 @@ def route(
     cfg.prefer_consolidations = True
     cfg.top_k = max(cfg.top_k, SYNTHESIS_TOP_K)
     cfg.high_quality = True
-  elif parsed.shape == "first_occurrence" and not explicit_sort:
-    cfg.sort = "asc"
-    cfg.relevance_floor = OCCURRENCE_RELEVANCE_FLOOR
-    if self_identities:
-      cfg.participant_filter = list(self_identities)
-  elif parsed.shape == "last_occurrence" and not explicit_sort:
-    cfg.sort = "desc"
-    cfg.relevance_floor = OCCURRENCE_RELEVANCE_FLOOR
+  elif parsed.shape in OCCURRENCE_SHAPES:
+    # An explicit --sort overrides the order only; the user's identities still
+    # scope first/last to their own activity (and classify conversations).
+    if not explicit_sort:
+      cfg.sort = "asc" if parsed.shape == "first_occurrence" else "desc"
+      cfg.relevance_floor = OCCURRENCE_RELEVANCE_FLOOR
     if self_identities:
       cfg.participant_filter = list(self_identities)
   elif parsed.shape == "event_anchored":
@@ -132,7 +153,7 @@ def route(
 
   if parsed.shape in OCCURRENCE_SHAPES and cfg.entity_filter and _topic_free(parsed):
     cfg.occurrence_browse = True
-    cfg.occurrence_contact = not (set(re.findall(r"\w+", parsed.raw.lower())) & HEARSAY_WORDS)
+    cfg.occurrence_contact = not _hearsay(parsed.raw)
   return cfg
 
 

@@ -377,10 +377,17 @@ yaams query --sort oldest "how this thread started"
 
 Default is relevance. The parser also infers sort from query *shape* (a
 "latest X" question sorts newest-first); `--sort` overrides that inference.
-A newest/oldest sort only keeps results that contain the query's words once
-any do: a semantically similar chat that never mentions the term cannot be
-"the first time you heard about" it. With no word match at all, semantic
-matches are kept.
+For a question that asks for a time ("first", "last", a date or an event), a
+newest/oldest sort only keeps results that contain the query's words once any
+do: a semantically similar chat that never mentions the term cannot be "the
+first time you heard about" it. With no word match at all, semantic matches
+are kept, and a plain `--sort` on an ordinary query keeps them too. A
+conversation summary sorts newest-first by its last message.
+
+A rare word in a query (an identifier like `use32BitWorkerProcess`, a name
+that occurs in at most 25 items) gets its own keyword search alongside the
+normal one, so common words in the same query cannot push its few matches out
+of the results.
 
 ### Speed vs. smarts
 

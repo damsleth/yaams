@@ -160,6 +160,15 @@ surface; pin to a specific version if you need stability.
 
 ### Fixed
 
+- Eval era 5 (`78 gold live freeze (oct12)`): the owner labelled 50 recent
+  unjudged live queries from a sheet of production top-3 results (live
+  feedback #213-#259: 16 hits, 16 corrections, 15 misses, 3 skipped), and 31
+  approved duplicate-person merges (6,675 links moved, e.g. Tarjei, Øistein,
+  Vibeke, Carl Joakim, Emilie Athene) were applied on live before a fresh
+  backup-API snapshot. Gold 46 -> 78 (dev 72, test 6). Anchors
+  `era5-anchor-nojunk`: dev 0.5714, recall@10 0.986; test 0.2923. Contact
+  eval rebuilt: 24 + 24 cases, 1.0 hit@1 for last and first with the LLM and
+  the fallback parse.
 - Gold relabel (owner, 2026-10-07): "what did Emilie say about driving
   school" is a miss (live feedback 212): the data has nothing Emilie herself
   said about it, and the old hit pointed at an unrelated Red Cross Teams

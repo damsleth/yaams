@@ -19,9 +19,10 @@ a worktree is silently lost.
 
 | Thing | Where | Set by |
 |---|---|---|
-| Frozen fixture (era 4: SQLite backup of the live store 2026-10-07, 47 gold, 93,889 items, 142,532 participant links, junk-annotated) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
-| Era 3 / era 2 fixture backups (42 gold; era 2 has no participant links) | `~/brain/feed/eval/autoresearch_fixture_era{3-2026-10-07,2-2026-10-06}.db` | this page, section 1 |
-| Person-recall cases (last/first contact, 14 + 14 conversations on the era-4 fixture; older keys in `*_era3.jsonl`, `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
+| Frozen fixture (era 5: SQLite backup of the live store 2026-10-12, 78 gold incl. a 50-query owner label sheet, 94,740 items, 147,858 participant links, junk-annotated) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
+| Era 4 / era 2 fixture backups (46 / 42 gold) | `~/brain/feed/eval/autoresearch_fixture_era{4-2026-10-12,2-2026-10-06}.db` | this page, section 1 |
+| Person-recall cases (last/first contact, 24 + 24 conversations on the era-5 fixture; older keys in `*_era4.jsonl`, `*_era3.jsonl`, `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
+| Owner label sheets (recent unjudged live queries, top 3 replayed through production; answers written as `yaams feedback` hit/correction/miss) | `~/brain/feed/eval/label-sheets/` | this page, section 1 |
 | Manifest (fixture path, `source_db`, `gold_hash`, `gold_queries`, `corrections`, `total_queries`) | `scripts/autoresearch_scenario.json` | `scripts/autoresearch_freeze.py:33,81-88` |
 | Era label new experiment rows are tagged with | `docs/experiments/CURRENT_ERA` | you, by hand |
 | Era 1 fixture backup (79 gold, pre-curation) | `~/brain/feed/eval/autoresearch_fixture_pre-curation-2026-09-17.db` | `.plans/done/data-quality.md` "Promotion 2026-09-17" |
@@ -111,8 +112,8 @@ live setting):
 cd /Users/damsleth/code/yaams
 .venv/bin/python scripts/autoresearch_freeze.py --check
 rm -f scripts/.autoresearch_state.json
-.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era4-anchor-nojunk
-.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era4-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era5-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era5-anchor-nojunk
 ```
 
 Recorded runs (no `--no-write`) append to `scripts/autoresearch_results.tsv`,

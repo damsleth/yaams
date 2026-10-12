@@ -127,7 +127,7 @@ def parse_query(
     max_tokens=max_tokens, temperature=temperature,
   )
   if conn is not None:
-    promote_entities(parsed, promotion_map(conn))
+    promote_entities(parsed, promotion_map(conn), _alias_supported(conn, parsed))
   return parsed
 
 
@@ -170,12 +170,13 @@ def promotion_map(conn: sqlite3.Connection) -> dict[str, str]:
   return {k: v for k, v in out.items() if 2 <= len(k.split()) <= 4}
 
 
-def promote_entities(parsed: ParsedQuery, names: dict[str, str]) -> None:
+def promote_entities(parsed: ParsedQuery, names: dict[str, str], protected: set[str] | None = None) -> None:
   """Add exact multi-word names from the query text that the parse left out.
 
   The prompt lists only the top-N entities, so the LLM turns every long-tail name
-  into a topic term; a promoted name becomes an entity (and it and the matched
-  phrase leave topic_terms), which route turns into an entity filter."""
+  into a topic term; a promoted name becomes an entity (and the matched phrase
+  leaves topic_terms), which route turns into an entity filter. `protected` are
+  parsed entities the question supports through an alias (never dropped)."""
   words = parsed.raw.lower().replace("?", " ").replace(",", " ").split()
   found: list[str] = []
   drop: set[str] = set()
@@ -183,19 +184,48 @@ def promote_entities(parsed: ParsedQuery, names: dict[str, str]) -> None:
     for i in range(len(words) - n + 1):
       phrase = " ".join(words[i:i + n])
       canon = names.get(phrase)
-      if canon and canon not in found and canon not in parsed.entities:
-        found.append(canon)
-        drop |= {phrase, _norm_phrase(canon)}
+      if canon and canon not in found:
+        drop |= {phrase, _norm_phrase(canon)}  # also when the LLM already had it
+        if canon not in parsed.entities:
+          found.append(canon)
   if found:
     # The LLM snaps a long-tail name to a nearby known entity ("Øystein Røvde" ->
     # "Øistein", someone else); the exact name in the text beats that guess.
     raw = parsed.raw.lower()
     tokens = {w for f in found for w in f.lower().split()}
     def snapped(e: str) -> bool:
-      e = e.lower()
-      return e not in raw and any(SequenceMatcher(None, e, t).ratio() >= 0.8 for t in tokens)
+      e_low = e.lower()
+      return (e not in (protected or set()) and e_low not in raw
+              and any(SequenceMatcher(None, e_low, t).ratio() >= 0.8 for t in tokens))
     parsed.entities = [*(e for e in parsed.entities if not snapped(e)), *found]
-    parsed.topic_terms = [t for t in parsed.topic_terms if _norm_phrase(t) not in drop]
+  if drop:
+    # cut the name out of each topic term, not just whole-term matches: the
+    # fallback's single topic term is the whole question
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(d) for d in sorted(drop, key=len, reverse=True)) + r")\b")
+    kept = []
+    for t in parsed.topic_terms:
+      rest = " ".join(pattern.sub(" ", _norm_phrase(t)).split())
+      if rest:
+        kept.append(t if rest == _norm_phrase(t) else rest)
+    parsed.topic_terms = kept
+
+
+def _alias_supported(conn: sqlite3.Connection, parsed: ParsedQuery) -> set[str]:
+  """Parsed entities whose canonical name or an alias occurs in the question."""
+  cleaned = re.sub(r"[^\w@.+ -]", " ", parsed.raw)
+  raw = f" {_norm_phrase(cleaned)} "
+  out: set[str] = set()
+  for e in parsed.entities:
+    row = conn.execute("SELECT aliases FROM entities WHERE canonical_name = ?", (e,)).fetchone()
+    try:
+      aliases = json.loads(row[0] or "[]") if row else []
+    except (TypeError, ValueError):
+      aliases = []
+    for a in [e, *(aliases if isinstance(aliases, list) else [])]:
+      if isinstance(a, str) and len(a) > 1 and f" {_norm_phrase(a)} " in raw:
+        out.add(e)
+        break
+  return out
 
 
 def _parse_llm(

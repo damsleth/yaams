@@ -163,6 +163,12 @@ class HybridQueryConfig:
   # Below 1.0 recent matches still enter the pool (the property that matters)
   # without a lone recent hit overtaking an established rank-1.
   recency_lane_weight: float = 1.0
+  # Rare-term lane: a query word found in at most this many items (an
+  # identifier like `use32BitWorkerProcess`) gets its own FTS search, fused as
+  # an extra lane. In the main OR query common words outvote it (bm25 put the
+  # 12 items naming it at ranks 22-1526 behind "App"/"Service"). 0 disables.
+  rare_term_df: int = 25
+  rare_term_weight: float = 1.0
   # The reference point every time-aware mechanism (decay, lane) measures age
   # from. None = the corpus's newest item. The eval harness sets it to each
   # replayed query's own timestamp: a gold query asked on Apr 30 must be scored
@@ -234,6 +240,17 @@ class HybridResult:
   # recency, entity_boost, feedback_boost, assoc) plus the additive
   # tier2_coverage credit and rerank (score replaced). Display only.
   boosts: dict[str, float] = field(default_factory=dict)
+  # A consolidation's last message; `timestamp` is its first. Newest-first sorts
+  # order a session by when it ended (_sort_time), not when it started.
+  end_timestamp: datetime | None = None
+
+
+def _sort_time(r: "HybridResult", cfg: "HybridQueryConfig") -> datetime:
+  """The timestamp a first/last sort uses: a session's end for newest-first,
+  capped at `until` so an as-of replay never ranks on messages after it."""
+  if cfg.sort != "desc" or r.end_timestamp is None:
+    return r.timestamp
+  return min(r.end_timestamp, ensure_utc(cfg.until)) if cfg.until is not None else r.end_timestamp
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -367,6 +384,19 @@ def query(
     lanes += [r_fts_items, r_fts_cons, r_vec_items, r_vec_cons]
     weights += [cfg.recency_lane_weight] * 4
 
+  rare = _rare_terms(conn, text, cfg) if cfg.include_items and not fact_tier else []
+  if rare:
+    rare_text = " ".join(rare)
+    rare_items = _fts_search_items(conn, rare_text, fetch_cfg)
+    rare_cons = (_fts_search_consolidations(conn, rare_text, fetch_cfg)
+                 if cfg.include_consolidations and not cfg.repo_filter else [])
+    for allow, cons in ((item_allow, cons_allow), (part_item_allow, part_cons_allow)):
+      if allow is not None:
+        rare_items = [t for t in rare_items if t[1] in allow]
+        rare_cons = [t for t in rare_cons if t[1] in (cons or set())]
+    lanes += [rare_items, rare_cons]
+    weights += [cfg.rare_term_weight] * 2
+
   fused = _fuse(lanes, cfg=cfg, weights=weights)
   hydrate_cap = max(cfg.top_k * 2, fetch_k)
   hydrated = _hydrate(conn, fused, cfg, hydrate_cap=hydrate_cap)
@@ -391,17 +421,24 @@ def query(
     # occurrence_contact) means a message they sent or received, not a note that
     # mentions them (or a one-word alias like "Jan"). "When did I first hear about X"
     # keeps mentions. Entities without participant links (orgs, projects) keep all.
-    p_items, p_cons = (
-      _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant")
-      if cfg.occurrence_contact else (set(), set())
+    p_items = (
+      _resolve_entity_allowlist(conn, cfg.entity_filter or [], "participant", with_cons=False)[0]
+      if cfg.occurrence_contact else set()
     )
     if p_items:
       items, cons = _exchanges(conn, cfg, p_items)
       hydrated = [r for r in hydrated if r.id in items or r.id in cons]
     if part_item_allow is not None:
       items, cons = items & part_item_allow, cons & (part_cons_allow or set())
-    seen = {r.id for r in hydrated}
-    hydrated += [r for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k) if r.id not in seen]
+    # A lane hit already in the pool (say as a vector-only candidate) keeps its
+    # index scores but gains the lane marker, which exempts it from the floor and
+    # the vector-only filter below; otherwise the newest conversation could vanish.
+    by_id = {r.id: r for r in hydrated}
+    for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k):
+      if r.id in by_id:
+        by_id[r.id].boosts["occurrence_browse"] = 1.0
+      else:
+        hydrated.append(r)
   if cfg.rerank_enabled and hydrated:
     # Opt-in cross-encoder rerank: re-score the top `rerank_k` candidates and
     # let the cross-encoder score replace the RRF score. The pool becomes the
@@ -410,13 +447,15 @@ def query(
     # the default path never loads the cross-encoder.
     from yaams.retrieve.rerank import candidate_text, rerank_pairs
     pool = hydrated[: cfg.rerank_k]
+    # occurrence-lane items are chosen by time, not relevance: keep them past the cut
+    lane_tail = [r for r in hydrated[cfg.rerank_k:] if "occurrence_browse" in r.boosts]
     pairs = [(text, candidate_text(r.subject, r.content)) for r in pool]
     scores = rerank_pairs(text, pairs, cfg.reranker_model, device=cfg.reranker_device)
     for r, s in zip(pool, scores):
       r.score = s
       # Hydration-time boosts no longer shape the score; only later ones do.
-      r.boosts = {"rerank": float(s)}
-    hydrated = pool
+      r.boosts = {"rerank": float(s), **({"occurrence_browse": 1.0} if "occurrence_browse" in r.boosts else {})}
+    hydrated = pool + lane_tail
   if cfg.jev_spec and hydrated:
     hydrated = _apply_jev(conn, text, hydrated, cfg)
   if cfg.boost_entities:
@@ -457,7 +496,10 @@ def query(
     # timestamp sort on age alone, so once the text matched anything, drop the
     # pure vector hits. With no text match at all (another language, a
     # paraphrase) the vector pool is all there is and stays. Lane items stay.
-    if any(r.components.fts_rank is not None for r in hydrated):
+    # Only for questions whose shape asks for a time ("first", "last", a dated
+    # event or range): a factual query with a plain --sort keeps semantic hits.
+    if (cfg.query_shape in ("first_occurrence", "last_occurrence", "temporal_range", "event_anchored")
+        and any(r.components.fts_rank is not None for r in hydrated)):
       hydrated = [r for r in hydrated
                   if r.components.fts_rank is not None or "occurrence_browse" in r.boosts]
     hydrated = _apply_relevance_floor(hydrated, cfg.relevance_floor)
@@ -466,7 +508,7 @@ def query(
     # under reverse=True: it flips the secondary key too, so the *weakest*
     # same-timestamp match would win the "most recent" slot.
     hydrated.sort(key=lambda r: r.score, reverse=True)
-    hydrated.sort(key=lambda r: r.timestamp, reverse=cfg.sort == "desc")
+    hydrated.sort(key=lambda r: _sort_time(r, cfg), reverse=cfg.sort == "desc")
   else:
     hydrated.sort(key=lambda r: r.score, reverse=True)
   if cfg.assoc_weights:
@@ -527,9 +569,10 @@ def _resolve_entity_allowlist(
   conn: sqlite3.Connection,
   entity_names: list[str],
   link_source: str | None = None,
+  with_cons: bool = True,
 ) -> tuple[set[str], set[str]]:
   """Return (item_ids, consolidation_ids) that share at least one of the
-  named canonical entities. Consolidations match via raw_item_ids."""
+  named canonical entities. Consolidations match via their member items."""
   if not entity_names:
     return set(), set()
   canonical_lower = [e.lower() for e in entity_names if e]
@@ -554,23 +597,19 @@ def _resolve_entity_allowlist(
   item_ids: set[str] = {
     r[0] if not hasattr(r, "keys") else r["item_id"] for r in item_rows
   }
-  cons_ids: set[str] = set()
-  # Chunked: a frequently-mentioned entity can link tens of thousands of
-  # items, which would blow SQLite's 999-variable limit in one statement.
+  return item_ids, (_cons_of(conn, item_ids) if with_cons else set())
+
+
+def _cons_of(conn: sqlite3.Connection, item_ids: set[str]) -> set[str]:
+  """Consolidations containing any of `item_ids`, via items.consolidated_into
+  (kept in step with consolidations.raw_item_ids by the store). Chunked: an
+  entity can link tens of thousands of items, past SQLite's variable limit."""
+  out: set[str] = set()
   for chunk in chunked(list(item_ids)):
-    item_ph = ",".join("?" * len(chunk))
-    cons_rows = conn.execute(
-      f"""
-      SELECT DISTINCT c.id
-      FROM consolidations c, json_each(c.raw_item_ids) j
-      WHERE j.value IN ({item_ph})
-      """,
-      tuple(chunk),
-    ).fetchall()
-    cons_ids.update(
-      r[0] if not hasattr(r, "keys") else r["id"] for r in cons_rows
-    )
-  return item_ids, cons_ids
+    out.update(r[0] for r in conn.execute(
+      f"SELECT DISTINCT consolidated_into FROM items WHERE consolidated_into IS NOT NULL "
+      f"AND id IN ({','.join('?' * len(chunk))})", tuple(chunk)))
+  return out
 
 
 def _exchanges(
@@ -595,10 +634,8 @@ def _exchanges(
       except (TypeError, ValueError):
         alias_list = []
       person += [canon, *(a for a in (alias_list if isinstance(alias_list, list) else []) if isinstance(a, str))]
-  keep = conversation_items(conn, item_ids, person, cfg.participant_filter or [])
-  cons = {cid for cid, raw in conn.execute("SELECT id, raw_item_ids FROM consolidations")
-          if any(i in keep for i in json.loads(raw or "[]"))}
-  return keep, cons
+  keep = conversation_items(conn, item_ids, person, cfg.participant_filter or [], until=cfg.until)
+  return keep, _cons_of(conn, keep)
 
 
 def _resolve_participant_allowlist(
@@ -644,10 +681,15 @@ def _resolve_participant_allowlist(
   }
   # consolidations.participants lists senders only, so a thread the user only
   # received (a group chat they read) also matches through its member items.
-  # ponytail: Python scan of every consolidation; an index table if it shows in p95
-  for cid, raw in conn.execute("SELECT id, raw_item_ids FROM consolidations"):
-    if cid not in cons_ids and any(i in item_ids for i in json.loads(raw or "[]")):
-      cons_ids.add(cid)
+  cons_ids.update(r[0] for r in conn.execute(
+    f"""
+    SELECT DISTINCT consolidated_into FROM items
+    WHERE consolidated_into IS NOT NULL
+      AND (lower(sender) IN ({ph})
+           OR EXISTS (SELECT 1 FROM json_each(items.recipients) j WHERE lower(j.value) IN ({ph})))
+    """,
+    (*ids, *ids),
+  ))
   return item_ids, cons_ids
 
 
@@ -894,14 +936,14 @@ def _browse_allowlist(
         AND (? IS NULL OR start_timestamp <= ?)
         AND (? = '' OR EXISTS (SELECT 1 FROM json_each(participants) p
                                WHERE p.value IN (SELECT value FROM json_each(?))))
-      ORDER BY start_timestamp {order}
+      ORDER BY {"end_timestamp" if order == "DESC" else "start_timestamp"} {order}
       LIMIT ?
       """,
       (json.dumps(sorted(allowed_cons)),) + _filter_params(cfg, repo=False)
       + _sender_params(cfg) + (cap,),
     ).fetchall()
     out += [r for r in (_hydrate_consolidation(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
-  out.sort(key=lambda r: r.timestamp, reverse=order == "DESC")
+  out.sort(key=lambda r: _sort_time(r, cfg), reverse=order == "DESC")
   for r in out[:cap]:
     r.boosts["occurrence_browse"] = 1.0
   return out[:cap]
@@ -922,13 +964,15 @@ def _browse_allowlist_items(
       AND (? = 0 OR timestamp_inferred = 0)
       AND (? = 0 OR junk_reason IS NULL)
       AND (? = '' OR sender IN (SELECT value FROM json_each(?)))
+      AND id NOT IN (SELECT value FROM json_each(?))
       AND consolidated_into IS NULL
     ORDER BY timestamp {order}
     LIMIT ?
     """,
     (json.dumps(sorted(allowed)),) + _filter_params(cfg)
-    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), _exclude_junk(cfg))
-    + _sender_params(cfg) + (cap,),
+    # an "ok" from someone is junk as content but still contact with them
+    + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), 0 if cfg.occurrence_contact else _exclude_junk(cfg))
+    + _sender_params(cfg) + (_excluded_ids(cfg), cap),
   ).fetchall()
   return [r for r in (_hydrate_item(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
 
@@ -956,6 +1000,26 @@ def _exclude_inferred(cfg: HybridQueryConfig) -> int:
   timestamp, so inferred items stay eligible there.
   """
   return 1 if cfg.sort != "relevance" else 0
+
+
+def _rare_terms(conn: sqlite3.Connection, text: str, cfg: HybridQueryConfig) -> list[str]:
+  """Query words that match between 1 and `cfg.rare_term_df` items (same token
+  quoting as _fts_query). Empty for single-word queries: there the main FTS
+  lane already is the rare-term search."""
+  tokens = list(dict.fromkeys(t for t in text.replace('"', " ").split() if t))
+  if cfg.rare_term_df <= 0 or len(tokens) < 2:
+    return []
+  rare = []
+  for t in tokens[:12]:
+    try:
+      df = conn.execute(
+        "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?", (_fts_query(t),)
+      ).fetchone()[0]
+    except sqlite3.OperationalError:
+      continue
+    if 0 < df <= cfg.rare_term_df:
+      rare.append(t)
+  return rare
 
 
 def _fts_query(text: str, synonyms: dict[str, list[str]] | None = None) -> str:
@@ -1249,7 +1313,7 @@ def _hydrate_consolidation(
 ) -> HybridResult | None:
   row = conn.execute(
     """
-    SELECT id, source, thread_id, start_timestamp, participants, item_count, summary
+    SELECT id, source, thread_id, start_timestamp, end_timestamp, participants, item_count, summary
     FROM consolidations WHERE id = ?
     """,
     (cid,),
@@ -1276,6 +1340,7 @@ def _hydrate_consolidation(
     participants=participants,
     item_count=int(row["item_count"]),
     boosts=boosts,
+    end_timestamp=ensure_utc(_parse_iso(row["end_timestamp"])) if row["end_timestamp"] else None,
   )
 
 

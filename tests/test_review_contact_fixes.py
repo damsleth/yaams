@@ -176,6 +176,34 @@ def test_alias_protection_tolerates_punctuation():
   assert _alias_supported(conn, p) == {"Martina"}
 
 
+def test_email_alias_matches_only_as_a_whole_token():
+  conn = _seed_db_with_entity("Martina", ["tina@example.test"])
+  inside = ParsedQuery(raw="Summarize Martin Hansen and not-tina@example.test.", entities=["Martina"])
+  assert _alias_supported(conn, inside) == set()
+  whole = ParsedQuery(raw="Summarize Martin Hansen and tina@example.test.", entities=["Martina"])
+  assert _alias_supported(conn, whole) == {"Martina"}
+
+
+def test_rare_lane_summaries_are_not_capped_by_item_df(monkeypatch):
+  # df is counted on raw items; a word in one item can sit in many summaries,
+  # so the summary search must keep the normal depth, not the df cap
+  from yaams.retrieve import hybrid
+
+  conn = _open_db()
+  store_items(conn, [_make_item(content="zqxrare note", ts=T, msg_id="m")], [b"\x00" * 16], [[]])
+  depths = []
+  real = hybrid._fts_search_consolidations
+
+  def spy(conn_, text, cfg, *a, **k):
+    if text == "zqxrare":
+      depths.append(cfg.per_index_k)
+    return real(conn_, text, cfg, *a, **k)
+
+  monkeypatch.setattr(hybrid, "_fts_search_consolidations", spy)
+  query(conn, "zqxrare note", config=HybridQueryConfig(per_index_k=60, rare_term_df=25))
+  assert depths and all(d >= 60 for d in depths)
+
+
 def test_alias_supported_entity_survives_near_miss_removal():
   conn = _seed_db_with_entity("Martina", ["Tina"])
   p = ParsedQuery(raw="Summarize Tina and Martin Hansen", entities=["Martina"])

@@ -213,6 +213,16 @@ def promote_entities(parsed: ParsedQuery, names: dict[str, str], protected: set[
     parsed.topic_terms = kept
 
 
+def _alias_pattern(alias: str) -> str:
+  """A name matches between any non-word characters ("Tina." / "Tina's"); an
+  email or phone alias only as a whole token, so `tina@x.no` does not match
+  inside `not-tina@x.no` (trailing sentence punctuation is still allowed)."""
+  a = re.escape(alias)
+  if "@" in alias or re.fullmatch(r"\+?[\d\s\-()]{6,}", alias):
+    return rf"(?<![\w.@+-]){a}(?![\w@+-]|\.\w)"
+  return rf"(?<!\w){a}(?!\w)"
+
+
 def _alias_supported(conn: sqlite3.Connection, parsed: ParsedQuery) -> set[str]:
   """Parsed entities whose canonical name or an alias occurs in the question."""
   raw = _norm_phrase(parsed.raw)
@@ -224,8 +234,7 @@ def _alias_supported(conn: sqlite3.Connection, parsed: ParsedQuery) -> set[str]:
     except (TypeError, ValueError):
       aliases = []
     for a in [e, *(aliases if isinstance(aliases, list) else [])]:
-      # boundary-aware, punctuation-tolerant ("Tina." / "Tina's"), emails/phones intact
-      if isinstance(a, str) and len(a) > 1 and re.search(rf"(?<!\w){re.escape(_norm_phrase(a))}(?!\w)", raw):
+      if isinstance(a, str) and len(a) > 1 and re.search(_alias_pattern(_norm_phrase(a)), raw):
         out.add(e)
         break
   return out

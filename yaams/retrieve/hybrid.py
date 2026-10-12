@@ -393,7 +393,10 @@ def query(
     rare_cfg = replace(fetch_cfg, synonyms=None, per_index_k=cfg.rare_term_df)
     with_cons = cfg.include_consolidations and not cfg.repo_filter
     rare_items = _interleave([_fts_search_items(conn, t, rare_cfg) for t in rare])
-    rare_cons = _interleave([_fts_search_consolidations(conn, t, rare_cfg) for t in rare] if with_cons else [])
+    # df is counted on items; a word in one item can sit in many summaries, so
+    # summaries keep the normal per-index depth rather than the df cap
+    cons_cfg = replace(fetch_cfg, synonyms=None)
+    rare_cons = _interleave([_fts_search_consolidations(conn, t, cons_cfg) for t in rare] if with_cons else [])
     for allow, cons in ((item_allow, cons_allow), (part_item_allow, part_cons_allow)):
       if allow is not None:
         rare_items = [t for t in rare_items if t[1] in allow]

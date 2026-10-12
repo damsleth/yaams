@@ -10,6 +10,8 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-12
+
 ### Added
 
 - Rare-term lane (`HybridQueryConfig.rare_term_df`, default 25; `rare_term_weight`
@@ -1342,7 +1344,8 @@ documentation, and establishes a versioning baseline.
 - Added `SECURITY.md` documenting the threat model, data classification,
   and disclosure flow (GitHub Security Advisories).
 
-[Unreleased]: https://github.com/damsleth/yaams/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/damsleth/yaams/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/damsleth/yaams/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/damsleth/yaams/compare/v0.10.0...v0.10.1
 [0.1.11]: https://github.com/damsleth/YAAMS/compare/v0.1.10...v0.1.11
 [0.1.1]: https://github.com/damsleth/YAAMS/compare/v0.1.0...v0.1.1

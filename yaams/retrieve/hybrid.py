@@ -386,10 +386,14 @@ def query(
 
   rare = _rare_terms(conn, text, cfg) if cfg.include_items and not fact_tier else []
   if rare:
-    rare_text = " ".join(rare)
-    rare_items = _fts_search_items(conn, rare_text, fetch_cfg)
-    rare_cons = (_fts_search_consolidations(conn, rare_text, fetch_cfg)
-                 if cfg.include_consolidations and not cfg.repo_filter else [])
+    # One search per rare word, literal (no synonym expansion: a common alias
+    # would crowd the rare word back out), fetching every hit (at most
+    # rare_term_df each), so neither another rare word nor the allowlists below
+    # can truncate its evidence. Interleaved by per-word rank.
+    rare_cfg = replace(fetch_cfg, synonyms=None, per_index_k=cfg.rare_term_df)
+    with_cons = cfg.include_consolidations and not cfg.repo_filter
+    rare_items = _interleave([_fts_search_items(conn, t, rare_cfg) for t in rare])
+    rare_cons = _interleave([_fts_search_consolidations(conn, t, rare_cfg) for t in rare] if with_cons else [])
     for allow, cons in ((item_allow, cons_allow), (part_item_allow, part_cons_allow)):
       if allow is not None:
         rare_items = [t for t in rare_items if t[1] in allow]
@@ -426,15 +430,18 @@ def query(
       if cfg.occurrence_contact else set()
     )
     if p_items:
-      items, cons = _exchanges(conn, cfg, p_items)
-      hydrated = [r for r in hydrated if r.id in items or r.id in cons]
+      # The qualifying messages themselves are the answer, folded into a session
+      # or not: a session's span and summary would date and ground the contact by
+      # other people's messages, and past an as-of cutoff by later ones.
+      items, cons = _exchanges(conn, cfg, p_items), set()
+      hydrated = [r for r in hydrated if r.id in items]
     if part_item_allow is not None:
       items, cons = items & part_item_allow, cons & (part_cons_allow or set())
     # A lane hit already in the pool (say as a vector-only candidate) keeps its
     # index scores but gains the lane marker, which exempts it from the floor and
     # the vector-only filter below; otherwise the newest conversation could vanish.
     by_id = {r.id: r for r in hydrated}
-    for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k):
+    for r in _browse_allowlist(conn, cfg, items, cons, cap=cfg.top_k, members=bool(p_items)):
       if r.id in by_id:
         by_id[r.id].boosts["occurrence_browse"] = 1.0
       else:
@@ -614,7 +621,7 @@ def _cons_of(conn: sqlite3.Connection, item_ids: set[str]) -> set[str]:
 
 def _exchanges(
   conn: sqlite3.Connection, cfg: HybridQueryConfig, item_ids: set[str],
-) -> tuple[set[str], set[str]]:
+) -> set[str]:
   """The participant-linked items that are a conversation between the user and the
   person (yaams.enrich.participants.conversation_items): a third party's message to
   a big group both are in, or the person's broadcast the user never answered, is not
@@ -635,7 +642,7 @@ def _exchanges(
         alias_list = []
       person += [canon, *(a for a in (alias_list if isinstance(alias_list, list) else []) if isinstance(a, str))]
   keep = conversation_items(conn, item_ids, person, cfg.participant_filter or [], until=cfg.until)
-  return keep, _cons_of(conn, keep)
+  return keep
 
 
 def _resolve_participant_allowlist(
@@ -917,6 +924,7 @@ def _browse_allowlist(
   allowed: set[str],
   allowed_cons: set[str],
   cap: int,
+  members: bool = False,
 ) -> list[HybridResult]:
   """The `cap` allowlisted items and consolidations nearest the sort end (newest for
   desc, oldest for asc), honoring the same filters as the index lanes. A consolidated
@@ -925,7 +933,7 @@ def _browse_allowlist(
   order = "DESC" if cfg.sort == "desc" else "ASC"
   out: list[HybridResult] = []
   if allowed and cfg.include_items:
-    out += _browse_allowlist_items(conn, cfg, allowed, order, cap)
+    out += _browse_allowlist_items(conn, cfg, allowed, order, cap, consolidated=members)
   if allowed_cons and cfg.include_consolidations and not cfg.repo_filter:
     rows = conn.execute(
       f"""
@@ -951,7 +959,10 @@ def _browse_allowlist(
 
 def _browse_allowlist_items(
   conn: sqlite3.Connection, cfg: HybridQueryConfig, allowed: set[str], order: str, cap: int,
+  consolidated: bool = False,
 ) -> list[HybridResult]:
+  """`consolidated`: also list items folded into a consolidation (contact questions,
+  where the member message, not its session, is the evidence)."""
   rows = conn.execute(
     f"""
     SELECT id FROM items
@@ -965,14 +976,14 @@ def _browse_allowlist_items(
       AND (? = 0 OR junk_reason IS NULL)
       AND (? = '' OR sender IN (SELECT value FROM json_each(?)))
       AND id NOT IN (SELECT value FROM json_each(?))
-      AND consolidated_into IS NULL
+      AND (? = 1 OR consolidated_into IS NULL)
     ORDER BY timestamp {order}
     LIMIT ?
     """,
     (json.dumps(sorted(allowed)),) + _filter_params(cfg)
     # an "ok" from someone is junk as content but still contact with them
     + (cfg.lang_filter, cfg.lang_filter, _exclude_inferred(cfg), 0 if cfg.occurrence_contact else _exclude_junk(cfg))
-    + _sender_params(cfg) + (_excluded_ids(cfg), cap),
+    + _sender_params(cfg) + (_excluded_ids(cfg), 1 if consolidated else 0, cap),
   ).fetchall()
   return [r for r in (_hydrate_item(conn, row["id"], ScoreComponents(), cfg) for row in rows) if r]
 
@@ -1002,6 +1013,18 @@ def _exclude_inferred(cfg: HybridQueryConfig) -> int:
   return 1 if cfg.sort != "relevance" else 0
 
 
+def _interleave(lists: list[list[tuple[str, str, int, float]]]) -> list[tuple[str, str, int, float]]:
+  """Merge per-word hit lists round-robin by rank, first occurrence of an id
+  wins, re-ranked 0..n."""
+  seen: set[str] = set()
+  out: list[tuple[str, str, int, float]] = []
+  for row in sorted((t for lst in lists for t in lst), key=lambda t: t[2]):
+    if row[1] not in seen:
+      seen.add(row[1])
+      out.append((row[0], row[1], len(out), row[3]))
+  return out
+
+
 def _rare_terms(conn: sqlite3.Connection, text: str, cfg: HybridQueryConfig) -> list[str]:
   """Query words that match between 1 and `cfg.rare_term_df` items (same token
   quoting as _fts_query). Empty for single-word queries: there the main FTS
@@ -1012,8 +1035,11 @@ def _rare_terms(conn: sqlite3.Connection, text: str, cfg: HybridQueryConfig) -> 
   rare = []
   for t in tokens[:12]:
     try:
+      # capped: only "is it at most rare_term_df" matters, so a common word
+      # stops after rare_term_df + 1 postings instead of walking all of them
       df = conn.execute(
-        "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?", (_fts_query(t),)
+        "SELECT count(*) FROM (SELECT 1 FROM items_fts WHERE items_fts MATCH ? LIMIT ?)",
+        (_fts_query(t), cfg.rare_term_df + 1),
       ).fetchone()[0]
     except sqlite3.OperationalError:
       continue

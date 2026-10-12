@@ -17,10 +17,11 @@ surface; pin to a specific version if you need stability.
   extra RRF lane. In the main OR query common words outvote it: for
   "use32BitWorkerProcess nc-nocos-la-prod" the 12 items naming the identifier sat
   at bm25 ranks 22-1526 behind "App"/"Service" and none reached the top 50; now
-  one is rank 1. Era 5 dev 0.5714 -> 0.6057 (rank-1 golds 43 -> 46), test
-  0.2923 -> 0.3048. One rank-1 gold moved to rank 2 (a near tie: "Scandic Hell"
-  pulls in a hotel message), accepted over the keep rule's zero-loss bar
-  (experiment 163). Harness `--rare-term-df`, `--rare-term-weight`.
+  one is rank 1. Each rare word is searched on its own, literally (no synonym
+  expansion), fetching all its hits before any allowlist; the df check stops
+  counting at the threshold. Era 5 dev 0.5714 -> 0.6154 (rank-1 golds 43 -> 47,
+  none lost), test 0.2923 -> 0.3048; about +5 ms p50 / +35 ms p95
+  (experiments 163, 166). Harness `--rare-term-df`, `--rare-term-weight`.
 - Last-contact retrieval ("when did I last speak with X?"), three pieces, all
   on by default:
   - Participant links: every ingest links its new items to the people who
@@ -172,19 +173,26 @@ surface; pin to a specific version if you need stability.
 - Heavy Copilot review of the last-contact work (2026-10-12), 15 of 17
   findings fixed: participant matches upgrade an existing content link (1,586
   upgraded on live; contact retrieval missed messages that also named the
-  person); occurrence-lane hits already in the pool keep the lane marker;
-  newest-first sorts order a consolidation by its last message (capped at the
-  as-of cutoff); the lane honors `exclude_item_ids` and, for contact
+  person); occurrence-lane hits already in the pool keep the lane marker; a
+  contact question returns the qualifying member messages themselves, folded
+  into a session or not (a session's span and summary would date and ground
+  the contact by other people's or later messages), and other newest-first
+  sorts order a consolidation by its last message (capped at the as-of
+  cutoff); the lane honors `exclude_item_ids` and, for contact
   questions, keeps short "junk" replies; the vector-only drop is limited to
   time-shaped questions; an explicit `--sort` keeps the owner identities;
   reranking keeps lane items; conversation reciprocity is as-of and
   O(n log n); consolidation membership comes from `items.consolidated_into`
   instead of scanning every consolidation; "hear from / høre fra" is contact
-  and "hear about / høre om" hearsay; promotion cuts names out of topic terms
-  and never drops an alias-supported entity; the harness regenerates only
-  complete fallback parses and applies ablations after promotion. Era label
-  `78 gold live freeze (oct12), participant upgrade`; anchors
-  `era5u-anchor-nojunk` dev 0.6057 / test 0.3048 (with the rare-term lane).
+  and "hear about / høre om" hearsay, also through the fallback parse;
+  promotion cuts names out of topic terms (also when split across terms) and
+  never drops an alias-supported entity (punctuation-tolerant); the harness
+  regenerates only parses matching the exact fallback signature and applies
+  ablations after promotion. A second heavy review verified 10 of the 16 and
+  drove these follow-ups. Era label `78 gold live freeze (oct12), participant
+  upgrade`; anchors `era5u-anchor-nojunk-r2` dev 0.6154 / test 0.3048 (with
+  the rare-term lane); contact eval 1.0 for last/first with LLM and fallback
+  parse.
   Not fixed by design: the contact eval's answer keys share the retrieval
   rule (the owner-labelled gold set is the independent check), and
   call/meeting modality (no call records).

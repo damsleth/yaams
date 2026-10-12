@@ -3,6 +3,7 @@ test is one reported failure scenario."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from test_parse import _seed_db_with_entity
@@ -113,6 +114,66 @@ def test_promotion_cuts_the_name_out_of_a_whole_question_topic():
   promote_entities(p, {"bob smith": "Robert Jones"})
   assert p.entities == ["Robert Jones"]
   assert p.topic_terms == ["when did i last speak with ?"]
+
+
+def test_contact_returns_the_member_message_not_its_session():
+  conn = _open_db()
+  eid = _bob(conn)
+  bob = _make_item(thread_id="s", sender="Bob Smith", recipients=["me"], ts=T, msg_id="bob")
+  carol = _make_item(thread_id="s", sender="carol", recipients=["me"], ts=T + timedelta(hours=2), msg_id="carol")
+  solo = _make_item(thread_id="d", sender="Bob Smith", recipients=["me"], ts=T + timedelta(hours=1), msg_id="solo")
+  store_items(conn, [bob, carol, solo], [b"\x00" * 16] * 3, [[]] * 3)
+  _link(conn, [bob, solo], eid)
+  conn.execute(
+    "INSERT INTO consolidations (id, source, thread_id, start_timestamp, end_timestamp, participants, item_count,"
+    " summary, raw_item_ids, consolidator_version, created_at) VALUES ('cons:s', 'imessage', 's', ?, ?, ?, 2,"
+    " 'approve deployment', ?, 'v', ?)",
+    (T.isoformat(), (T + timedelta(hours=2)).isoformat(), json.dumps(["Bob Smith", "carol"]),
+     json.dumps([bob.id, carol.id]), T.isoformat()),
+  )
+  conn.execute("UPDATE items SET consolidated_into = 'cons:s' WHERE id IN (?, ?)", (bob.id, carol.id))
+  cfg = HybridQueryConfig(top_k=5, sort="desc", entity_filter=["Bob Smith"], occurrence_browse=True,
+                          occurrence_contact=True, participant_filter=["me"])
+  ids = [r.id for r in query(conn, "zzz", config=cfg)]
+  # Bob's last message is 09:00 (solo); the session "ends" at 10:00 only through Carol
+  assert ids[0] == solo.id and "cons:s" not in ids and bob.id in ids
+  # first contact: the member message itself, at its own time
+  first = query(conn, "zzz", config=replace(cfg, sort="asc"))
+  assert first[0].id == bob.id
+
+
+def test_rare_lane_is_literal_not_synonym_expanded():
+  conn = _open_db()
+  filler = [_make_item(content=f"filler {i}", ts=T, msg_id=f"f{i}") for i in range(300)]
+  common = [_make_item(content="widget widget gadget", ts=T, msg_id=f"w{i}") for i in range(60)]
+  rare = _make_item(content="long text " * 80 + " zqxcode issue", ts=T, msg_id="rare")
+  docs = [*filler, *common, rare]
+  store_items(conn, docs, [b"\x00" * 16] * len(docs), [[]] * len(docs))
+  cfg = HybridQueryConfig(top_k=5, per_index_k=10, include_consolidations=False,
+                          synonyms={"zqxcode": ["widget"], "widget": ["zqxcode"]})
+  assert rare.id in [r.id for r in query(conn, "zqxcode gadget", config=cfg)][:3]
+
+
+def test_fallback_from_question_turns_the_lane_on():
+  from yaams.retrieve.parse import _fallback
+
+  for q in ("when did I last hear from Bob Smith?", "når hørte jeg sist fra Bob Smith?"):
+    p = _fallback(q)
+    promote_entities(p, {"bob smith": "Bob Smith"})
+    cfg = route(p, HybridQueryConfig(), self_identities=["me"])
+    assert cfg.occurrence_browse and cfg.occurrence_contact, q
+
+
+def test_promotion_drops_a_name_split_across_topic_terms():
+  p = ParsedQuery(raw="when did I last speak with Bob Smith", entities=[], topic_terms=["Bob", "Smith", "budget"])
+  promote_entities(p, {"bob smith": "Bob Smith"})
+  assert p.entities == ["Bob Smith"] and p.topic_terms == ["budget"]
+
+
+def test_alias_protection_tolerates_punctuation():
+  conn = _seed_db_with_entity("Martina", ["Tina"])
+  p = ParsedQuery(raw="Summarize Martin Hansen and Tina.", entities=["Martina"])
+  assert _alias_supported(conn, p) == {"Martina"}
 
 
 def test_alias_supported_entity_survives_near_miss_removal():

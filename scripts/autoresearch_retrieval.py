@@ -134,8 +134,11 @@ def _parsed_from_json(raw_json: str | None, fallback_raw: str) -> ParsedQuery | 
         return None
     d = json.loads(raw_json)
     raw = d.get("raw") or fallback_raw
+    # the exact historical _fallback() signature; anything else carries valid fields
     whole = (d.get("shape") in (None, "factual") and not d.get("entities")
-             and (d.get("topic_terms") or []) in ([raw], []) and not any(d.get("date_range") or []))
+             and d.get("topic_terms") == [raw] and not any(d.get("date_range") or [])
+             and d.get("sort") in (None, "relevance") and d.get("prefer_tier") is None
+             and not d.get("high_quality"))
     if d.get("fallback_used") and whole:
         # a complete fallback is a pure function of the text: replay what production
         # builds today. fallback_used also marks a partly repaired LLM parse (one bad

@@ -25,6 +25,7 @@ from yaams.cli._shared import _embed_config, _self_identities  # noqa: E402
 from yaams.config import load_config  # noqa: E402
 from yaams.db import open_db  # noqa: E402
 from yaams.enrich.participants import conversation_items  # noqa: E402
+from yaams.retrieve.parse import _fallback  # noqa: E402
 from yaams.time import parse_iso_datetime  # noqa: E402
 
 TEMPLATES = {
@@ -110,8 +111,8 @@ def run(a):
   cases = [json.loads(line) for line in open(a.cases)]
   rows = []
   for c in cases:
-    parsed_query = (json.dumps({"raw": c["text"], "fallback_used": True}) if a.fallback_parse
-                    else c["parsed_query"])
+    # simulate the LLM being down: the parse production builds without one
+    parsed_query = _fallback(c["text"]).to_json() if a.fallback_parse else c["parsed_query"]
     row = {"query_id": c["query_id"], "text": c["text"], "parsed_query": parsed_query,
            "source_filter": None, "since": None, "until": c["ts"], "ts": c["ts"], "result_id": c["latest"]}
     ar._replay_one(conn, emb, _self_identities(cfg), row, syn, exclude_junk=a.exclude_junk)

@@ -1,9 +1,9 @@
 {
   "fixture": "/Users/damsleth/brain/feed/eval/autoresearch_fixture.db",
-  "source_db": "/Users/damsleth/brain/feed/eval/autoresearch_fixture_era5_prep.db",
+  "source_db": "/Users/damsleth/brain/feed/eval/autoresearch_fixture_upgrade_prep.db",
   "gold_hash": "1ac162af67ac3b7a99c4e3ce43cb35296ed138b9",
   "gold_queries": 78,
   "corrections": 25,
   "total_queries": 1031,
-  "participant_links": 147858
+  "participant_links": 149444
 }

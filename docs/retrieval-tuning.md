@@ -19,7 +19,7 @@ a worktree is silently lost.
 
 | Thing | Where | Set by |
 |---|---|---|
-| Frozen fixture (era 5: SQLite backup of the live store 2026-10-12, 78 gold incl. a 50-query owner label sheet, 94,740 items, 147,858 participant links, junk-annotated) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
+| Frozen fixture (era 5: SQLite backup of the live store 2026-10-12, 78 gold incl. a 50-query owner label sheet, 94,740 items, 149,444 participant links after the content-link upgrade, junk-annotated) | `~/brain/feed/eval/autoresearch_fixture.db` | `scripts/autoresearch_freeze.py:32` |
 | Era 4 / era 2 fixture backups (46 / 42 gold) | `~/brain/feed/eval/autoresearch_fixture_era{4-2026-10-12,2-2026-10-06}.db` | this page, section 1 |
 | Person-recall cases (last/first contact, 24 + 24 conversations on the era-5 fixture; older keys in `*_era4.jsonl`, `*_era3.jsonl`, `*_v1.jsonl`) | `~/brain/feed/eval/{last,first}_contact_cases.jsonl` | `scripts/last_contact_eval.py build` |
 | Owner label sheets (recent unjudged live queries, top 3 replayed through production; answers written as `yaams feedback` hit/correction/miss) | `~/brain/feed/eval/label-sheets/` | this page, section 1 |
@@ -112,8 +112,8 @@ live setting):
 cd /Users/damsleth/code/yaams
 .venv/bin/python scripts/autoresearch_freeze.py --check
 rm -f scripts/.autoresearch_state.json
-.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era5-anchor-nojunk
-.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era5-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split dev  --exclude-junk --tag era5u-anchor-nojunk
+.venv/bin/python scripts/autoresearch_retrieval.py --split test --exclude-junk --tag era5u-anchor-nojunk
 ```
 
 Recorded runs (no `--no-write`) append to `scripts/autoresearch_results.tsv`,
@@ -194,7 +194,10 @@ mkdir -p .tmp && git diff main -- yaams/retrieve/ > .tmp/<key>.diff
   uses, and `identity.self` from the live config; rebuild them
   (`build --kind last|first`) when either changes. Baselines: 1.0 hit@1 for
   both, with the LLM parse and with `--fallback-parse`. First/last questions
-  replay the corpus as of the ask time.
+  replay the corpus as of the ask time. Because the keys share the retrieval
+  rule, this eval is a plumbing check: it cannot catch a wrong rule, only a
+  broken path. The independent check is the owner-labelled gold set (label
+  sheets); a contact rule change needs both.
 - **Replays match production by default.** Production promotes names in
   `parse_query`; the stored parses predate that, so the harness promotes on
   replay (`--no-promote-entities` to switch it off), and route turns the

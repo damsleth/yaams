@@ -10,6 +10,12 @@ surface; pin to a specific version if you need stability.
 
 ## [Unreleased]
 
+### Changed
+
+- CI: pin every GitHub Action in `ci.yml` and `release.yml` to a full commit
+  SHA (tag kept as a trailing comment), so a moved or hijacked tag cannot change
+  what runs in CI or the release job.
+
 ## [0.10.2] - 2026-10-12
 
 ### Added

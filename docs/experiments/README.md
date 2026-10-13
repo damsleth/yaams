@@ -5,7 +5,7 @@ tried, what was kept, what was killed, and how the metrics moved over time. The
 point is institutional memory — don't re-try a dead idea, and don't mistake
 noise for a trend.
 
-![Experiment timeline — both axes read lower = better; lines sinking toward the floor are progress](preview.png)
+![Experiment dashboard — current-phase headline tiles and the full-width quality chart, dev and test split per era](preview.png)
 
 > This module is deliberately dependency-free and self-contained so it can be
 > lifted into its own repo later (like ux-loop). It assumes nothing about yaams
@@ -21,7 +21,7 @@ at [../retrieval-tuning.md](../retrieval-tuning.md).
 | File | Role |
 |------|------|
 | `experiments.jsonl` | **Source of truth.** One experiment per line, append-only. |
-| `index.html` | Self-contained viewer (hand-rolled SVG, zero deps). Opens via `file://`. |
+| `index.html` | Self-contained full-width dashboard (hand-rolled SVG, zero deps). Opens via `file://`. |
 | `log_experiment.py` | Append an experiment + rebuild. The one entry point — used by the harnesses and the CLI. |
 | `build.py` | Inlines `experiments.jsonl` into `index.html`. Run by the logger; rarely run by hand. |
 | `CURRENT_ERA` | One line: the gold-set version new experiments are tagged with. Bump on reseed. |
@@ -36,11 +36,23 @@ python docs/experiments/build.py      # refresh the inlined data
 open docs/experiments/index.html      # no server needed
 ```
 
-The line is the **accepted baseline** — it advances only through `keep` wins and
-re-measured baselines. `kill` experiments are floating `×` markers off the line.
-Shaded bands are gold-set eras; **metrics do not compare across bands** (the gold
-set grew 46 → 58 → 78, and the rerank sweep uses full-MRR vs the campaigns'
-partial-credit MRR).
+The page has two phases. The top is the **current phase** (the sep17 curated era
+onward: live-data fixtures, frozen owner gold, dev and test anchors): headline
+tiles for the latest accepted dev baseline, a full-width quality chart, one
+small chart each for hit@1, MRR, recall@10 and p95 latency, a per-era table,
+and a table of the non-retrieval runs (junk classifiers, ANE probes, judges)
+whose metrics live only in `note`. The bottom is the **archive** of the jun–jul
+autoresearch campaigns, drawn with the same charts.
+
+Each chart shows one metric on one axis. The line is the **accepted baseline**
+— it advances only through `keep` wins and re-measured baselines — drawn
+separately for the dev split (solid) and the test split (dashed, rows whose
+`note` says `split=test`), and it breaks at every era boundary. `kill`
+experiments are `×` markers off the line. Shaded bands are gold-set eras;
+**metrics do not compare across bands** (gold sets and fixtures change, and the
+rerank sweep uses full-MRR vs the campaigns' partial-credit MRR). The phase
+boundary is the first `sep17` era in `index.html`; move it when a new phase
+starts.
 
 ## Harness preconditions
 
@@ -127,4 +139,4 @@ active campaign — each parameter trial is one `×`. That's deliberate: the clo
 of kills around the accepted-baseline line is the point. It shows how well the
 current baseline holds up against everything we threw at it, and stops us
 re-trying dead ideas. We keep them all. If a campaign ever makes it too noisy to
-read, toggle individual metrics off rather than dropping points.
+read, start a new phase in the dashboard rather than dropping points.

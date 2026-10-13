@@ -89,7 +89,8 @@
   <section>
     <h2>Non-retrieval runs (junk classifiers, ANE, judges)</h2>
     <p class="note">These measure something other than retrieval (kappa, junk caught on owner labels, rows/s, mJ/row),
-      so they carry no retrieval metrics and are not on the charts. The headline numbers live in the note.</p>
+      so they carry no retrieval metrics and are not on the charts. They are logged as <code>kill</code> because none changes the
+      retrieval baseline; the real outcome (e.g. Jeff v2 stayed as the junk model) is in the note.</p>
     <div class="panel tablewrap"><table id="other"></table></div>
   </section>
 
@@ -244,11 +245,11 @@ function tiles(){
   const delta=(m)=>{ const a=anchor.metrics[m.key], b=now.metrics[m.key]; if(a==null||b==null||anchor===now) return 'era anchor';
     const dd=b-a, good=m.lower?dd<0:dd>0, s=m.log?`${dd>0?'+':''}${Math.round(dd)} ms`:`${dd>0?'+':''}${dd.toFixed(3)}`;
     return `<span class="${dd===0?'':good?'up':'down'}">${s}</span> vs era anchor`; };
-  const cnt=k=>CUR.filter(d=>d.disposition===k).length, eras=new Set(CUR.map(d=>d.era)).size;
+  const cnt=k=>CUR.filter(d=>d.disposition===k && measured(d)).length, eras=new Set(CUR.map(d=>d.era)).size, other=CUR.filter(d=>!measured(d)).length;
   document.getElementById('tiles').innerHTML=
     METRICS.map(m=>now.metrics[m.key]==null?'':tile(m.label+' · dev',m.f(now.metrics[m.key]),delta(m))).join('')+
     (test.length?tile('Quality · test',M.quality.f(test.at(-1).metrics.quality),'zero-regression gate'):'')+
-    tile('Runs this phase',CUR.length,`${cnt('keep')} kept · ${cnt('kill')} killed · ${eras} eras`);
+    tile('Runs this phase',CUR.length,`${cnt('keep')} kept · ${cnt('kill')} killed · ${other} non-retrieval · ${eras} eras`);
   document.getElementById('tilesnote').innerHTML=
     `Latest accepted dev baseline: <code>${esc(now.key)}</code> (seq ${now.seq}) in era “${esc(era)}”. Deltas are against that era's first dev anchor <code>${esc(anchor.key)}</code>.`;
 }
@@ -277,7 +278,7 @@ function otherTable(){
     return `<tr><td class="n">${d.seq}</td><td><span class="chip">${esc(d.key.split('_')[0])}</span></td><td><code>${esc(d.key)}</code></td>`+
       `<td>${d.disposition}</td><td>${note.length>200?`<details><summary>${esc(head)}</summary>${esc(note)}</details>`:esc(note)}</td></tr>`;
   }).join('');
-  document.getElementById('other').innerHTML=`<thead><tr><th>Seq</th><th>Family</th><th>Key</th><th>Verdict</th><th>Result</th></tr></thead><tbody>${body}</tbody>`;
+  document.getElementById('other').innerHTML=`<thead><tr><th>Seq</th><th>Family</th><th>Key</th><th>Disposition</th><th>Result</th></tr></thead><tbody>${body}</tbody>`;
 }
 
 function legend(){

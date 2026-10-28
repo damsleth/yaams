@@ -549,7 +549,9 @@ def _insert_item(conn: sqlite3.Connection, item: Item) -> int:
   # trust verdicts (yaams.trust) need not re-derive it per query; legacy rows
   # written before this column fall back to derivation at query time.
   provenance = derive_provenance(
-    item.source, timestamp_inferred=item.timestamp_inferred
+    item.source,
+    timestamp_inferred=item.timestamp_inferred,
+    unreviewed=bool((item.raw_metadata or {}).get("unreviewed")),
   )
   params = (
     item.id,

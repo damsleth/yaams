@@ -36,6 +36,10 @@ def clamp01(value: float) -> float:
 
 PROVENANCE_WEIGHTS: dict[str, float] = {
   "curated": 1.00,  # promoted into the Tier-2 ledger (human-reviewed)
+  # Tier-2 note an agent wrote or appended to that the owner has not reviewed
+  # yet (cognitive-ledger `unreviewed` > 0). Below every raw class but
+  # inferred: it is a model's reading of raw evidence, not evidence itself.
+  "agent": 0.75,
   "authored": 0.92,  # first-party authored records (email / calendar)
   "structured": 0.90,  # structured platform events (github)
   "conversational": 0.82,  # chat (imessage / signal / teams)
@@ -64,6 +68,7 @@ def derive_provenance(
   *,
   timestamp_inferred: bool = False,
   promoted: bool = False,
+  unreviewed: bool = False,
 ) -> str:
   """Resolve a Tier-1 item's provenance class from its origin.
 
@@ -73,6 +78,8 @@ def derive_provenance(
   Unknown sources default to ``conversational`` (the common chat case) so they
   still resolve to a sensible weight rather than the unknown floor.
   """
+  if unreviewed:
+    return "agent"
   if promoted:
     return "curated"
   cls = _SOURCE_PROVENANCE.get((source or "").strip().lower())

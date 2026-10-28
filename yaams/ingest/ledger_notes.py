@@ -95,5 +95,8 @@ class LedgerNotesAdapter:
           "note_type": entry.get("note_type"),
           "content_hash": entry.get("content_hash"),
           "path": candidate.get("path"),
+          # cognitive-ledger: count of agent-written content the owner has
+          # not reviewed; > 0 drops the item from `curated` to `agent`.
+          "unreviewed": int(candidate.get("unreviewed") or 0),
         },
       )

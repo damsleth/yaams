@@ -129,3 +129,9 @@ def test_verdict_low_recent():
   v = _verdict(effective_confidence=0.3, recency=0.9)
   assert v.level == "low"
   assert "stale" not in v.reason
+
+
+def test_derive_provenance_unreviewed_ledger_note_is_agent():
+  assert derive_provenance("tier2_ledger", unreviewed=True) == "agent"
+  assert derive_provenance("tier2_ledger", unreviewed=False) == "curated"
+  assert PROVENANCE_WEIGHTS["agent"] < PROVENANCE_WEIGHTS["imported"]
